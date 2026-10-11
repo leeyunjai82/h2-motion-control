@@ -103,3 +103,7 @@ third_party/
 !common/models/*.pt
 !common/models/box_openvino_model/
 !common/models/box_openvino_model/*.bin
+
+# 피지컬 AI 데이터 (로봇 PC: 에피소드·모델 / 학습 PC: 업로드·작업 결과)
+physical_ai/data/
+trainer/data/

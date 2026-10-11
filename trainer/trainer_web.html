@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<!-- Version: 1.0
+  1.0 - 학습 PC ACT 학습 화면: 데이터셋 zip 업로드(진행률) · 학습 설정·큐 · 진행/loss 곡선/로그 · 취소/지금 마치기 · model zip 다운로드
+        색·글꼴·카드는 제어 UI(common/robot_web.html)·로봇 physical AI 화면과 같음 -->
+<html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pitron trainer</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
+  --ink:#c9d4e0; --dim:#6b7785;
+  --accent:#00b7eb; --accent2:#7fd8f5; --accent-tint:rgba(0,183,235,.20); --accent-deep:#08465a;
+  --ok:#3ddc97; --warn:#ff6b6b; --amber:#ffb454; --r:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;background:var(--bg);color:var(--ink);
+  font-size:13px;line-height:1.4;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
+.logo{font-weight:700;letter-spacing:.5px;font-size:15px;color:var(--accent)}.logo b{color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.err{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.topbar .right{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:11px;color:var(--dim)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:4px 10px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--dim);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:700}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.ok{color:var(--ok);border-color:#1f5a43}.chip.info{color:var(--accent);border-color:#0b5a70}
+.chip.busy{color:var(--amber);border-color:#6a4a1f}.chip.err{color:var(--warn);border-color:#5a2b2b}
+.grid{display:grid;grid-template-columns:3fr 4fr 4fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
+.card.fill{flex:1 1 0;min-height:260px;display:flex;flex-direction:column}
+.card.fill>.card-b{flex:1;min-height:0;display:flex;flex-direction:column}
+.card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
+  padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--panel2);gap:8px}
+.card-h .tag{color:var(--accent);font-weight:700;text-transform:none;letter-spacing:.3px}
+.card-b{padding:13px}
+.btn{font-family:inherit;font-size:12px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+  padding:8px 9px;border-radius:7px;cursor:pointer;transition:.12s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.primary{background:var(--accent);color:#04121f;border:none;font-weight:700}.btn.primary:hover{background:#33c5ef;color:#04121f}
+.btn.warn{border-color:#5a2b2b;color:var(--warn)}.btn.warn:hover{border-color:var(--warn)}
+.btn.sm{padding:3px 8px;font-size:11px}
+.row{display:flex;gap:6px;align-items:center}.row>.grow{flex:1}
+.hint{font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5}.hint b{color:var(--ink);font-weight:400}
+.fld{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-top:10px}
+.mini{font-size:10px;color:var(--dim);margin-bottom:3px;display:block}
+.in{width:100%;background:#0c1117;border:1px solid var(--line);color:var(--ink);padding:6px;border-radius:6px;font-family:inherit;font-size:12px}
+.in:focus{outline:none;border-color:var(--accent2)}
+.sw{display:flex;align-items:center;gap:10px;margin-top:10px;cursor:pointer;user-select:none}
+.sw input{display:none}
+.sw .tr{width:34px;height:18px;border-radius:9px;background:var(--line);position:relative;transition:.15s;flex:none}
+.sw .tr::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dim);transition:.15s}
+.sw input:checked+.tr{background:var(--accent-deep)}.sw input:checked+.tr::after{left:18px;background:var(--accent)}
+.prog{height:8px;border-radius:4px;background:#0c1117;border:1px solid var(--line);overflow:hidden;margin-top:6px}
+.prog b{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{font-weight:400;color:var(--dim);font-size:10px;text-align:left;padding:0 5px 4px;border-bottom:1px solid var(--line)}
+.tbl td{padding:5px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+.tbl tr{cursor:pointer}.tbl tr:hover td{background:var(--panel2)}
+.tbl tr.cur td{background:var(--accent-tint)}
+.tbl .num{text-align:right}
+.tbl .x{color:var(--dim);cursor:pointer;padding:0 4px}.tbl .x:hover{color:var(--warn)}
+.st{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid currentColor}
+.st.queued{color:var(--dim)}.st.running{color:var(--amber)}.st.done{color:var(--ok)}
+.st.failed,.st.interrupted{color:var(--warn)}.st.canceled,.st.canceling{color:var(--dim)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.metrics .m{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+.metrics .m span{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.5px}
+.metrics .m b{font-size:14px}
+canvas{width:100%;height:180px;display:block;background:#0c1117;border:1px solid var(--line);border-radius:8px;margin-top:10px}
+pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px solid var(--line);border-radius:8px;padding:8px;
+  font-size:11px;line-height:1.45;color:#a9b6c4;white-space:pre-wrap;word-break:break-all;margin-top:10px}
+.err-line{color:var(--warn);font-size:11.5px;margin-top:8px}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel2);
+  border:1px solid var(--accent);color:var(--accent);padding:9px 16px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none;z-index:99;max-width:80vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}#toast.err{border-color:var(--warn);color:var(--warn)}
+@media(max-width:1200px),(max-height:699px){
+  body{height:auto;min-height:100vh;overflow:auto}.grid{overflow:visible;flex:none}.col{overflow:visible}
+  .card.fill{flex:none}
+}
+@media(max-width:1200px){.grid{grid-template-columns:1fr 1fr}}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.fld{grid-template-columns:1fr 1fr}.topbar{flex-wrap:wrap}.topbar .right{margin-left:0;width:100%}}
+</style></head>
+<body>
+<div class="topbar">
+  <span class="dot" id="livedot"></span>
+  <span class="logo">pitron<b>·trainer</b></span>
+  <span style="color:var(--dim);font-size:11px">ACT · 50100</span>
+  <div class="right">
+    <div class="chips">
+      <span class="chip" id="chip-gpu">GPU <b>-</b></span>
+      <span class="chip" id="chip-q">Queue <b>-</b></span>
+      <span class="chip" id="chip-ver">torch <b>-</b></span>
+      <span class="chip" id="chip-disk">Disk <b>-</b></span>
+    </div>
+    <a href="#" onclick="setKey();return false" style="color:var(--accent2)">key</a>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="col">
+    <div class="card">
+      <div class="card-h">Datasets <span class="tag" id="ds-tag">-</span></div>
+      <div class="card-b">
+        <div class="row"><input class="in grow" type="file" id="ds-file" accept=".zip">
+          <button class="btn sm" onclick="uploadDs()">업로드</button></div>
+        <div class="prog" id="up-prog" style="display:none"><b id="up-bar"></b></div>
+        <div class="hint" id="up-text">로봇 웹(:50030) Episodes 의 <b>데이터셋 zip</b> 을 그대로 올리세요.</div>
+        <div style="max-height:300px;overflow-y:auto;margin-top:8px"><table class="tbl" id="ds-tbl"></table></div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">System</div>
+      <div class="card-b"><table class="tbl" id="sys-tbl" style="cursor:default"></table>
+        <div class="hint">순서: ① 로봇 웹(:50030)에서 데이터셋 zip 받기 → ② 여기 업로드 → ③ 학습 큐 →
+          ④ 끝나면 model zip → 로봇 웹 Models 에 업로드 · 로드 · 정책 시작.<br>
+          OpenVINO 는 로봇 PC 와 같은 버전으로 (trainer/README.md).</div></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <div class="card-h">New Training · 학습 <span class="tag" id="sel-ds">데이터셋 선택</span></div>
+      <div class="card-b">
+        <div class="fld" style="margin-top:0">
+          <div style="grid-column:1/-1"><span class="mini">모델 이름 (비우면 act_데이터셋_날짜)</span><input class="in" id="t-name"></div>
+          <div><span class="mini">학습 step</span><input class="in" id="t-steps" type="number" step="1000"></div>
+          <div><span class="mini">batch</span><input class="in" id="t-batch_size" type="number"></div>
+          <div><span class="mini">이미지 W×H</span><select class="in" id="t-image">
+            <option value="auto">데이터셋 그대로</option><option value="320x240">320×240</option>
+            <option value="640x480">640×480</option><option value="160x120">160×120 (빠름)</option></select></div>
+          <div><span class="mini">chunk (스텝)</span><input class="in" id="t-chunk_size" type="number"></div>
+          <div><span class="mini">KL 가중</span><input class="in" id="t-kl_weight" type="number" step="1"></div>
+          <div><span class="mini">lr</span><input class="in" id="t-lr" type="number" step="0.000001"></div>
+          <div><span class="mini">검증 비율</span><input class="in" id="t-val_frac" type="number" step="0.05"></div>
+          <div><span class="mini">dataloader workers</span><input class="in" id="t-num_workers" type="number"></div>
+          <div><span class="mini">검증 주기 step</span><input class="in" id="t-eval_every" type="number" step="500"></div>
+        </div>
+        <div class="row" style="gap:18px">
+          <label class="sw"><input type="checkbox" id="t-augment"><span class="tr"></span><span>증강 (이동 ±2 %·밝기)</span></label>
+          <label class="sw"><input type="checkbox" id="t-amp"><span class="tr"></span><span>bf16 AMP</span></label>
+        </div>
+        <button class="btn primary" style="width:100%;margin-top:12px;padding:10px" onclick="addJob()">▶ 학습 큐에 넣기</button>
+        <div class="hint">기본값 = LeRobot ACT 기본 (lr 1e-5, batch 8, chunk 100, KL 10, 디코더 1 층). chunk 100 = 30 Hz 에서 3.3 초.
+          끝나면 자동으로 OpenVINO IR 변환 → <b>model zip</b>.</div>
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-h">Jobs <span class="tag" id="job-tag"></span></div>
+      <div class="card-b"><div style="max-height:340px;overflow-y:auto"><table class="tbl" id="job-tbl"></table></div></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card fill">
+      <div class="card-h">Job <span class="tag" id="jd-tag">-</span></div>
+      <div class="card-b">
+        <div class="row">
+          <button class="btn primary grow" id="jd-dl" onclick="dlZip()">⬇ model zip (로봇으로)</button>
+          <button class="btn sm" id="jd-finish" onclick="jobAct('finish')" title="지금까지 학습한 것으로 변환·마무리">지금 마치기</button>
+          <button class="btn warn sm" id="jd-cancel" onclick="jobAct('cancel')">취소</button>
+        </div>
+        <div class="prog"><b id="jd-bar"></b></div>
+        <div class="metrics">
+          <div class="m"><span>step</span><b id="jd-step">-</b></div>
+          <div class="m"><span>loss</span><b id="jd-loss">-</b></div>
+          <div class="m"><span>val 오차 °</span><b id="jd-val">-</b></div>
+          <div class="m"><span>남은 시간</span><b id="jd-eta">-</b></div>
+        </div>
+        <canvas id="cv" width="800" height="300"></canvas>
+        <div class="hint">파랑 = 학습 loss (L1 + KL·가중, 로그 눈금) · 주황 = 검증 L1 (정규화 단위, 정책 추론과 같은 방식) ·
+          val 오차 = 검증 에피소드에서 관절 평균 오차 [°]</div>
+        <div class="err-line" id="jd-err"></div>
+        <pre class="log" id="jd-log"></pre>
+      </div>
+    </div>
+  </div>
+</div>
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+let KEY = localStorage.getItem('trainer_key') || '', selDs = '', selJob = '', DEF = null, jobsCache = [];
+function setKey(){ const k = prompt('접근 키 (trainer 서버를 띄울 때 터미널에 나옴)', KEY); if(k !== null){ KEY = k.trim(); localStorage.setItem('trainer_key', KEY); refresh(); } }
+function toast(m, err){ const t = $('toast'); t.textContent = m; t.className = 'show' + (err ? ' err' : ''); clearTimeout(t._h); t._h = setTimeout(() => t.className = '', err ? 5000 : 2500); }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+async function api(method, url, body, text){
+  try{
+    const r = await fetch(url, {method, headers: Object.assign({'X-Key': KEY}, body ? {'Content-Type': 'application/json'} : {}),
+                                body: body ? JSON.stringify(body) : undefined});
+    if(r.status === 401){ $('livedot').className = 'dot err'; if(!api._asked){ api._asked = 1; setKey(); api._asked = 0; } return null; }
+    $('livedot').className = 'dot live';
+    if(text) return await r.text();
+    const d = await r.json().catch(() => ({}));
+    if(!r.ok){ toast(d.detail || `HTTP ${r.status}`, true); return null; }
+    return d;
+  }catch(e){ $('livedot').className = 'dot err'; return null; }
+}
+function chip(id, label, val, cls){ const c = $(id); c.className = 'chip ' + (cls || ''); c.innerHTML = `${label} <b>${val}</b>`; }
+const hms = s => s == null ? '-' : (s >= 3600 ? `${Math.floor(s/3600)}h${String(Math.floor(s%3600/60)).padStart(2,'0')}m` : `${Math.floor(s/60)}m${String(s%60).padStart(2,'0')}s`);
+
+async function loadInfo(){
+  const d = await api('GET', '/api/info'); if(!d) return;
+  const g = (d.gpus || [])[0] || {};
+  if(g.error) chip('chip-gpu', 'GPU', '없음', 'err');
+  else chip('chip-gpu', 'GPU', `${g.name.replace('NVIDIA ','').replace('GeForce ','')} · ${(g.mem_used/1024).toFixed(1)}/${(g.mem_total/1024).toFixed(0)} GB · ${g.util}% · ${g.temp}°C`, g.util > 50 ? 'busy' : 'ok');
+  chip('chip-q', 'Queue', `${d.queue.running} 실행 · ${d.queue.queued} 대기`, d.queue.running ? 'busy' : 'ok');
+  chip('chip-ver', 'torch', `${d.torch || '없음'} · ov ${d.openvino || '없음'}`, d.torch && d.openvino ? 'info' : 'err');
+  chip('chip-disk', 'Disk', `${d.disk_free_gb} GB`, d.disk_free_gb < 20 ? 'err' : 'ok');
+  const rows = [['GPU', g.error ? esc(g.error) : esc(g.name)], ['드라이버', g.driver || '-'],
+    ['VRAM', g.mem_total ? `${(g.mem_used/1024).toFixed(1)} / ${(g.mem_total/1024).toFixed(1)} GB` : '-'],
+    ['torch', d.torch || '<span style="color:var(--warn)">없음</span>'], ['torchvision', d.torchvision || '-'],
+    ['openvino', d.openvino || '<span style="color:var(--warn)">없음</span>'], ['python', d.python], ['디스크 여유', d.disk_free_gb + ' GB']];
+  $('sys-tbl').innerHTML = rows.map(r => `<tr><td style="color:var(--dim)">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  if(!DEF){
+    DEF = d.defaults;
+    for(const k of ['steps','batch_size','chunk_size','kl_weight','lr','val_frac','num_workers','eval_every']) $('t-' + k).value = DEF[k];
+    $('t-image').value = DEF.image; $('t-augment').checked = DEF.augment; $('t-amp').checked = DEF.amp;
+  }
+}
+
+// ---------------- 데이터셋 ----------------
+async function loadDs(){
+  const d = await api('GET', '/api/datasets'); if(!d) return;
+  $('ds-tag').textContent = `${d.length}개`;
+  if(!selDs && d.length) selDs = d[d.length - 1].name;
+  $('ds-tbl').innerHTML = '<tr><th>데이터셋</th><th class="num">성공/전체</th><th class="num">분</th><th class="num">MB</th><th>이미지</th><th></th></tr>' +
+    d.map(x => `<tr class="${x.name === selDs ? 'cur' : ''}" onclick="pickDs('${x.name}')"><td>${esc(x.name)}</td>
+      <td class="num">${x.ok}/${x.episodes}</td><td class="num">${x.minutes}</td><td class="num">${x.size_mb}</td>
+      <td>${x.image ? x.image.w + '×' + x.image.h : '-'}</td><td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
+  $('sel-ds').textContent = selDs || '데이터셋 선택';
+}
+function pickDs(n){ selDs = n; loadDs(); }
+async function delDs(n){ if(!confirm(`데이터셋 ${n} 삭제?`)) return; if(await api('DELETE', `/api/datasets/${n}`)){ if(selDs === n) selDs = ''; loadDs(); } }
+function uploadDs(){
+  const f = $('ds-file').files[0]; if(!f){ toast('zip 을 고르세요', true); return; }
+  const x = new XMLHttpRequest();
+  x.open('PUT', `/api/datasets/upload?filename=${encodeURIComponent(f.name)}`);
+  x.setRequestHeader('X-Key', KEY);
+  $('up-prog').style.display = '';
+  x.upload.onprogress = e => { if(e.lengthComputable){ $('up-bar').style.width = (e.loaded / e.total * 100) + '%';
+    $('up-text').textContent = `업로드 ${(e.loaded/1e6).toFixed(0)} / ${(e.total/1e6).toFixed(0)} MB${e.loaded === e.total ? ' — 푸는 중...' : ''}`; } };
+  x.onload = () => {
+    let d = {}; try{ d = JSON.parse(x.responseText); }catch(e){}
+    if(x.status === 200){ toast(`업로드됨: ${d.name} (${d.ok} ep)`); selDs = d.name; $('ds-file').value = '';
+      $('up-text').textContent = `${d.name}: 성공 ${d.ok}/${d.episodes} ep · ${d.frames} 프레임 · ${d.minutes} 분`; loadDs(); }
+    else { toast(d.detail || `HTTP ${x.status}`, true); $('up-text').textContent = '실패: ' + (d.detail || x.status); }
+    $('up-prog').style.display = 'none';
+  };
+  x.onerror = () => { toast('업로드 실패', true); $('up-prog').style.display = 'none'; };
+  x.send(f);
+}
+
+// ---------------- 작업 ----------------
+async function addJob(){
+  if(!selDs){ toast('데이터셋을 고르세요', true); return; }
+  const p = {name: $('t-name').value.trim(), image: $('t-image').value, augment: $('t-augment').checked, amp: $('t-amp').checked};
+  for(const k of ['steps','batch_size','chunk_size','num_workers','eval_every']) p[k] = parseInt($('t-' + k).value);
+  for(const k of ['kl_weight','lr','val_frac']) p[k] = parseFloat($('t-' + k).value);
+  const d = await api('POST', '/api/jobs', {dataset: selDs, params: p});
+  if(d){ toast(`큐에 넣음: ${d.id}`); selJob = d.id; loadJobs(); }
+}
+async function loadJobs(){
+  const d = await api('GET', '/api/jobs'); if(!d) return;
+  jobsCache = d;
+  if(!selJob && d.length) selJob = d[0].id;
+  $('job-tag').textContent = `${d.length}개`;
+  $('job-tbl').innerHTML = '<tr><th>작업</th><th>데이터셋</th><th>상태</th><th class="num">진행</th><th class="num">val°</th><th></th></tr>' +
+    d.map(j => `<tr class="${j.id === selJob ? 'cur' : ''}" onclick="pickJob('${j.id}')"><td title="${esc(j.params.name)}">${j.id}</td><td>${esc(j.dataset)}</td>
+      <td><span class="st ${j.status}">${j.status}</span></td>
+      <td class="num">${j.status === 'running' ? Math.round(j.step / j.total * 100) + '%' : (j.step ? j.step : '-')}</td>
+      <td class="num">${j.val_err_deg != null ? (+j.val_err_deg).toFixed(2) : '-'}</td>
+      <td class="x" onclick="event.stopPropagation();delJob('${j.id}')">✕</td></tr>`).join('');
+}
+function pickJob(id){ selJob = id; loadJobs(); loadJob(); }
+async function delJob(id){ if(!confirm(`작업 ${id} 와 결과 파일 삭제?`)) return; if(await api('DELETE', `/api/jobs/${id}`)){ if(selJob === id) selJob = ''; loadJobs(); } }
+async function jobAct(a){
+  if(!selJob) return;
+  if(a === 'cancel' && !confirm('학습을 취소합니다 (model zip 안 만듦). 계속?')) return;
+  if(await api('POST', `/api/jobs/${selJob}/${a}`)) toast(a === 'finish' ? '지금까지 학습한 것으로 변환합니다' : '취소 요청');
+  loadJobs();
+}
+function dlZip(){ if(selJob) location.href = `/api/jobs/${selJob}/model.zip?key=${encodeURIComponent(KEY)}`; }
+
+function draw(j){
+  const cv = $('cv'), c = cv.getContext('2d'), W = cv.width, H = cv.height, P = 34;
+  c.clearRect(0, 0, W, H);
+  const tr = (j.curve || []).filter(p => p[1] > 0), vl = (j.vcurve || []).filter(p => p[1] > 0);
+  if(!tr.length){ c.fillStyle = '#6b7785'; c.font = '20px monospace'; c.fillText('loss 기록 없음', P + 10, H / 2); return; }
+  const all = tr.map(p => p[1]).concat(vl.map(p => p[1]));
+  const lo = Math.log10(Math.min(...all)), hi = Math.log10(Math.max(...all)) + 1e-6, xmax = Math.max(j.total || 1, ...tr.map(p => p[0]));
+  const X = s => P + (W - P - 8) * s / xmax, Y = v => 8 + (H - P - 8) * (1 - (Math.log10(v) - lo) / (hi - lo || 1));
+  c.strokeStyle = '#2a3340'; c.fillStyle = '#6b7785'; c.font = '16px monospace'; c.lineWidth = 1;
+  for(let e = Math.floor(lo); e <= Math.ceil(hi); e++){ const y = Y(10 ** e); if(y < 4 || y > H - P + 4) continue;
+    c.beginPath(); c.moveTo(P, y); c.lineTo(W, y); c.stroke(); c.fillText(`1e${e}`, 0, y + 5); }
+  c.fillText(`${xmax} step`, W - 140, H - 8);
+  const line = (pts, col, w) => { c.strokeStyle = col; c.lineWidth = w; c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(X(p[0]), Y(p[1])) : c.moveTo(X(p[0]), Y(p[1]))); c.stroke(); };
+  line(tr, '#00b7eb', 2); if(vl.length) line(vl, '#ffb454', 2.5);
+}
+async function loadJob(){
+  if(!selJob) return;
+  const j = await api('GET', `/api/jobs/${selJob}`); if(!j) return;
+  $('jd-tag').textContent = `${j.id} · ${j.params.name}`;
+  $('jd-bar').style.width = (j.step / (j.total || 1) * 100) + '%';
+  $('jd-step').textContent = `${j.step}/${j.total}`;
+  $('jd-loss').textContent = j.loss != null ? (+j.loss).toFixed(4) : '-';
+  $('jd-val').textContent = j.val_err_deg != null ? (+j.val_err_deg).toFixed(2) : '-';
+  $('jd-eta').textContent = j.status === 'running' ? (j.phase === 'export' ? '변환 중' : hms(j.eta_s)) :
+    (j.status === 'done' && j.finished && j.started ? '걸림 ' + hms(Math.round(j.finished - j.started)) : j.status);
+  $('jd-dl').disabled = !j.zip; $('jd-finish').disabled = j.status !== 'running'; $('jd-cancel').disabled = !['running','queued'].includes(j.status);
+  $('jd-err').textContent = j.error ? '오류: ' + j.error : (j.export_diff_deg != null ? `OpenVINO 변환 검사: torch 와 최대 차이 ${(+j.export_diff_deg).toFixed(3)}°` : '');
+  draw(j);
+  const lg = await api('GET', `/api/jobs/${selJob}/log?tail=200`, null, true);
+  if(lg != null){ const el = $('jd-log'), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 20; el.textContent = lg; if(atEnd) el.scrollTop = el.scrollHeight; }
+}
+function refresh(){ loadInfo(); loadDs(); loadJobs(); loadJob(); }
+setInterval(loadInfo, 3000); setInterval(loadJobs, 1500); setInterval(loadJob, 2000); setInterval(loadDs, 10000);
+refresh();
+</script>
+</body></html>

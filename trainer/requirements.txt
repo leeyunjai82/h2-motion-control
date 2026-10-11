@@ -1,0 +1,7 @@
+# 학습 PC (RTX 5090) — torch / torchvision 은 먼저 따로 설치 (README: CUDA 12.8 이상 빌드)
+#   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
+# openvino 는 로봇 PC 와 같은 버전으로 (README — 학습 PC 가 더 새 버전이면 로봇이 IR 을 못 읽을 수 있음)
+fastapi>=0.110
+uvicorn>=0.29
+numpy
+opencv-python-headless

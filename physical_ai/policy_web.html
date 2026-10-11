@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<!-- Version: 1.0
+  1.0 - 피지컬 AI (ACT) 로봇 PC 화면: 수집(잡기 연동·수동·자동 반복) · 에피소드 · 데이터셋 zip · 모델 업로드/로드 · 정책 실행(안전 필터)
+        색·글꼴·카드는 제어 UI(common/robot_web.html 2.25)와 같음 -->
+<html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pitron physical AI</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
+  --ink:#c9d4e0; --dim:#6b7785;
+  --accent:#00b7eb; --accent2:#7fd8f5; --accent-tint:rgba(0,183,235,.20); --accent-deep:#08465a;
+  --ok:#3ddc97; --warn:#ff6b6b; --amber:#ffb454; --rec:#ff4d5e;
+  --r:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
+  background:var(--bg);color:var(--ink);font-size:13px;line-height:1.4;
+  background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
+.logo{font-weight:700;letter-spacing:.5px;font-size:15px;color:var(--accent)}
+.logo b{color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}
+.dot.err{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.topbar .right{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:11px;color:var(--dim)}
+.topbar a{color:var(--accent2);text-decoration:none}
+.topbar a:hover{text-decoration:underline}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:4px 10px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--dim);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:700}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.ok{color:var(--ok);border-color:#1f5a43}
+.chip.info{color:var(--accent);border-color:#0b5a70}
+.chip.busy{color:var(--amber);border-color:#6a4a1f}
+.chip.err{color:var(--warn);border-color:#5a2b2b}
+
+.grid{display:grid;grid-template-columns:3fr 4fr 3.4fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
+.card.fill{flex:1 1 0;min-height:300px;display:flex;flex-direction:column}
+.card.fill>.card-b{flex:1;min-height:0;display:flex;flex-direction:column}
+.card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
+  padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;
+  background:var(--panel2);gap:8px}
+.card-h .tag{color:var(--accent);font-weight:700;text-transform:none;letter-spacing:.3px}
+.card-b{padding:13px}
+
+.btn{font-family:inherit;font-size:12px;background:var(--panel2);border:1px solid var(--line);
+  color:var(--ink);padding:8px 9px;border-radius:7px;cursor:pointer;transition:.12s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}
+.btn:active{transform:translateY(1px)}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.btn.on{background:var(--accent-tint);color:#c8f0fc;border-color:var(--accent);font-weight:700}
+.btn.primary{background:var(--accent);color:#04121f;border:none;font-weight:700}
+.btn.primary:hover{background:#33c5ef;color:#04121f}
+.btn.warn{border-color:#5a2b2b;color:var(--warn)}
+.btn.warn:hover{border-color:var(--warn)}
+.btn.stop{background:#3a1418;border:1px solid var(--warn);color:#ffd6d9;font-weight:700;font-size:14px}
+.btn.stop:hover{background:#5a1a20;color:#fff}
+.btn.rec{border-color:#6a2a30;color:var(--rec)}
+.btn.sm{padding:3px 8px;font-size:11px}
+.row{display:flex;gap:6px;align-items:center}.row>.grow{flex:1}
+.row.eq>*{flex:1}
+.hint{font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5}
+.hint b{color:var(--ink);font-weight:400}
+.fld{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.fld.three{grid-template-columns:1fr 1fr 1fr}
+.mini{font-size:10px;color:var(--dim);margin-bottom:3px;display:block}
+.in{width:100%;background:#0c1117;border:1px solid var(--line);color:var(--ink);
+  padding:6px;border-radius:6px;font-family:inherit;font-size:12px}
+.in:focus{outline:none;border-color:var(--accent2)}
+select.in{padding:5px}
+.sw{display:flex;align-items:center;gap:10px;margin-top:10px;cursor:pointer;user-select:none}
+.sw input{display:none}
+.sw .tr{width:34px;height:18px;border-radius:9px;background:var(--line);position:relative;transition:.15s;flex:none}
+.sw .tr::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dim);transition:.15s}
+.sw input:checked+.tr{background:var(--accent-deep)}
+.sw input:checked+.tr::after{left:18px;background:var(--accent)}
+.statusline{margin-top:10px;display:flex;gap:8px;align-items:center;font-size:12px;
+  padding:8px 11px;border:1px solid var(--line);border-radius:8px;background:var(--panel2);min-height:36px}
+.statusline .lbl{color:var(--dim)}
+.statusline.rec{border-color:var(--rec);color:#ffc2c8}
+.statusline.busy{border-color:var(--amber);color:var(--amber)}
+.statusline.ok{border-color:#1f5a43;color:var(--ok)}
+.statusline.err{border-color:#5a2b2b;color:var(--warn)}
+@keyframes blink{50%{opacity:.25}}
+.recdot{width:9px;height:9px;border-radius:50%;background:var(--rec);animation:blink 1s infinite;flex:none}
+
+/* camera */
+.cam-wrap{position:relative;background:#05080c;border-radius:var(--r);overflow:hidden;border:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;flex:1;min-height:0;width:100%}
+.cam-wrap img{width:100%;height:100%;object-fit:contain;display:block}
+.cam-badge{position:absolute;top:10px;left:10px;font-size:10px;letter-spacing:1px;background:#000a;border:1px solid var(--line);
+  padding:4px 9px;border-radius:6px;color:var(--accent)}
+.cam-badge.rec{color:var(--rec);border-color:var(--rec);animation:blink 1s infinite}
+.cam-badge.run{color:#04121f;background:var(--accent);border-color:var(--accent)}
+.cam-ov{position:absolute;top:10px;right:10px;background:#000b;border:1px solid var(--line);border-radius:8px;
+  padding:6px 10px;font-size:11px;line-height:1.6;min-width:140px;pointer-events:none}
+.cam-ov .r{display:flex;justify-content:space-between;gap:12px}.cam-ov .r span:first-child{color:var(--dim)}
+.stages{display:flex;gap:3px;margin-top:8px;flex:none}
+.stages .sg{flex:1;min-width:0;text-align:center;font-size:10px;padding:5px 1px;letter-spacing:-.3px;border-radius:5px;
+  background:var(--panel2);border:1px solid var(--line);color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stages .sg.done{color:var(--ok);border-color:#1f5a43;background:#12261d}
+.stages .sg.cur{color:#05221a;background:var(--amber);border-color:var(--amber);font-weight:700}
+
+/* 시작 조건 */
+.pre{display:grid;grid-template-columns:1fr 1fr;gap:3px 12px;margin-top:10px;font-size:11.5px}
+.pre .p{display:flex;align-items:center;gap:7px;min-width:0}
+.pre .p::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--warn);flex:none}
+.pre .p.ok::before{background:var(--ok)}
+.pre .p .d{color:var(--dim);font-size:10.5px;margin-left:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:55%}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
+.metrics .m{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
+.metrics .m span{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.5px}
+.metrics .m b{font-size:14px}
+/* 관절 막대 */
+.jbars{display:grid;grid-template-columns:1fr 1fr;gap:3px 14px;margin-top:10px}
+.jb{display:grid;grid-template-columns:86px 1fr 46px;gap:6px;align-items:center;font-size:10.5px}
+.jb .n{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.jb .v{text-align:right}
+.jb .tr{position:relative;height:9px;background:#0c1117;border:1px solid var(--line);border-radius:3px}
+.jb .tr i{position:absolute;top:-2px;width:2px;height:11px;background:var(--accent)}
+.jb .tr i.t{background:var(--amber);width:2px}
+
+/* 표 */
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{font-weight:400;color:var(--dim);font-size:10px;text-align:left;padding:0 5px 4px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+.tbl td{padding:4px 5px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+.tbl tr:hover td{background:var(--panel2)}
+.tbl tr.cur td{background:var(--accent-tint)}
+.tbl .num{text-align:right}
+.tbl .x{color:var(--dim);cursor:pointer;padding:0 4px}.tbl .x:hover{color:var(--warn)}
+.okb{color:var(--ok)}.ngb{color:var(--warn)}
+.scroll{max-height:260px;overflow-y:auto}
+.thumb{position:fixed;z-index:60;border:1px solid var(--accent);border-radius:6px;pointer-events:none;width:240px;display:none;background:#000}
+
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel2);
+  border:1px solid var(--accent);color:var(--accent);padding:9px 16px;border-radius:8px;opacity:0;transition:.25s;
+  pointer-events:none;z-index:99;max-width:80vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+#toast.err{border-color:var(--warn);color:var(--warn)}
+
+@media(max-height:1000px){
+  .grid{gap:10px;padding:10px}.col{gap:9px}.card-h{padding:7px 12px}.card-b{padding:10px}
+  .btn{padding:6px 8px}.in{padding:4px 6px}.topbar{padding:8px 16px}
+}
+@media(max-width:1200px),(max-height:699px){
+  body{height:auto;min-height:100vh;overflow:auto}
+  .grid{overflow:visible;flex:none}
+  .col{overflow:visible}
+  .card.fill{flex:none;min-height:0}
+  .cam-wrap{flex:none;aspect-ratio:4/3}
+}
+@media(max-width:1200px){
+  .grid{grid-template-columns:1fr 1fr}
+  .col-center{grid-column:1/-1;order:-1}
+  .col-center .cam-wrap{max-height:60vh}
+}
+@media(max-width:700px){
+  .grid{grid-template-columns:1fr}
+  .col-center{grid-column:auto}
+  .topbar{flex-wrap:wrap}
+  .topbar .right{margin-left:0;width:100%;flex-wrap:wrap}
+  .jbars,.pre{grid-template-columns:1fr}
+  .metrics{grid-template-columns:1fr 1fr}
+}
+</style></head>
+<body>
+
+<div class="topbar">
+  <span class="dot" id="livedot"></span>
+  <span class="logo">pitron<b>·physical AI</b></span>
+  <span style="color:var(--dim);font-size:11px">ACT · 50030</span>
+  <div class="right">
+    <div class="chips">
+      <span class="chip" id="chip-arm">Arm <b>-</b></span>
+      <span class="chip" id="chip-robot">Grab <b>-</b></span>
+      <span class="chip" id="chip-cam">Camera <b>-</b></span>
+      <span class="chip" id="chip-dds">DDS <b>-</b></span>
+      <span class="chip" id="chip-model">Model <b>-</b></span>
+    </div>
+    <a id="link-ctl" href="#">control ↗</a>
+  </div>
+</div>
+
+<div class="grid">
+  <!-- ===================== 왼쪽: 수집 ===================== -->
+  <div class="col">
+    <div class="card">
+      <div class="card-h">Collect · 수집 <span class="tag" id="ds-tag">-</span></div>
+      <div class="card-b">
+        <span class="mini">데이터셋</span>
+        <div class="row">
+          <select class="in grow" id="ds-sel" onchange="setDataset(this.value)"></select>
+          <button class="btn sm" onclick="newDataset()">새로</button>
+        </div>
+        <label class="sw"><input type="checkbox" id="rec-link" onchange="saveSet({record:{link:this.checked}})"><span class="tr"></span>
+          <span>잡기 연동 기록 <span style="color:var(--dim);font-size:11px">— 잡기(Grab Now·자동 잡기)가 돌 때마다 1 에피소드</span></span></label>
+        <div class="fld">
+          <div><span class="mini">저장 해상도</span>
+            <select class="in" id="rec-image" onchange="saveSet({record:{image:this.value}})">
+              <option value="320x240">320×240 (용량 1/4)</option><option value="640x480">640×480 원본</option></select></div>
+          <div><span class="mini">기록 범위</span>
+            <select class="in" id="rec-until" onchange="saveSet({record:{until:this.value}})">
+              <option value="all">복귀까지 (전체)</option><option value="lift">들기까지</option></select></div>
+        </div>
+        <label class="sw"><input type="checkbox" id="rec-failed" onchange="saveSet({record:{save_failed:this.checked}})"><span class="tr"></span>
+          <span>실패한 잡기도 저장</span></label>
+        <div class="row eq" style="margin-top:10px">
+          <button class="btn rec" id="btn-rec" onclick="api('POST','/api/record/start')">● 수동 기록</button>
+          <button class="btn" id="btn-recstop" onclick="api('POST','/api/record/stop')">■ 기록 정지</button>
+        </div>
+        <div class="statusline" id="rec-line"><span class="lbl">기록</span><span id="rec-text">대기</span></div>
+        <div class="hint">30 Hz · D435i RGB + 팔 14축 실측(rt/lowstate) + 지령(rt/arm_sdk) + 손 위치 + 잡기 단계.
+          잡기 성공(복귀까지 감)만 저장 — robot_server <b>/grab_history</b> 기준.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Auto Repeat · 자동 반복 <span class="tag" id="auto-tag"></span></div>
+      <div class="card-b">
+        <div class="fld three" style="margin-top:0">
+          <div><span class="mini">횟수</span><input class="in" id="au-count" type="number" min="1" max="500"></div>
+          <div><span class="mini">쉬는 시간 s</span><input class="in" id="au-pause" type="number" min="0" step="1"></div>
+          <div><span class="mini">박스 대기 s</span><input class="in" id="au-wait" type="number" min="3" step="1"></div>
+        </div>
+        <div class="fld">
+          <div><span class="mini">잡은 뒤</span>
+            <select class="in" id="au-handover"><option value="place">place — 제자리 내려놓기</option>
+              <option value="center">center — 건네기</option></select></div>
+          <div style="display:flex;align-items:flex-end"><label class="sw" style="margin:0 0 4px"><input type="checkbox" id="au-off"><span class="tr"></span><span style="font-size:11.5px">끝나면 모드 OFF</span></label></div>
+        </div>
+        <label class="sw" id="au-sim-row" style="display:none"><input type="checkbox" id="au-sim"><span class="tr"></span>
+          <span>시뮬: 매 회 박스 위치 무작위</span></label>
+        <div class="row eq" style="margin-top:10px">
+          <button class="btn primary" id="btn-auto" onclick="autoStart()">▶ 자동 수집 시작</button>
+          <button class="btn warn" onclick="api('POST','/api/auto/stop')">■ 중지</button>
+        </div>
+        <div class="statusline" id="auto-line"><span class="lbl">자동</span><span id="auto-text">대기</span></div>
+        <div class="hint">Box 모드 → 박스 보이면 잡기 → 끝나면 <b>쉬는 시간</b> 동안 박스를 다른 자리로 옮기세요 → 반복.
+          <b>place</b> 권장 (건네기는 '받기 대기' 2 초 정지가 있어 정책이 멈춰 버리기 쉬움).
+          잡은 뒤 방식은 제어 UI 설정도 같이 바꿉니다.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 가운데: 카메라 + 정책 실행 ===================== -->
+  <div class="col col-center">
+    <div class="card fill">
+      <div class="card-h">Camera · 정책 입력 <span class="tag" id="cam-tag">D435i RGB</span></div>
+      <div class="card-b">
+        <div class="cam-wrap">
+          <img id="cam" alt="">
+          <span class="cam-badge" id="cam-badge">LIVE</span>
+          <div class="cam-ov" id="cam-ov"></div>
+        </div>
+        <div class="stages" id="stages"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Policy Run · 추론 <span class="tag" id="run-tag">정지</span></div>
+      <div class="card-b">
+        <div class="row eq">
+          <button class="btn primary" id="btn-run" onclick="runStart()" style="font-size:14px;padding:11px">▶ 정책 시작</button>
+          <button class="btn stop" onclick="runStop()" style="padding:11px">■ STOP (Esc)</button>
+        </div>
+        <div class="pre" id="pre"></div>
+        <div class="metrics">
+          <div class="m"><span>단계</span><b id="m-phase">-</b></div>
+          <div class="m"><span>시간 s</span><b id="m-run">-</b></div>
+          <div class="m"><span>루프 Hz</span><b id="m-hz">-</b></div>
+          <div class="m"><span>추론 ms</span><b id="m-inf">-</b></div>
+          <div class="m"><span>스텝</span><b id="m-steps">-</b></div>
+          <div class="m"><span>속도 제한</span><b id="m-vel">-</b></div>
+          <div class="m"><span>범위 자름</span><b id="m-clip">-</b></div>
+          <div class="m"><span>거부</span><b id="m-rej">-</b></div>
+        </div>
+        <div class="statusline" id="run-line"><span class="lbl">정지 사유</span><span id="run-why">-</span></div>
+        <div class="jbars" id="jbars"></div>
+        <div class="hint">시작하면 데이터셋 첫 자세로 천천히 이동 → 정책. 막대: 회색 칸 = 허용 범위(데이터셋 ± 여유),
+          <span style="color:var(--accent)">파랑</span> = 실측, <span style="color:var(--amber)">주황</span> = 지령.
+          STOP 은 정책만 멈추고 팔은 그 자리 유지 (박스를 들고 있을 수 있음).</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================== 오른쪽: 데이터셋 · 모델 · 설정 ===================== -->
+  <div class="col">
+    <div class="card">
+      <div class="card-h">Episodes <span class="tag" id="ep-tag">-</span></div>
+      <div class="card-b">
+        <div class="scroll" style="max-height:200px"><table class="tbl" id="ep-tbl"></table></div>
+        <div class="row" style="margin-top:10px">
+          <button class="btn primary grow" onclick="dlZip()">⬇ 데이터셋 zip (학습 PC 로)</button>
+          <button class="btn warn sm" onclick="delDataset()">데이터셋 삭제</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Models <span class="tag" id="md-tag">-</span></div>
+      <div class="card-b">
+        <div class="row">
+          <input class="in grow" type="file" id="md-file" accept=".zip">
+          <button class="btn sm" onclick="uploadModel()">업로드</button>
+        </div>
+        <div class="row" style="margin-top:8px"><span class="mini" style="margin:0">실행 장치</span>
+          <select class="in grow" id="md-dev"></select></div>
+        <div class="scroll" style="margin-top:8px;max-height:180px"><table class="tbl" id="md-tbl"></table></div>
+        <div class="hint" id="md-hint"></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Policy · Safety 설정</div>
+      <div class="card-b">
+        <div class="fld three" style="margin-top:0">
+          <div><span class="mini">실행 방식</span><select class="in" id="p-mode"><option value="ensemble">앙상블 (매 스텝)</option><option value="chunk">청크</option></select></div>
+          <div><span class="mini">앙상블 계수</span><input class="in" id="p-coeff" type="number" step="0.005"></div>
+          <div><span class="mini">청크 스텝</span><input class="in" id="p-steps" type="number" min="1"></div>
+        </div>
+        <div class="fld three">
+          <div><span class="mini">최대 속도 rad/s</span><input class="in" id="s-max_vel" type="number" step="0.1" min="0.1" max="3"></div>
+          <div><span class="mini">관절 여유 °</span><input class="in" id="s-margin_deg" type="number" step="1"></div>
+          <div><span class="mini">손 공간 여유 m</span><input class="in" id="s-ws_margin_m" type="number" step="0.01"></div>
+          <div><span class="mini">최대 시간 s</span><input class="in" id="s-max_run_s" type="number" step="5"></div>
+          <div><span class="mini">추종 오차 °</span><input class="in" id="s-track_err_deg" type="number" step="1"></div>
+          <div><span class="mini">정지 온도 °C</span><input class="in" id="s-temp_stop_c" type="number" step="1"></div>
+          <div><span class="mini">토크 비율</span><input class="in" id="s-torque_ratio" type="number" step="0.05"></div>
+          <div><span class="mini">연속 거부</span><input class="in" id="s-max_reject" type="number" step="1"></div>
+          <div style="display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="savePolicySet()">저장</button></div>
+        </div>
+        <div class="hint">정지 온도는 소프트웨어 정지값 — H2 팔 모터 자체 보호 온도는 <b>확인 필요</b>.
+          토크 비율 = |tau_est| ÷ URDF effort. 다음 실행부터 적용.</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Run History</div>
+      <div class="card-b"><div class="scroll" style="max-height:160px"><table class="tbl" id="hist-tbl"></table></div></div>
+    </div>
+  </div>
+</div>
+
+<img class="thumb" id="thumb" alt="">
+<div id="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const host = location.hostname;
+$('link-ctl').href = `http://${host}:50000/`;
+$('cam').src = '/video_feed';
+let S = null, lastRecT = 0, epsFor = '', settingsFilled = false, models = [];
+
+function toast(msg, err){
+  const t = $('toast'); t.textContent = msg; t.className = 'show' + (err ? ' err' : '');
+  clearTimeout(t._h); t._h = setTimeout(() => t.className = '', err ? 5000 : 2500);
+}
+async function api(method, url, body){
+  try{
+    const r = await fetch(url, {method, headers: body ? {'Content-Type':'application/json'} : {},
+                                body: body ? JSON.stringify(body) : undefined});
+    const d = await r.json().catch(() => ({}));
+    if(!r.ok){ toast(d.detail || `HTTP ${r.status}`, true); return null; }
+    return d;
+  }catch(e){ toast('서버 연결 실패: ' + e, true); return null; }
+}
+function chip(id, label, val, cls){ const c = $(id); c.className = 'chip ' + (cls||''); c.innerHTML = `${label} <b>${val}</b>`; }
+function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+const f1 = v => (v == null || isNaN(v)) ? '-' : (+v).toFixed(1);
+
+// ---------------- 설정 ----------------
+async function saveSet(obj){ const d = await api('POST', '/api/settings', obj); if(d){ S && (S.settings = d.settings); } }
+function fillSettings(st){
+  $('rec-link').checked = st.record.link; $('rec-image').value = st.record.image;
+  $('rec-until').value = st.record.until; $('rec-failed').checked = st.record.save_failed;
+  if(settingsFilled) return;           // 입력 중인 값을 폴링이 덮지 않게 — 처음 한 번만
+  settingsFilled = true;
+  const a = st.auto;
+  $('au-count').value = a.count; $('au-pause').value = a.pause_s; $('au-wait').value = a.wait_box_s;
+  $('au-handover').value = a.handover; $('au-off').checked = a.mode_off_after; $('au-sim').checked = a.sim_random;
+  const p = st.policy;
+  $('p-mode').value = p.mode; $('p-coeff').value = p.coeff; $('p-steps').value = p.n_action_steps;
+  for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','temp_stop_c','torque_ratio','max_reject'])
+    $('s-' + k).value = st.safety[k];
+}
+async function savePolicySet(){
+  const safety = {};
+  for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','temp_stop_c','torque_ratio','max_reject'])
+    safety[k] = parseFloat($('s-' + k).value);
+  const d = await api('POST', '/api/settings', {policy: {mode: $('p-mode').value, coeff: parseFloat($('p-coeff').value),
+                                                n_action_steps: parseInt($('p-steps').value)}, safety});
+  if(d) toast('저장됨 — 다음 실행부터');
+}
+
+// ---------------- 데이터셋 ----------------
+async function loadDatasets(){
+  const d = await api('GET', '/api/datasets'); if(!d) return;
+  const sel = $('ds-sel'); sel.innerHTML = '';
+  for(const ds of d.datasets){
+    const o = document.createElement('option'); o.value = ds.name;
+    o.textContent = `${ds.name} — ${ds.episodes} ep · ${ds.minutes} 분 · ${ds.size_mb} MB`;
+    sel.appendChild(o);
+  }
+  sel.value = d.current; $('ds-tag').textContent = d.current;
+}
+async function setDataset(name){ await saveSet({dataset: name}); epsFor = ''; loadDatasets(); loadEpisodes(); }
+async function newDataset(){
+  const n = prompt('새 데이터셋 이름 (영문·숫자·_.-)', 'box_grab_' + new Date().toISOString().slice(5,10).replace('-',''));
+  if(!n) return; await setDataset(n);
+}
+async function delDataset(){
+  const n = S && S.settings.dataset; if(!n) return;
+  if(!confirm(`데이터셋 '${n}' 의 에피소드를 전부 지웁니다. 되돌릴 수 없음. 계속?`)) return;
+  if(await api('DELETE', `/api/datasets/${n}`)){ toast('삭제됨'); await saveSet({dataset: n}); loadDatasets(); loadEpisodes(); }
+}
+async function loadEpisodes(){
+  const n = S ? S.settings.dataset : null; if(!n) return;
+  const eps = await api('GET', `/api/datasets/${n}/episodes`); if(!eps) return;
+  epsFor = n;
+  const tot = eps.reduce((a, e) => a + e.duration, 0);
+  $('ep-tag').textContent = `${eps.length} ep · ${(tot/60).toFixed(1)} 분`;
+  let h = '<tr><th>id</th><th>시각</th><th class="num">s</th><th class="num">프레임</th><th>출처</th><th>결과</th><th></th></tr>';
+  for(const e of eps.slice().reverse()){
+    h += `<tr data-ep="${e.id}"><td>${e.id.slice(3)}</td><td>${esc(e.created.slice(5,16))}</td><td class="num">${f1(e.duration)}</td>
+      <td class="num">${e.n}</td><td>${esc(e.source)}</td><td class="${e.ok?'okb':'ngb'}">${e.ok?'OK':'실패'}</td>
+      <td class="x" onclick="delEp('${e.id}')">✕</td></tr>`;
+  }
+  $('ep-tbl').innerHTML = h;
+  for(const tr of $('ep-tbl').querySelectorAll('tr[data-ep]')){
+    tr.onmouseenter = ev => { const t = $('thumb'); t.src = `/api/datasets/${n}/episodes/${tr.dataset.ep}/thumb.jpg`;
+      t.style.display = 'block'; t.style.left = (ev.clientX - 260) + 'px'; t.style.top = (ev.clientY - 60) + 'px'; };
+    tr.onmouseleave = () => $('thumb').style.display = 'none';
+  }
+}
+async function delEp(id){
+  if(!confirm(`${id} 삭제?`)) return;
+  if(await api('DELETE', `/api/datasets/${S.settings.dataset}/episodes/${id}`)){ loadEpisodes(); loadDatasets(); }
+}
+function dlZip(){ if(S) location.href = `/api/datasets/${S.settings.dataset}/zip`; }
+
+// ---------------- 자동 반복 ----------------
+async function autoStart(){
+  await saveSet({auto: {count: parseInt($('au-count').value), pause_s: parseFloat($('au-pause').value),
+                        wait_box_s: parseFloat($('au-wait').value), handover: $('au-handover').value,
+                        mode_off_after: $('au-off').checked, sim_random: $('au-sim').checked}});
+  if(await api('POST', '/api/auto/start')) toast('자동 수집 시작');
+}
+
+// ---------------- 모델 ----------------
+async function loadModels(){
+  const d = await api('GET', '/api/models'); if(!d) return;
+  models = d.models;
+  const dev = $('md-dev'), keep = dev.value || (S && S.settings.policy.device);
+  dev.innerHTML = '';
+  for(const x of d.devices){ const o = document.createElement('option'); o.value = o.textContent = x; dev.appendChild(o); }
+  if(d.devices.includes('AUTO') === false){ const o = document.createElement('option'); o.value = o.textContent = 'AUTO'; dev.appendChild(o); }
+  if(keep && [...dev.options].some(o => o.value === keep)) dev.value = keep;
+  let h = '<tr><th>모델</th><th class="num">ep</th><th class="num">step</th><th class="num">val L1</th><th></th><th></th></tr>';
+  for(const m of models){
+    const cur = m.name === d.current;
+    const bad = (m.errors && m.errors.length) ? ` title="${esc(m.errors.join('; '))}" style="color:var(--warn)"` :
+                (m.warn ? ` title="${esc(m.warn)}" style="color:var(--amber)"` : '');
+    h += `<tr class="${cur?'cur':''}"><td${bad} title="${esc((m.dataset||'') + ' · ' + (m.created||'') + ' · ' + JSON.stringify(m.image||{}))}">${esc(m.name)}</td>
+      <td class="num">${m.episodes ?? '-'}</td><td class="num">${m.steps ?? '-'}</td><td class="num">${m.val_l1 != null ? (+m.val_l1).toFixed(4) : '-'}</td>
+      <td><button class="btn sm ${cur?'on':''}" onclick="loadModel('${m.name}')">${cur?'로드됨':'로드'}</button></td>
+      <td class="x" onclick="delModel('${m.name}')">✕</td></tr>`;
+  }
+  $('md-tbl').innerHTML = h;
+  $('md-tag').textContent = d.current || '없음';
+}
+async function uploadModel(){
+  const f = $('md-file').files[0]; if(!f){ toast('model zip 을 고르세요', true); return; }
+  const fd = new FormData(); fd.append('file', f);
+  toast('업로드 중...');
+  const r = await fetch('/api/models', {method: 'POST', body: fd});
+  const d = await r.json().catch(() => ({}));
+  if(!r.ok){ toast(d.detail || `HTTP ${r.status}`, true); return; }
+  toast(`업로드됨: ${d.name}`); $('md-file').value = ''; loadModels();
+}
+async function loadModel(name){
+  if(await api('POST', `/api/models/${name}/load?device=${encodeURIComponent($('md-dev').value)}`)) toast(`${name} 컴파일 중...`);
+}
+async function delModel(name){
+  if(!confirm(`모델 ${name} 삭제?`)) return;
+  if(await api('DELETE', `/api/models/${name}`)) loadModels();
+}
+
+// ---------------- 정책 ----------------
+async function runStart(){ if(await api('POST', '/api/policy/start')) toast('정책 시작 — 시작 자세로 이동'); }
+async function runStop(){ api('POST', '/api/policy/stop'); api('POST', '/api/auto/stop'); }
+document.addEventListener('keydown', e => { if(e.key === 'Escape'){ runStop(); toast('STOP', true); } });
+
+async function loadPre(){
+  const d = await api('GET', '/api/preconditions'); if(!d) return;
+  $('pre').innerHTML = d.map(p => `<div class="p ${p.ok?'ok':''}"><span>${esc(p.name)}</span><span class="d" title="${esc(p.detail)}">${esc(p.detail)}</span></div>`).join('');
+  $('btn-run').disabled = !d.every(p => p.ok) || (S && S.policy.running);
+}
+
+function jbars(p, names){
+  const el = $('jbars');
+  if(!el.children.length){
+    // 2 열 격자는 줄 단위로 채워짐 → [0,7,1,8,…] 순서로 넣어 왼쪽 열 = 왼팔(0–6), 오른쪽 열 = 오른팔(7–13)
+    const order = [...Array(7).keys()].flatMap(k => [k, k + 7]);
+    el.innerHTML = order.map(i => { const n = names[i];
+      const lab = n.replace('_joint','').replace('left_','L ').replace('right_','R ').replace('shoulder_','sh ').replace('wrist_','wr ');
+      return `<div class="jb"><span class="n" title="${n}">${lab}</span>
+      <span class="tr" id="jt${i}"><i id="jm${i}"></i><i class="t" id="jx${i}"></i></span><span class="v" id="jv${i}">-</span></div>`; }).join('');
+  }
+  const rg = p.range_deg; if(!rg || !p.meas_deg) return;
+  for(let i = 0; i < 14; i++){
+    const lo = rg[0][i], hi = rg[1][i], span = Math.max(hi - lo, 1), pad = span * 0.15;
+    const a = lo - pad, b = hi + pad, pos = v => Math.min(100, Math.max(0, (v - a) / (b - a) * 100));
+    const tr = $('jt' + i);
+    tr.style.background = `linear-gradient(90deg,#0c1117 ${pos(lo)}%,#2a3340 ${pos(lo)}%,#2a3340 ${pos(hi)}%,#0c1117 ${pos(hi)}%)`;
+    $('jm' + i).style.left = pos(p.meas_deg[i]) + '%';
+    $('jx' + i).style.left = pos(p.target_deg[i]) + '%';
+    $('jv' + i).textContent = (+p.meas_deg[i]).toFixed(1);
+  }
+}
+
+// ---------------- 상태 폴링 ----------------
+async function poll(){
+  let d;
+  try{ const r = await fetch('/api/state'); d = await r.json(); $('livedot').className = 'dot live'; }
+  catch(e){ $('livedot').className = 'dot err'; return; }
+  S = d;
+  const sv = d.servers;
+  chip('chip-arm', 'Arm', sv.arm.ok ? `${sv.arm.mode}${sv.arm.stream && sv.arm.stream.active ? ' · stream' : ''}` : 'OFF',
+       !sv.arm.ok ? 'err' : (sv.arm.mode !== 'hold' ? 'busy' : (sv.arm.stream && sv.arm.stream.active ? 'info' : 'ok')));
+  chip('chip-robot', 'Grab', sv.robot.ok ? (sv.robot.busy ? (sv.robot.stage || 'busy') : (sv.robot.mode === 'box' ? 'Box' : 'OFF')) : '없음',
+       !sv.robot.ok ? 'err' : (sv.robot.busy ? 'busy' : (sv.robot.mode === 'box' ? 'info' : 'ok')));
+  chip('chip-cam', 'Camera', sv.camera.ok ? `${sv.camera.fps} fps` : 'OFF', sv.camera.ok ? 'ok' : 'err');
+  chip('chip-dds', 'DDS', sv.dds.ok ? `${sv.dds.temp_max != null ? sv.dds.temp_max.toFixed(0) + '°C' : 'ok'}` : 'OFF', sv.dds.ok ? 'ok' : 'err');
+  const p = d.policy;
+  chip('chip-model', 'Model', p.loading ? '컴파일 중' : (p.model ? `${p.model} · ${(p.exec||[]).join(',')}` : '없음'),
+       p.loading ? 'busy' : (p.model ? 'info' : ''));
+  $('au-sim-row').style.display = sv.sim_virtual ? '' : 'none';
+  $('cam-tag').textContent = sv.sim ? (sv.sim_virtual ? 'SIM 가상 카메라' : 'SIM · 실물 D435i') : 'D435i RGB';
+  fillSettings(d.settings);
+  if(epsFor !== d.settings.dataset){ loadDatasets(); loadEpisodes(); }
+
+  // 기록
+  const rl = $('rec-line'), rt = $('rec-text');
+  if(d.record){
+    rl.className = "statusline rec";
+    rt.innerHTML = `<span class="recdot" style="display:inline-block;margin-right:6px"></span>${d.record.id} · ${d.record.frames} 프레임 · ${f1(d.record.sec)} s · ${d.record.source}${d.record.capturing ? '' : ' (들기 지남 — 잡기 끝나길 기다림)'}`;
+  }else if(d.last_record){
+    const L = d.last_record;
+    rl.className = 'statusline ' + (L.saved ? 'ok' : 'err');
+    rt.textContent = `${L.id} ${L.saved ? '저장' : '버림'} — ${L.n} 프레임 · ${f1(L.duration)} s${L.why ? ' · ' + L.why : ''}`;
+  }else{ rl.className = 'statusline'; rt.textContent = '대기'; }
+  if(d.last_record && d.last_record.t !== lastRecT){ lastRecT = d.last_record.t; setTimeout(() => { loadEpisodes(); loadDatasets(); }, 800); }
+  $('btn-rec').disabled = !!d.record || d.auto_running || p.running;
+
+  // 자동
+  const a = d.auto, al = $('auto-line');
+  al.className = 'statusline ' + (d.auto_running ? 'busy' : '');
+  $('auto-text').textContent = a.n ? `${a.i}/${a.n} · 성공 ${a.ok} · 실패 ${a.fail} · ${a.phase} ${a.msg}` : '대기';
+  $('auto-tag').textContent = d.auto_running ? `${a.i}/${a.n}` : '';
+  $('btn-auto').disabled = d.auto_running || p.running;
+
+  // 카메라 배지 / 단계
+  const cb = $('cam-badge');
+  if(p.running){ cb.className = 'cam-badge run'; cb.textContent = 'POLICY · ' + (p.phase || ''); }
+  else if(d.record){ cb.className = 'cam-badge rec'; cb.textContent = '● REC ' + d.record.id; }
+  else{ cb.className = 'cam-badge'; cb.textContent = 'LIVE'; }
+  $('cam-ov').innerHTML = `<div class="r"><span>camera</span><span>${sv.camera.fps} fps</span></div>
+    <div class="r"><span>weight</span><span>${sv.dds.weight ?? '-'}</span></div>
+    <div class="r"><span>모터 최고</span><span>${sv.dds.temp_max != null ? sv.dds.temp_max.toFixed(0) + '°C' : '-'}</span></div>`;
+  const st = sv.robot.stages || [], si = sv.robot.stage_idx;
+  $('stages').innerHTML = st.map((n, i) => `<div class="sg ${sv.robot.busy && i < si ? 'done' : ''} ${sv.robot.busy && i === si ? 'cur' : ''}">${n}</div>`).join('');
+
+  // 정책
+  $('run-tag').textContent = p.running ? (p.phase || '실행') : '정지';
+  $('m-phase').textContent = p.running ? (p.phase || '-') : '정지';
+  $('m-run').textContent = f1(p.run_s); $('m-hz').textContent = f1(p.hz);
+  $('m-inf').textContent = p.infer_ms ? `${f1(p.infer_ms)}` : '-';
+  $('m-steps').textContent = p.steps ?? '-'; $('m-vel').textContent = p.n_vel_clip ?? '-';
+  $('m-clip').textContent = p.n_clip ?? '-'; $('m-rej').textContent = p.n_reject ?? '-';
+  const rw = $('run-line');
+  rw.className = 'statusline ' + (p.running ? 'busy' : (p.why ? 'err' : ''));
+  $('run-why').textContent = p.running ? (p.reject_why ? `최근 거부: ${p.reject_why}` : '실행 중') : (p.why || '-');
+  jbars(p, d.joint_names);
+  $('btn-run').disabled = p.running || !!p.loading;
+  if(p.load_err) $('md-hint').innerHTML = `<span style="color:var(--warn)">로드 실패: ${esc(p.load_err)}</span>`;
+  else $('md-hint').textContent = 'trainer(학습 PC)가 만든 model zip 을 올리고 로드. NPU 는 첫 컴파일이 오래 걸릴 수 있음.';
+  if(p.model !== loadModels._cur && !p.loading){ loadModels._cur = p.model; loadModels(); }
+
+  $('hist-tbl').innerHTML = '<tr><th>시작</th><th class="num">s</th><th class="num">스텝</th><th>정지 사유</th></tr>' +
+    (p.history || []).map(h => `<tr><td>${h.t}</td><td class="num">${f1(h.dur)}</td><td class="num">${h.steps}</td><td title="${esc(h.why)}" style="max-width:220px;overflow:hidden;text-overflow:ellipsis">${esc(h.why)}</td></tr>`).join('');
+}
+
+setInterval(poll, 300);
+setInterval(() => { if(!(S && S.policy.running)) loadPre(); }, 1000);
+poll(); loadModels(); loadPre();
+</script>
+</body></html>
