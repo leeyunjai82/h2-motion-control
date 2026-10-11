@@ -8,6 +8,14 @@ check_rsimu.py — D435i IMU + 로봇 LowState IMU 를 같이 읽어 '몸통(tor
   ROBOT=h2 python utils/check_rsimu.py              # 실시간 (0.2 s 마다), Ctrl+C 종료
   ROBOT=h2 python utils/check_rsimu.py --sec 5      # 5 초 평균 + 권장 pitch_deg 출력
   ROBOT=h2 python utils/check_rsimu.py --sec 5 eno1 # DDS 네트워크 인터페이스 지정
+  ROBOT=h2 python utils/check_rsimu.py --save       # 5 초 재고 camera.pitch_deg 를 robots/h2/calib_local.yaml 에 저장
+                                                    #   (git 에 안 올라감, 다음 실행부터 모든 서버가 이 값 — start_robot.sh 다시 시작)
+
+저장 (--save) — 거치대를 다시 조이거나 건드릴 때마다 (2026-10-11 다시 조인 뒤 46.0 → 42.5)
+  저장 안 함: 흔들림(표준편차) > 1.0° 또는 표본 < 200 (로봇이 움직이는 중 · 접촉 불량)
+  경고만   : 이전 저장값보다 1° 넘게 바뀜 → 거치대가 움직였거나 덜 조였을 수 있음 (볼트 확인 후 다시 재기 권장)
+  파일에 남는 것: camera.pitch_deg (0.1° 반올림), 측정 시각·평균·표준편차·표본 수, 최근 10 회 이력
+  sudo 로 실행해도 파일 소유자는 원래 사용자 (SUDO_UID)
 
 계산
   cam_abs      = D435i 가속도로 구한 광학축 숙임 (중력 기준)        = atan2(−a_z, √(a_x² + a_y²))
@@ -34,7 +42,10 @@ import pyrealsense2 as rs   # noqa: E402
 from unitree_sdk2py.core.channel import ChannelSubscriber   # noqa: E402
 from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_ as hg_LowState   # noqa: E402
 
-CAMERA_PITCH_CFG = robot_env.CAMERA_PITCH                                   # robot.yaml camera.pitch_deg [rad]
+CAMERA_PITCH_CFG = robot_env.CAMERA_PITCH                                   # 지금 쓰는 camera.pitch_deg [rad] (calib_local.yaml 이 있으면 그 값)
+SAVE_MAX_STD_DEG = 1.0
+SAVE_MIN_N = 200
+DRIFT_WARN_DEG = 1.0
 WAIST_PITCH_SLOT = int(robot_env.JOINTS["map"]["waist_pitch_joint"])        # H2 13 (xr_teleoperate 817fb00)
 
 pelvis_pitch = None
@@ -87,11 +98,60 @@ def sample(pipeline):
     return get_accel_pitch(accel), pelvis_pitch, waist_pitch, pelvis_roll
 
 
+def save_calib(c2t, cam_abs, torso_abs, n, sec):
+    """camera.pitch_deg 를 calib_local.yaml 에 저장 (기존 파일의 다른 camera 키·이력 유지)."""
+    import yaml
+    path = robot_env.LOCAL_CALIB_PATH
+    mean, std = float(c2t.mean()), float(c2t.std())
+    if n < SAVE_MIN_N or std > SAVE_MAX_STD_DEG:
+        print(f"\n  ❌ 저장 안 함 — 표본 {n} (최소 {SAVE_MIN_N}) · 흔들림 ±{std:.2f}° (최대 {SAVE_MAX_STD_DEG}°). "
+              f"로봇이 가만히 서 있는지, 거치대가 덜렁거리지 않는지 확인 후 다시")
+        return False
+    old = {}
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            old = yaml.safe_load(f) or {}
+    cam = dict(old.get("camera") or {})
+    prev = cam.get("pitch_deg")
+    new = round(mean, 1)
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    cam["pitch_deg"] = new
+    measured = {"time": now, "tool": f"check_rsimu.py --sec {sec:g}", "cam_to_torso_deg": round(mean, 2),
+                "std_deg": round(std, 2), "n": int(n), "cam_abs_deg": round(float(cam_abs.mean()), 2),
+                "torso_abs_deg": round(float(torso_abs.mean()), 2),
+                "robot_yaml_pitch_deg": float(robot_env.CAMERA_YAML["pitch_deg"])}
+    hist = [{"time": now, "pitch_deg": new, "std_deg": round(std, 2)}] + list(old.get("history") or [])
+    body = yaml.safe_dump({"camera": cam, "measured": measured, "history": hist[:10]},
+                          allow_unicode=True, sort_keys=False, default_flow_style=False)
+    head = ("# 이 PC(로봇) 전용 장착 보정 — git 에 안 올라감 (.gitignore calib_*.yaml)\n"
+            "# utils/check_rsimu.py --save 가 씀. 있으면 robot.yaml camera 값을 덮어씀 (common/robot_env.py)\n")
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        f.write(head + body)
+    os.replace(tmp, path)
+    uid, gid = os.environ.get("SUDO_UID"), os.environ.get("SUDO_GID")
+    if uid and gid:
+        try:
+            os.chown(path, int(uid), int(gid))
+        except OSError:
+            pass
+    was = f"{prev}" if prev is not None else f"없음 (robot.yaml {float(robot_env.CAMERA_YAML['pitch_deg'])})"
+    print(f"\n  ✅ 저장: camera.pitch_deg {new}  (이전 {was}) → {os.path.relpath(path, robot_env.REPO_ROOT)}")
+    if prev is not None and abs(new - float(prev)) > DRIFT_WARN_DEG:
+        print(f"  ⚠️ 이전 저장값보다 {new - float(prev):+.1f}° 바뀜 — 거치대가 움직였거나 덜 조였을 수 있음. 볼트 확인 후 한 번 더 재기 권장")
+    print("  다음 실행부터 적용 — start_robot.sh 가 켜져 있었다면 다시 시작")
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("interface", nargs="?", default=None, help="DDS 네트워크 인터페이스 (기본: robot_env 기본값)")
     ap.add_argument("--sec", type=float, default=0.0, help="이 시간 평균 후 요약 출력 (0 = 실시간 계속)")
+    ap.add_argument("--save", action="store_true",
+                    help="평균 camera.pitch_deg 를 robots/<ROBOT>/calib_local.yaml 에 저장 (--sec 없으면 5 초)")
     a = ap.parse_args()
+    if a.save and a.sec <= 0:
+        a.sec = 5.0
 
     start_robot_imu(a.interface)
     time.sleep(1.0)
@@ -127,8 +187,13 @@ def main():
             print(f"  몸통 기울기 (torso_abs)    {torso_abs.mean():+7.2f} ± {torso_abs.std():.2f}")
             print(f"  카메라 숙임 (cam_abs, 중력 기준) {cam_abs.mean():7.2f} ± {cam_abs.std():.2f}")
             print(f"  ▶ 몸통 기준 숙임 (cam_to_torso)  {c2t.mean():7.2f} ± {c2t.std():.2f}")
-            print(f"  robot.yaml camera.pitch_deg      {cfg:7.2f}   (차이 {c2t.mean() - cfg:+.2f})")
-            print(f"\n  권장: camera.pitch_deg: {c2t.mean():.1f}   (부호 확인 전이면 위 '부호 확인' 절차 먼저)")
+            print(f"  지금 camera.pitch_deg            {cfg:7.2f}   (차이 {c2t.mean() - cfg:+.2f}, 출처 {robot_env.CAMERA_SOURCE})")
+            if robot_env.CAMERA_SOURCE != "robot.yaml":
+                print(f"  robot.yaml camera.pitch_deg      {float(robot_env.CAMERA_YAML['pitch_deg']):7.2f}")
+            if not a.save:
+                print(f"\n  권장: camera.pitch_deg: {c2t.mean():.1f}   → 저장: --save")
+                return
+            save_calib(c2t, cam_abs, torso_abs, len(rows), a.sec)
             return
 
         print("\n=== 실시간 IMU 비교 (Ctrl+C 종료) ===")

@@ -93,6 +93,31 @@ try:
     CFG = load_config(ROBOT)
 except Exception as e:  # noqa: BLE001 — 어떤 오류든 실행 거부
     _fail(f"ROBOT='{ROBOT}' 설정 오류 — 실행 거부: {e}")
+
+# 장착 보정 (이 PC 에서 잰 실측 — git 에 안 올림, .gitignore calib_*.yaml): robots/<ROBOT>/calib_local.yaml
+#   거치대를 다시 조이면 숙임각이 바뀜 (2026-10-11 46.0 → 42.5) → utils/check_rsimu.py --save 로 다시 재서 저장.
+#   있으면 robot.yaml camera 의 x · y · z · pitch_deg 를 덮어씀 (나머지 키는 무시). 읽기 오류면 실행 거부 (틀린 각도로 잡지 않게).
+CAMERA_YAML = dict(CFG["camera"])          # robot.yaml 원래 값 (비교·표시용)
+LOCAL_CALIB_PATH = os.path.join(ROBOT_DIR, "calib_local.yaml")
+LOCAL_CALIB = {}
+CAMERA_SOURCE = "robot.yaml"
+if os.path.isfile(LOCAL_CALIB_PATH):
+    try:
+        with open(LOCAL_CALIB_PATH, encoding="utf-8") as _f:
+            LOCAL_CALIB = yaml.safe_load(_f) or {}
+        _cam = LOCAL_CALIB.get("camera") or {}
+        _applied = []
+        for _k in ("x", "y", "z", "pitch_deg"):
+            if _cam.get(_k) is not None:
+                CFG["camera"][_k] = float(_cam[_k])
+                _applied.append(f"{_k} {CAMERA_YAML.get(_k)} → {CFG['camera'][_k]}")
+        if _applied:
+            _when = (LOCAL_CALIB.get("measured") or {}).get("time", "?")
+            CAMERA_SOURCE = f"calib_local.yaml ({_when})"
+            print(f"[robot_env] 장착 보정 적용 robots/{ROBOT}/calib_local.yaml ({_when}): camera " + ", ".join(_applied),
+                  file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        _fail(f"{LOCAL_CALIB_PATH} 읽기 오류 — 실행 거부: {e} (지우거나 utils/check_rsimu.py --save 로 다시 만들 것)")
 # 로봇별 unitree_sdk2py (robot.yaml sdk.commit — H2). activate_tv.sh(ensure_robot_sdk) 가 third_party/ 에 받아 둔다.
 #   sys.path 앞에 넣어 tv 환경 SDK(G1 고정 커밋)보다 먼저 쓰게 한다. sudo 실행(init_fsm)에서도 같은 경로.
 SDK_DIR = None

@@ -70,6 +70,7 @@ snapshots/
 # ==========================================
 camera_calib_result.*
 calib_*.npz
+# robots/<ROBOT>/calib_local.yaml — 장착 보정 실측 (utils/check_rsimu.py --save)
 calib_*.yaml
 
 # ==========================================

@@ -107,7 +107,9 @@ Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위�
 ## 카메라
 
 - **D435i (가슴, 박스 인식)**: 등판 거치대 `robots/h2/cad/camera_bracket/` (지금 v3 요크 + v1 가로대: 숙임 실측 46.0°, z 0.365). 장착값은 `robot.yaml camera`
-  (x, y, z [m, torso_link 기준], pitch_deg). 숙임각 실측: `utils/check_rsimu.py --sec 5`, 위치 확인: `utils/cam_marker_check.py`.
+  (x, y, z [m, torso_link 기준], pitch_deg). 숙임각 실측·저장: `sudo ROBOT=h2 python utils/check_rsimu.py --save` (start_robot.sh 끈 상태, 703 서기)
+  → `robots/h2/calib_local.yaml` (이 PC 전용, git 에 안 올라감) 이 robot.yaml 값을 덮어씀. 거치대를 다시 조일 때마다 다시 잴 것.
+  지금 쓰는 값은 제어 화면 위 막대 System 칩 → Camera 줄. 위치 확인: `utils/cam_marker_check.py`.
 - **머리 쌍안 카메라**: `utils/check_head_cam.py` (수신 확인·깊이 클릭), 인식은 `common/head_track.py` (`robot.yaml head_track`).
   로봇을 다시 켜면 앱 설정이 기본(video_hub 켜짐 · Stereo patch 꺼짐)으로 돌아감 → `start_robot.sh` 가 `utils/head_cam_on.py` 로 매번 자동 준비
   (video_hub 끔 · stereo_patch_pc1 켬 · 수신 IP = 이 PC · 재시작, `robot.yaml head_track.robot_setup`). 서비스 목록: `utils/robot_services.py`.

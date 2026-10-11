@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<!-- Version: 2.21
+<!-- Version: 2.22
+  2.22 - System 카드를 위 막대 'System' 칩으로 (실데이터 7 줄이면 왼쪽 열이 1366×768 에서 133 px 넘침 — 사용자: 부족하면 System 빼기).
+         칩 = OK / CHECK / ERR, 마우스를 올리면 요약, 누르면 줄별 목록(FSM · 서버 · Camera). Camera 줄: 지금 쓰는 숙임각 ·
+         측정 시각 (calib_local.yaml), 이 PC 실측 없으면 노랑
   2.21 - Wrist RPY 기본 roll 왼손 −10 · 오른손 +10, yaw −5 · +5 (정면 V 자, robot.yaml grab.wrist_rpy_deg)
   2.20 - CPU/GPU/NPU 사용률을 위 칩에서 좌측 하단 Performance 표로 (장치 · 사용률 막대 · 그 장치에서 도는 모델과 추론 ms)
   2.19 - SEG 끔 화면: 흰 번짐 뺌 (파지점 L/T/R + 프레임별 인식 위치 흰 점)
@@ -125,7 +128,10 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
 .pt .bar b{display:block;height:100%;width:0;background:var(--accent);transition:width .3s}
 .pt .bar b.busy{background:var(--amber)}.pt .bar b.err{background:var(--warn)}
 .pt .m{color:var(--dim);font-size:10.5px;line-height:1.35}.pt .m b{color:var(--ink);font-weight:400}
-/* System 카드 (로봇 FSM · 서버 상태) */
+/* System (위 막대 칩 → 누르면 목록, 로봇 FSM · 서버 · 카메라 보정) */
+.sys-pop{position:fixed;top:52px;right:18px;width:340px;z-index:50;box-shadow:0 8px 24px rgba(0,0,0,.45)}
+.sys-pop[hidden]{display:none}
+#chip-sys{cursor:pointer}
 .sys{overflow:auto}
 .sys .sr{display:flex;align-items:center;gap:8px;padding:3px 2px;border-bottom:1px solid var(--line);font-size:11.5px}
 .sys .sr:last-of-type{border-bottom:0}
@@ -313,10 +319,15 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
       <span class="chip" id="chip-mode">Mode <b>OFF</b></span>
       <span class="chip" id="chip-arm">Arm <b>-</b></span>
       <span class="chip" id="chip-task">작업 <b>-</b></span>
+      <span class="chip" id="chip-sys" onclick="toggleSys(event)">System <b>-</b></span>
     </div>
     <span id="lang-slot"></span>
     <a id="link-dash" href="#">dashboard ↗</a>
   </div>
+</div>
+<div class="card sys-pop" id="sys-pop" hidden>
+  <div class="card-h">System <span class="tag" id="sys-tag">-</span></div>
+  <div class="card-b sys" id="sys-list" style="padding-top:6px;padding-bottom:6px"><div class="hint">확인 중</div></div>
 </div>
 
 <div class="grid">
@@ -371,11 +382,6 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
       <div class="card-b ctl">
         <button class="btn warn full" onclick="stopAll()" title="Esc">⏹ Stop<span class="sub">정지·기본자세</span></button>
       </div>
-    </div>
-
-    <div class="card">
-      <div class="card-h">System <span class="tag" id="sys-tag">-</span></div>
-      <div class="card-b sys" id="sys-list" style="padding-top:6px;padding-bottom:6px"><div class="hint">확인 중</div></div>
     </div>
 
     <div class="card">
@@ -611,15 +617,26 @@ function pollSystem(){
   const tag=document.getElementById('sys-tag');
   fetch('/system').then(r=>r.json()).then(d=>{
     const f=d.fsm||{}, sv=d.services||[], warn=d.warn||[];
+    const cam=d.camera||{};
     const rows=[sysRow(f.state,'FSM','',f.text,f.why)].concat(sv.map(s=>sysRow(s.state,s.name,':'+s.port,s.text,s.why)));
+    if(cam.text)rows.push(sysRow(cam.state,'Camera','pitch',cam.text,cam.why));
     const wbox=warn.length?`<div class="sysw">${warn.map(w=>'⚠️ '+escHtml(w)).join('<br>')}</div>`:'';
     document.getElementById('sys-list').innerHTML=rows.join('')+wbox;
     const nErr=sv.filter(s=>s.state==='err').length+(f.state==='err'?1:0);
-    const nWarn=warn.length+sv.filter(s=>s.state==='warn').length+(f.state==='warn'?1:0);
+    const nWarn=warn.length+sv.filter(s=>s.state==='warn').length+(f.state==='warn'?1:0)+(cam.state==='warn'?1:0);
     tag.textContent=nErr?'ERR':nWarn?'CHECK':'OK';
     tag.style.color=nErr?'var(--warn)':nWarn?'var(--amber)':'var(--ok)';
-  }).catch(()=>{tag.textContent='-';tag.style.color='var(--dim)';});
+    const chip=document.getElementById('chip-sys');
+    chip.className='chip '+(nErr?'err':nWarn?'busy':'ok');chip.querySelector('b').textContent=tag.textContent;
+    const line=r=>`${r.n}${r.p?' '+r.p:''}: ${r.v||'-'}`;
+    chip.title=[{n:'FSM',v:f.text}].concat(sv.map(s=>({n:s.name,p:':'+s.port,v:s.text})),cam.text?[{n:'Camera',p:'pitch',v:cam.text}]:[])
+      .map(line).concat(warn.map(w=>'⚠ '+w)).join('\n')+'\n(누르면 자세히)';
+  }).catch(()=>{tag.textContent='-';tag.style.color='var(--dim)';
+    const chip=document.getElementById('chip-sys');chip.className='chip';chip.querySelector('b').textContent='-';});
 }
+function toggleSys(ev){ev.stopPropagation();const p=document.getElementById('sys-pop');p.hidden=!p.hidden;}
+document.addEventListener('click',e=>{const p=document.getElementById('sys-pop');
+  if(!p.hidden&&!p.contains(e.target))p.hidden=true;});
 setInterval(pollSystem,2000);pollSystem();
 function pollArm(){fetch('/arm_mode').then(r=>r.json()).then(d=>updateArmMode(d.mode,d.switching)).catch(()=>updateArmMode(null));}
 pollArm();setInterval(pollArm,3000);

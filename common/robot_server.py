@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Version: 1.12
+# Version: 1.13
 # Changes:
+#   1.13 - /system 에 camera (지금 쓰는 숙임각과 출처) — robots/h2/calib_local.yaml (utils/check_rsimu.py --save) 가 있으면 그 값
 #   1.12 - grab.squeeze: 잡을 때 양손을 박스 안쪽으로 더 미는 거리 (위치 제어라 이만큼이 쥐는 힘) — 잡기~들기~건네기 유지,
 #          손 벌림에서 풀림. 이전에는 왼손 보정 +3 cm 때문에 양손 합쳐 1 cm 만 조여 건네는 중 박스가 미끄러짐 (사용자 2026-10-09)
 #   1.11 - Center(건네기) 는 옆에서 잡았어도 양손 가운데를 몸 정면(y 0)으로 옮겨 건넴 (Place 는 원래 자리 그대로)
@@ -1044,9 +1045,23 @@ async def status():
             "tts_ready": tts is not None, "active_mode": ACTIVE_MODE,
             "grab_busy": grab_busy, **_stage_info()}
 
-@app.get("/system", summary="로봇 FSM · 서버 상태 (2초마다 갱신) + 팔이 안 움직일 이유(warn)")
+def camera_status():
+    """System 카드 Camera 줄 — 지금 쓰는 숙임각과 출처 (실기에서 이 PC 실측이 없으면 warn)."""
+    deg = robot_env.CAMERA_PITCH_DEG
+    yaml_deg = float(robot_env.CAMERA_YAML["pitch_deg"])
+    if robot_env.SIM:
+        return {"state": "ok", "text": f"{deg:.1f}° (sim)", "why": "시뮬 — 장착 보정 불필요"}
+    if robot_env.CAMERA_SOURCE != "robot.yaml":
+        when = str((robot_env.LOCAL_CALIB.get("measured") or {}).get("time", "?"))
+        return {"state": "ok", "text": f"{deg:.1f}° ({when[5:16]})",
+                "why": f"calib_local.yaml 실측 {when} (robot.yaml {yaml_deg:.1f}°). 거치대를 다시 조였으면 check_rsimu --save"}
+    return {"state": "warn", "text": f"{deg:.1f}° (robot.yaml)",
+            "why": "이 PC 에서 잰 값 없음 — start_robot.sh 끄고 sudo ROBOT=h2 python utils/check_rsimu.py --save"}
+
+
+@app.get("/system", summary="로봇 FSM · 서버 상태 (2초마다 갱신) + 팔이 안 움직일 이유(warn) + 카메라 숙임각 출처")
 def system():                     # def — arm_server 조회가 블로킹이라 스레드풀에서
-    return {**SYS.latest(), "warn": arm_warnings()}
+    return {**SYS.latest(), "warn": arm_warnings(), "camera": camera_status()}
 
 @app.get("/hw", summary="이 PC 의 CPU / GPU / NPU 사용률 [%] (1초마다 갱신, 못 읽으면 pct null + why)")
 async def hw_usage():
