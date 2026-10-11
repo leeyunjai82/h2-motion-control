@@ -9,7 +9,11 @@ head_cam_on.py — 머리 카메라 RGB 를 이 PC 가 받도록 로봇 쪽 서�
                                                    이미 그 상태면 건너뜀 (status 0 = 켜짐, 1 = 꺼짐 — 실기 확정)
   2) PC1 9080 이 열리면 RGB 수신 IP = 이 PC        http://192.168.123.161:9080/set?ip=<이 PC>  (응답 'IP 已更新为 …')
   3) stereo_patch_pc1 껐다 켜기                    수신 IP 적용 (공식 문서 절차)
+  4) 끌 서비스(video_hub)가 다시 켜졌는지 확인      켜져 있으면 한 번 더 끔 (공식 문서: video_hub 와 충돌 가능, 둘 다 PC1 에서 돎)
   → head_track 이 RGB 를 받기 시작 (6 초마다 다시 시도하므로 head_track 재시작 불필요)
+
+  실기 2026-10-11: 영상은 나오는데 앱 서비스 목록에서 video_hub 가 켜져 있었음 (사용자) → 4) 추가.
+  나중에 다시 켜지는 원인(앱 카메라 화면 등)은 확인 필요 — 지금 상태: python utils/robot_services.py
 
   실기 2026-10-09: 1)–3) 후 Head Vision 영상 나옴. 9080 은 stereo_patch_pc1 이 켜져 있을 때 열림 (끄면 닫힘).
   켜기 RPC 는 서비스가 뜰 때까지 응답이 늦어 3 초를 넘김 (code 3104 = 응답 시간 초과) → 대기 10 초,
@@ -66,6 +70,29 @@ def switch(rsc, name, on):
         return None
     log(f"{name} {what} -> 실패 code {r}")
     return False
+
+
+def recheck_off(rsc, off):
+    """마지막에 끌 서비스가 꺼져 있는지 다시 확인 — 켜져 있으면 한 번 더 끄고 결과를 남김."""
+    time.sleep(2.0)
+    code, lst = rsc.ServiceList()
+    if code != 0 or lst is None:
+        log(f"⚠️ 마지막 확인: 서비스 목록 못 받음 (code {code})")
+        return
+    st = {s.name: s.status for s in lst}
+    for n in off:
+        if st.get(n) == STATUS_OFF:
+            log(f"확인: {n} 꺼짐")
+            continue
+        log(f"⚠️ {n} 가 다시 켜져 있음 ({status_text(st.get(n))}) — 한 번 더 끔")
+        switch(rsc, n, False)
+        time.sleep(2.0)
+        code, lst = rsc.ServiceList()
+        now = {s.name: s.status for s in (lst or [])}.get(n)
+        if now == STATUS_OFF:
+            log(f"확인: {n} 꺼짐")
+        else:
+            log(f"⚠️ {n} 여전히 {status_text(now)} — 로봇 쪽에서 다시 켜는 것으로 보임. 영상이 끊기면 앱에서 끄고 head_cam_on 다시 실행")
 
 
 def main():
@@ -127,6 +154,7 @@ def main():
     me = my_ip(PC1)
     if a.no_ip or not cfg.get("set_ip", True):
         log(f"수신 IP 설정 생략 — 로봇에 설정된 수신 IP 가 이 PC({me})여야 RGB 가 옴")
+        recheck_off(rsc, off)
         return 0
 
     # 2) 수신 IP = 이 PC
@@ -147,6 +175,7 @@ def main():
         log(f"❌ 재시작 뒤 {PC1}:{SET_IP_PORT} 가 {a.wait:.0f} 초 안에 안 열림 — 앱에서 Stereo patch PC1 확인")
         return 1
 
+    recheck_off(rsc, off)
     ports = "/".join(str(RGB_PORTS[k]) for k in ("left", "right"))
     log(f"✅ 준비 끝 — 수신 IP {me}, RGB UDP {ports} -> head_track (Head Vision 카드)")
     return 0

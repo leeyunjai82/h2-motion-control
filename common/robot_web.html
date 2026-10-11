@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 2.20
+<!-- Version: 2.21
+  2.21 - Wrist RPY 기본 roll 왼손 −10 · 오른손 +10, yaw −5 · +5 (정면 V 자, robot.yaml grab.wrist_rpy_deg)
   2.20 - CPU/GPU/NPU 사용률을 위 칩에서 좌측 하단 Performance 표로 (장치 · 사용률 막대 · 그 장치에서 도는 모델과 추론 ms)
   2.19 - SEG 끔 화면: 흰 번짐 뺌 (파지점 L/T/R + 프레임별 인식 위치 흰 점)
   2.18 - Camera View 머리에 SEG 버튼 (detect_box /set_overlay) — 끄면 파지점 L/R + 최근 2 초 인식 분포(흰 점)만, 기본 끔
@@ -347,9 +348,9 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
       <div class="card-b">
         <div class="wtab">
           <span></span><span class="h" style="color:var(--accent)">LEFT</span><span class="h" style="color:var(--amber)">RIGHT</span>
-          <span class="k">roll</span><input class="in" id="l-roll" type="number" value="0" step="5"><input class="in" id="r-roll" type="number" value="0" step="5">
+          <span class="k">roll</span><input class="in" id="l-roll" type="number" value="-10" step="5"><input class="in" id="r-roll" type="number" value="10" step="5">
           <span class="k">pitch</span><input class="in" id="l-pitch" type="number" value="0" step="5"><input class="in" id="r-pitch" type="number" value="0" step="5">
-          <span class="k">yaw</span><input class="in" id="l-yaw" type="number" value="-10" step="5"><input class="in" id="r-yaw" type="number" value="10" step="5">
+          <span class="k">yaw</span><input class="in" id="l-yaw" type="number" value="-5" step="5"><input class="in" id="r-yaw" type="number" value="5" step="5">
         </div>
         <button class="btn full" style="margin-top:9px" onclick="applyWrist()">Apply</button>
       </div>
