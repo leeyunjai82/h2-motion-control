@@ -1,12 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.17
+# Version: 1.18
 # Changes:
-#   1.17 - 다시 잡기 (grab.regrasp): ⑥ 잡은 채 테이블 위에서 박스를 RGB 렌즈 앞(y = camera.y)으로 밀고 반듯하게 → 손 풀고 위로 → 재검출 →
-#          새 좌우 변 가운데를 다시 잡은 뒤 당기기. 처음 잡은 자리가 박스 끝 쪽이면 당겨도 효과가 없어서 (사용자 2026-10-11).
-#          당긴 뒤에는 박스가 카메라 가까운 한계(테이블 110 · 박스 15 에서 약 38 cm) 안이라 재검출이 안 돼 당기기 전에 함.
-#          재검출 실패 · 예상 위치에서 grab.regrasp_max_shift 넘게 어긋나면 예상 위치(손 위치 기준)로 다시 잡음.
-#          풀 때는 옆으로만 빼고 그 높이에서 바로 다시 조임 (사용자 — 위로 빼기는 grab.regrasp_lift_hands)
-#          건네기 놓을 때 손 벌림 0.10 → grab.handover_open (0.15) — 박스를 확실히 놓게 (사용자)
+#   1.18 - 1.17 다시 잡기 되돌림 (사용자 2026-10-11: 당기기 전에 다시 잡는 건 원한 동작이 아님 → 원래대로).
+#          건네기 놓을 때 손 벌림 0.10 → grab.handover_open (0.15) 은 유지 — 박스를 확실히 놓게 (사용자)
 #   1.16 - 왼손 y 보정(grab.left_hand_y_offset)은 ④ 접근·⑤ 하강에만 — 넓게 내려가고, ⑥ 잡기부터는 양손 같게 조임
 #          (사용자 2026-10-11: 박스가 풀림 · '잡을 때부터 더 조이면 됨'. 이전엔 잡은 뒤에도 왼손이 3 cm 덜 조였음)
 #   1.15 - TTS 멘트는 영어만 (사용자 2026-10-11) — 한/영 연동(GET /set_tts_lang)·한국어 멘트 제거, robot.yaml tts.voice 한 개
@@ -161,13 +157,7 @@ GRAB_SQUEEZE = float(robot_env.CFG["grab"].get("squeeze", 0.0))   # 잡을 때 �
 TTS_VOICE = int((robot_env.CFG.get("tts") or {}).get("voice", 6))   # TTS 서버 음성 번호 (멘트는 영어)
 BOX_YAW_FOLLOW = bool(robot_env.CFG["grab"].get("box_yaw_follow", True))     # 비스듬한 박스: 손목 yaw 를 박스 회전만큼 더함
 MAX_BOX_YAW_DEG = float(robot_env.CFG["grab"].get("max_box_yaw_deg", 25.0))  # 이보다 더 돌아 있으면 잡지 않음 [deg]
-REGRASP = bool(robot_env.CFG["grab"].get("regrasp", True))                   # 당기기 전에 가운데로 밀고 풀었다 다시 잡기
-REGRASP_OPEN = float(robot_env.CFG["grab"].get("regrasp_open", 0.08))        # 풀 때 · 다시 내려올 때 L/R 점 바깥 거리 [m]
-REGRASP_MAX_SHIFT = float(robot_env.CFG["grab"].get("regrasp_max_shift", 0.08))   # 재검출 중심이 예상보다 이만큼 넘게 다르면 버림 [m]
-REGRASP_LIFT_HANDS = bool(robot_env.CFG["grab"].get("regrasp_lift_hands", False))  # 풀고 손을 위로도 뺄지 (재검출을 손이 가릴 때만)
 HANDOVER_OPEN = float(robot_env.CFG["grab"].get("handover_open", 0.15))      # 건네기 놓을 때 각 손을 바깥으로 [m]
-_rcy = robot_env.CFG["grab"].get("regrasp_center_y")
-REGRASP_CENTER_Y = robot_env.CAMERA_Y if _rcy is None else float(_rcy)        # ⑥a 좌우 보정 목표 y — 기본 = RGB 렌즈 바로 앞
 WAIST_BASE_PITCH = float(robot_env.CFG["grab"]["waist_base_pitch_deg"])   # Home(pose=zero) 허리 pitch (H2 허리는 arm_sdk 로 안 움직임)
 
 # 잡은 뒤 → 건네기 구간 타이밍 (s)
@@ -183,7 +173,7 @@ assert DEFAULT_HANDOVER in HANDOVER_MODES, f"robot.yaml grab.default_handover: {
 # ==========================================
 # 잡기 진행 단계 (웹 진행 표시 / 3D 시각화용)
 # ==========================================
-GRAB_STAGES = ["재검출", "위쪽 접근", "측면 하강", "잡기", "다시 잡기",
+GRAB_STAGES = ["재검출", "위쪽 접근", "측면 하강", "잡기",
                "들기", "건네기", "받기 대기", "놓기", "복귀"]
 
 # IK 목표 좌표계 = pelvis 기준(허리 0 가정 축소모델). 카메라 좌표는 torso_link 기준.
@@ -235,8 +225,6 @@ class GrabController:
 
         # 재감지 콜백 (robot_server가 주입, detect_box /pose) — None이면 재감지 안 함
         self.redetect = None
-        # 다시 잡기용 재검출 (안정화 버퍼를 비우고 박스를 옮긴 뒤 프레임만으로) — None 이면 예상 위치로 다시 잡음
-        self.redetect_fresh = None
         # 진행 표시 / 시각화
         self.stage = None                  # GRAB_STAGES 중 하나 (None=대기)
         self._stage_log = []               # [(단계, 시작시각)] — 이번 잡기
@@ -426,111 +414,6 @@ class GrabController:
         self._move([0.0, 0.28, -0.38], [0.0, -0.28, -0.38], 2.0, "PARK 팔내림")
 
     # ---- box(cardboard) 잡기 ----
-    def _approach_grip(self, Lx, Ly, Rx, Ry, cx, cy, grab_z, above_z, l_rot, r_rot, side_extra, labels,
-                       grip_sec=2.5, hold_sec=1.0):
-        """L/R 점 옆 side_extra 바깥 위 → 하강 → 조이기 (L/R 에서 박스 안쪽으로 GRAB_SQUEEZE). 성공 시 (gripL, gripR).
-        above_z None: 손이 이미 잡는 높이 옆에 있음 — 그 높이에서 옆 자리만 맞추고 조임 (다시 잡기)."""
-        # 조이기 방향 = 중심(cx, cy)에서 L/R 로 향하는 단위벡터의 반대 (비스듬한 박스면 옆면 법선)
-        def outward(px, py):
-            dx, dy = px - cx, py - cy
-            n = (dx*dx + dy*dy) ** 0.5
-            return (dx/n, dy/n) if n > 1e-6 else (0.0, 0.0)
-        oLx, oLy = outward(Lx, Ly)
-        oRx, oRy = outward(Rx, Ry)
-
-        # 접근점 (L/R 에서 옆으로만 +side_extra, x 는 L/R 그대로)
-        #   1.14: 박스 옆면 바깥 방향(oL/oR) 대신 순수 좌우(±y) — 비스듬한 박스에서 먼 쪽 손이 옆면 방향으로 더 앞으로 나가
-        #         도달 한계를 넘던 것(20° · x 0.40 에서 앞쪽 손 x 0.49 → ⑤ 측면 하강 4 cm 부족)을 막음. 반듯한 박스면 거의 같음
-        appL = [Lx, Ly + side_extra + LEFT_HAND_Y_OFFSET, above_z if above_z is not None else grab_z]
-        appR = [Rx, Ry - side_extra, appL[2]]
-        if labels[0].startswith("④"):
-            self._stage("위쪽 접근")
-        label0 = labels[0] if above_z is not None else labels[2].replace("잡기", "잡기 자리 맞춤")
-        if not self._move(appL, appR, 1.5 if side_extra >= APPROACH_EXTRA else 1.0, label0, l_rot, r_rot):
-            return None
-        time.sleep(0.2)
-
-        # 하강 (같은 XY, grab_z로) — 이미 그 높이면 생략
-        if above_z is not None:
-            appL[2] = grab_z; appR[2] = grab_z
-            if labels[0].startswith("④"):
-                self._stage("측면 하강")
-            if not self._move(appL, appR, 1.0, labels[1], l_rot, r_rot):
-                return None
-            time.sleep(0.2)
-
-        # 잡기 — 실제 L/R 점 + X는 몸쪽으로 당김(GRAB_X_OFFSET)
-        #   + 조이기: L/R 에서 박스 안쪽(중심 쪽)으로 GRAB_SQUEEZE — 팔은 위치 제어라 목표가 박스 안으로 들어간 만큼 쥠.
-        #     이후 대칭 정렬·들기·건네기·제자리 놓기는 이 손 간격 그대로 (align_to_hands), 손 벌림에서 풀림
-        gripL = [Lx + GRAB_X_OFFSET - oLx*GRAB_SQUEEZE, Ly - oLy*GRAB_SQUEEZE, grab_z]     # 왼손 보정 없음 — 양손 같게 조임
-        gripR = [Rx + GRAB_X_OFFSET - oRx*GRAB_SQUEEZE, Ry - oRy*GRAB_SQUEEZE, grab_z]
-        if GRAB_SQUEEZE:
-            print(f"[GRAB-BOX] 조이기 각 손 {GRAB_SQUEEZE*100:.1f} cm 안쪽 — 손 간격 {abs(gripL[1] - gripR[1])*100:.1f} cm "
-                  f"(L/R 점 간격 {abs(Ly - Ry)*100:.1f} cm)")
-        if labels[0].startswith("④"):
-            self._stage("잡기")
-        if not self._move(gripL, gripR, grip_sec, labels[2], l_rot, r_rot):
-            return None
-        time.sleep(hold_sec)
-        return gripL, gripR
-
-    def _regrasp(self, gripL, gripR, grab_z, above_z, l_rot, r_rot):
-        """⑥a 가운데(REGRASP_CENTER_Y)로 밀고 반듯하게 → ⑥b 옆으로 풀기 → ⑥c 재검출 → ⑥d 새 좌우 변 가운데를 다시 잡기.
-
-        성공 시 (gripL, gripR, yaw_add, gl_rot, gr_rot) — 실패(이동 중단) 시 None.
-        재검출이 없거나 예상 위치(손 위치로 계산)에서 REGRASP_MAX_SHIFT 넘게 어긋나면 예상 위치로 다시 잡음.
-        """
-        self._stage("다시 잡기")
-        half = 0.5 * float(np.hypot(gripL[0] - gripR[0], gripL[1] - gripR[1]))   # 쥔 폭의 절반 (돌아 있었어도 그대로)
-        gx = 0.5 * (gripL[0] + gripR[0])
-        # ⑥a 좌우 보정 — 잡은 채 테이블 위에서 박스 중심을 REGRASP_CENTER_Y 로, 손목을 기본값으로 (박스가 반듯해짐)
-        #   기본 = RGB 렌즈 바로 앞 (camera.y 3.25 cm) — 렌즈가 왼쪽으로 치우쳐 있어 y 0 이면 28 cm 박스 오른쪽 끝이
-        #   화면 밖으로 나가 재검출이 안 됨 (테이블 110 · 박스 15, 시뮬 확인). 건네기는 들고 나서 y 0 으로 옮김
-        yc = REGRASP_CENTER_Y
-        if not self._move([gx, yc + half, grab_z], [gx, yc - half, grab_z], 2.0, "⑥a 좌우 보정 (가운데로 · 반듯하게)", l_rot, r_rot):
-            return None
-        time.sleep(0.3)
-        # ⑥b 풀기 — 옆으로만 (옆면에서 약 6 cm 바깥이라 손이 윗면 인식을 가리지 않음). regrasp_lift_hands 면 위로도
-        w = half + GRAB_SQUEEZE + REGRASP_OPEN
-        if not self._move([gx, yc + w, grab_z], [gx, yc - w, grab_z], 1.0, "⑥b 손 풀기 (옆으로)", l_rot, r_rot):
-            return None
-        if REGRASP_LIFT_HANDS and not self._move([gx, yc + w, above_z], [gx, yc - w, above_z], 1.0, "⑥b' 손 위로", l_rot, r_rot):
-            return None
-
-        # ⑥c 재검출 — 예상: 박스 중심 (gx, yc), L/R 점 = 쥔 자리에서 조이기만큼 바깥
-        Lx, Ly = gx, yc + half + GRAB_SQUEEZE
-        Rx, Ry = gx, yc - half - GRAB_SQUEEZE
-        cx, cy = gx, yc
-        d = self.redetect_fresh() if self.redetect_fresh is not None else None
-        src = "예상 위치 (재검출 없음)"
-        if d and d.get("L") and d.get("R"):
-            nLx, nLy, _ = cam_to_ik(*d["L"])
-            nRx, nRy, _ = cam_to_ik(*d["R"])
-            if d.get("top_center"):
-                ncx, ncy, _ = cam_to_ik(*d["top_center"])
-            else:
-                ncx, ncy = (nLx + nRx) / 2, (nLy + nRy) / 2
-            shift = float(np.hypot(ncx - gx, ncy - yc))
-            nyaw = float(np.degrees(np.arctan2(nRx - nLx, nLy - nRy)))
-            if shift <= REGRASP_MAX_SHIFT and abs(nyaw) <= MAX_BOX_YAW_DEG:
-                inset = grab_inset(d.get("box_d"))
-                Lx, Ly, Rx, Ry, cx, cy = nLx - inset, nLy, nRx - inset, nRy, ncx - inset, ncy
-                src = f"재검출 (예상과 {shift*100:.1f} cm, 회전 {nyaw:+.1f}°)"
-            else:
-                src = f"예상 위치 (재검출이 {shift*100:.1f} cm · {nyaw:+.1f}° 어긋나 버림)"
-        print(f"[GRAB-BOX] 다시 잡기 — {src}: L [{Lx:.3f},{Ly:.3f}] R [{Rx:.3f},{Ry:.3f}]")
-
-        yaw = float(np.degrees(np.arctan2(Rx - Lx, Ly - Ry)))
-        yaw_add = yaw if BOX_YAW_FOLLOW else 0.0
-        gl_rot, gr_rot = self._wrist_quats(yaw_add)
-        # ⑥d 다시 잡기 — 새 L/R 바깥 REGRASP_OPEN 에 맞춘 뒤 조이기 (손이 위에 있으면 위에서 내려옴)
-        g = self._approach_grip(Lx, Ly, Rx, Ry, cx, cy, grab_z, above_z if REGRASP_LIFT_HANDS else None, gl_rot, gr_rot,
-                                REGRASP_OPEN, ("⑥c 다시 위쪽 접근", "⑥c' 다시 하강", "⑥d 다시 잡기"),
-                                grip_sec=1.5, hold_sec=0.5)      # 이미 반듯 · 가운데라 짧게
-        if g is None:
-            return None
-        return g[0], g[1], yaw_add, gl_rot, gr_rot
-
     def grab_box(self, L_cam, R_cam, box_h_m=None, top_center_cam=None, box_d_m=None):
         """박스: L/R(윗면 좌우 변 중심, 안쪽 2cm) 직접 사용.
 
@@ -598,19 +481,43 @@ class GrabController:
               f"대칭 정렬에서 기본값으로")
         self._say("start")
 
-        # === L/R 실제 좌표를 직접 손 목표로 사용 (기울어진 박스 대응) — ④ 접근 · ⑤ 하강 · ⑥ 잡기 ===
-        g = self._approach_grip(Lx, Ly, Rx, Ry, cx, cy, grab_z, above_z, gl_rot, gr_rot,
-                                APPROACH_EXTRA, ("④ 위쪽 접근", "⑤ 측면 하강", "⑥ 잡기"))
-        if g is None:
-            return
-        gripL, gripR = g
+        # === L/R 실제 좌표를 직접 손 목표로 사용 (기울어진 박스 대응) ===
+        # 왼손 = L점, 오른손 = R점 (각 변의 실제 위치)
+        # 접근: L/R에서 바깥으로 더 벌려 위에서 내려옴
+        #   바깥 방향 = 중심(cx,cy)에서 L/R로 향하는 단위벡터
+        def outward(px, py):
+            dx, dy = px - cx, py - cy
+            n = (dx*dx + dy*dy) ** 0.5
+            return (dx/n, dy/n) if n > 1e-6 else (0.0, 0.0)
+        oLx, oLy = outward(Lx, Ly)
+        oRx, oRy = outward(Rx, Ry)
 
-        # ⑥a–⑥d 다시 잡기 — 가운데로 밀고 반듯하게 → 풀고 위로 → 재검출 → 새 좌우 변 가운데를 다시 잡기
-        if REGRASP:
-            g = self._regrasp(gripL, gripR, grab_z, above_z, l_rot, r_rot)
-            if g is None:
-                return
-            gripL, gripR, yaw_add, gl_rot, gr_rot = g
+        # 접근점 (L/R 에서 옆으로만 +APPROACH_EXTRA, x 는 L/R 그대로)
+        #   1.14: 박스 옆면 바깥 방향(oL/oR) 대신 순수 좌우(±y) — 비스듬한 박스에서 먼 쪽 손이 옆면 방향으로 더 앞으로 나가
+        #         도달 한계를 넘던 것(20° · x 0.40 에서 앞쪽 손 x 0.49 → ⑤ 측면 하강 4 cm 부족)을 막음. 반듯한 박스면 거의 같음
+        appL = [Lx, Ly + APPROACH_EXTRA + LEFT_HAND_Y_OFFSET, above_z]
+        appR = [Rx, Ry - APPROACH_EXTRA, above_z]
+        self._stage("위쪽 접근")
+        if not self._move(appL, appR, 1.5, "④ 위쪽 접근", gl_rot, gr_rot): return
+        time.sleep(0.2)
+
+        # 하강 (같은 XY, grab_z로)
+        appL[2] = grab_z; appR[2] = grab_z
+        self._stage("측면 하강")
+        if not self._move(appL, appR, 1.0, "⑤ 측면 하강", gl_rot, gr_rot): return
+        time.sleep(0.2)
+
+        # 잡기 — 실제 L/R 점 + X는 몸쪽으로 당김(GRAB_X_OFFSET)
+        #   + 조이기: L/R 에서 박스 안쪽(중심 쪽)으로 GRAB_SQUEEZE — 팔은 위치 제어라 목표가 박스 안으로 들어간 만큼 쥠.
+        #     이후 대칭 정렬·들기·건네기·제자리 놓기는 이 손 간격 그대로 (align_to_hands), 손 벌림에서 풀림
+        gripL = [Lx + GRAB_X_OFFSET - oLx*GRAB_SQUEEZE, Ly - oLy*GRAB_SQUEEZE, grab_z]     # 왼손 보정 없음 — 양손 같게 조임
+        gripR = [Rx + GRAB_X_OFFSET - oRx*GRAB_SQUEEZE, Ry - oRy*GRAB_SQUEEZE, grab_z]
+        if GRAB_SQUEEZE:
+            print(f"[GRAB-BOX] 조이기 각 손 {GRAB_SQUEEZE*100:.1f} cm 안쪽 — 손 간격 {abs(gripL[1] - gripR[1])*100:.1f} cm "
+                  f"(L/R 점 간격 {abs(Ly - Ry)*100:.1f} cm)")
+        self._stage("잡기")
+        if not self._move(gripL, gripR, 2.5, "⑥ 잡기", gl_rot, gr_rot): return
+        time.sleep(1.0)
 
         # 끌어당기기 — 잡은 뒤 테이블 위에서 몸쪽으로 (팔이 덜 뻗은 자세에서 들기 위해)
         if PULL_X != 0.0:
@@ -897,30 +804,6 @@ async def lifespan(app: FastAPI):
             print(f"[REDETECT] 실패: {e}")
             return None
     grab.redetect = _redetect
-
-    # 다시 잡기용 재검출 — 안정화 버퍼(최근 2 초 median)를 비우고 박스를 옮긴 뒤 프레임이 쌓이면 읽음
-    #   (시뮬 sim_server 는 /reset_window 가 없음 → 그냥 기다렸다 읽음)
-    def _redetect_fresh(min_n=8, timeout=3.0):
-        import urllib.request as _u
-        try:
-            _u.urlopen(_u.Request("http://localhost:50010/reset_window", data=b"", method="POST"), timeout=1.0).read()
-        except Exception:
-            pass
-        t_end = time.time() + timeout
-        d = None
-        while time.time() < t_end:
-            time.sleep(0.25)
-            try:
-                d = json.loads(_u.urlopen("http://localhost:50010/pose", timeout=1.0).read())
-            except Exception as e:
-                print(f"[REDETECT] 실패: {e}")
-                d = None
-                continue
-            if d.get("found") and int(d.get("n", min_n)) >= min_n:
-                return d
-        print(f"[REDETECT] {timeout:.0f} 초 안에 박스 못 찾음 (n {d.get('n') if d else '-'})")
-        return None
-    grab.redetect_fresh = _redetect_fresh
     print("✅ GrabController 준비")
     threading.Thread(target=_arm_watch, daemon=True, name="arm_watch").start()
     SYS.start()                    # 로봇 FSM · 서버 상태 (제어 화면 System 카드, GET /system)

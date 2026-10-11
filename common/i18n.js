@@ -110,7 +110,7 @@
     '위쪽 접근': 'Approach', '위쪽접근': 'Approach',
     '측면 하강': 'Lower', '측면하강': 'Lower',
     '받기 대기': 'Wait take', '받기대기': 'Wait take',
-    '재검출': 'Re-detect', '다시 잡기': 'Re-grip', '잡기': 'Grip', '들기': 'Lift', '건네기': 'Hand over',
+    '재검출': 'Re-detect', '잡기': 'Grip', '들기': 'Lift', '건네기': 'Hand over',
     '놓기': 'Release', '복귀': 'Return',
     // robot_server 오류
     '동작 중 - 정지 후 전환': 'busy - stop before switching',
