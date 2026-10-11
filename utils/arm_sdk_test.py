@@ -13,15 +13,21 @@ arm_sdk_test.py — rt/arm_sdk 로 팔 관절 하나만 조금 움직여 보고,
   ROBOT_CHECK=1 ROBOT=h2 python utils/arm_sdk_test.py --allow-fsm 601  # 리모컨 운동제어 모드 등 목록 밖 FSM
   ROBOT_CHECK=1 ROBOT=h2 python utils/arm_sdk_test.py --enable      # EnableArmSDK → 시험 → DisableArmSDK (공식 예제 절차)
   ROBOT_CHECK=1 ROBOT=h2 python utils/arm_sdk_test.py --enable --style sdk --slot 30 --deg 10   # 머리 yaw (29 = pitch)
-  안전: 시험 슬롯 외 팔·허리 슬롯이 시작 대비 8° 넘게 움직이면 즉시 weight 반납
+  ROBOT_CHECK=1 ROBOT=h2 python utils/arm_sdk_test.py --enable --style official --slot 30 --deg 10   # 공식 예제와 똑같이 (머리만 움직임)
+  안전: 시험 슬롯 외 팔 슬롯이 시작 대비 8°, 허리가 3° 넘게 움직이면 즉시 weight 반납
 
   --style sdk  : unitree_sdk2_python h2_arm_sdk_dds_example.py 와 같은 구성
                  팔 14 슬롯 kp 80 / kd 1.5 + 머리 29/30 kp 30 / kd 1.0, mode 는 건드리지 않음(0).
                  (허리는 현재각 유지 robot.yaml kp_waist / kd_waist 추가)
+  --style official : 공식 예제와 메시지 구성까지 똑같이 — sdk 와의 차이 3 가지를 없앰
+                 ① 허리 12–14 명령 안 함 (kp 0, 예제와 같음) ② LowCmd mode_machine 0 · mode_pr 0 (예제 기본값, --mm 으로 바꿀 수 있음)
+                 ③ weight 를 첫 주기에 바로 1.0 (예제 Stage 1 과 같음, 목표 = 현재각이라 팔이 튀지 않음)
+                 팔은 0 자세로 보내지 않고 현재각 유지 (예제 Stage 1 의 0 자세는 2026-10-07 실기에서 팔이 몸에 부딪힘)
+                 --enable 이면 EnableArmSDK 전후로 내장 팔 서비스(g1_arm_example)·ai_sport 상태도 출력
   --style ours : robot_arm.py 와 같은 구성 — init_slots(0–30) 전부 mode 1 + robot.yaml gains, q = 현재각
 
 순서 (50 Hz, SDK 예제와 같은 주기)
-  1) weight 0 → 1 (1.0 s), 모든 목표 = 시작 시 실측각
+  1) weight 0 → 1 (1.0 s), 모든 목표 = 시작 시 실측각   (official: 첫 주기 1.0 → 0.5 s 유지)
   2) 시험 슬롯만 +deg (1.0 s) → 유지 (1.5 s) → 원위치 (1.0 s)
   3) weight 1 → 0 (1.0 s)   — Ctrl+C 시에도 weight 를 0 으로 내리고 끝냄
 판정: 유지 구간 끝 실측이 시작 대비 deg 의 절반 이상 움직였으면 "따라옴"
@@ -53,7 +59,27 @@ NAME = {int(v): k.replace("_joint", "") for k, v in J["map"].items()}
 ARM_SDK_FSM = {4, 703}     # SDK master 814556d h2_arm_sdk_dds_example.py ARM_SDK_SUPPORTED_FSM_IDS
 DT = 0.02                  # SDK 예제 control_dt_
 MAX_DEG = 10.0
-WATCH_DEG = 8.0            # 시험 슬롯 외 팔·허리 슬롯이 시작 대비 이만큼 움직이면 즉시 weight 반납 (예상 밖 움직임)
+WATCH_DEG = 8.0            # 시험 슬롯 외 팔 슬롯이 시작 대비 이만큼 움직이면 즉시 weight 반납 (예상 밖 움직임)
+WATCH_WAIST_DEG = 3.0      # 허리는 더 작게 (official 은 허리 kp 0 을 보냄 — 실기에서는 허리에 arm_sdk 가 안 닿지만 만일을 위해)
+WATCH_SERVICES = ("g1_arm_example", "ai_sport")   # 내장 팔 서비스(이름이 G1 그대로) · 운동제어 — robot_services.py 목록 기준
+
+
+def print_services(tag):
+    """EnableArmSDK 가 내장 팔 서비스를 끄는지 보려고 상태만 읽음 (robot_state RPC, 명령 없음)."""
+    try:
+        from unitree_sdk2py.go2.robot_state.robot_state_client import RobotStateClient
+        rsc = RobotStateClient()
+        rsc.SetTimeout(3.0)
+        rsc.Init()
+        code, lst = rsc.ServiceList()
+        if code != 0 or lst is None:
+            print(f"[test] 서비스 상태 ({tag}): ServiceList 실패 code {code}")
+            return
+        m = {x.name: x.status for x in lst}
+        txt = ", ".join(f"{n} {({0: '켜짐', 1: '꺼짐'}).get(m.get(n), m.get(n))}" for n in WATCH_SERVICES)
+        print(f"[test] 서비스 상태 ({tag}): {txt}")
+    except Exception as e:   # 조회 실패는 시험에 영향 없음
+        print(f"[test] 서비스 상태 ({tag}) 조회 실패: {e}")
 
 
 def ours_gain(s):
@@ -74,7 +100,7 @@ def main():
     ap.add_argument("--slot", type=int, default=ARM[0],
                     help=f"팔 슬롯 {ARM[0]}~{ARM[-1]}, 허리 {WAIST} 또는 머리 {HEAD} (기본 {ARM[0]})")
     ap.add_argument("--deg", type=float, default=5.0, help=f"움직일 각도 (|deg| ≤ {MAX_DEG})")
-    ap.add_argument("--style", choices=("sdk", "ours"), default="ours")
+    ap.add_argument("--style", choices=("sdk", "official", "ours"), default="ours")
     ap.add_argument("--allow-fsm", type=int, action="append", default=[],
                     help="지원 목록 {4, 703} 밖의 FSM 도 허용 (예: 리모컨으로 들어간 운동제어 모드의 FSM ID — robot_state.py 로 확인)")
     ap.add_argument("--enable", action="store_true",
@@ -114,8 +140,10 @@ def main():
                      f"(ROBOT_CHECK=1 ROBOT={robot_env.ROBOT} ./start_fsm.sh no-bal)")
     loco = c if not robot_env.SIM else None
     if a.enable and loco is not None:
+        print_services("EnableArmSDK 전")
         ret = loco.EnableArmSDK()
         print(f"[test] EnableArmSDK → {ret}  (GetArmSdkStatus = {loco.GetArmSdkStatus()})")
+        print_services("EnableArmSDK 후")
         if ret != 0:
             sys.exit("❌ EnableArmSDK 실패 — 명령하지 않음 (SDK 814556d 필요: ROBOT=h2 source activate_tv.sh)")
 
@@ -124,13 +152,18 @@ def main():
     crc = CRC()
     cmd = unitree_hg_msg_dds__LowCmd_()
     # LowCmd 헤더 — robot_arm.py 와 같은 규칙 (robot.yaml lowcmd.mode_machine), --mm 으로 바꿔 비교 가능
-    _mm = a.mm if a.mm is not None else (robot_env.CFG.get("lowcmd") or {}).get("mode_machine", 0)
+    _mm = a.mm if a.mm is not None else 0 if a.style == "official" else (robot_env.CFG.get("lowcmd") or {}).get("mode_machine", 0)
     cmd.mode_pr = 0
     cmd.mode_machine = int(st["msg"].mode_machine) if _mm == "lowstate" else int(_mm)
 
     q_all = np.array([float(st["msg"].motor_state[i].q) for i in range(len(st["msg"].motor_state))])
     q0 = float(q_all[a.slot])
-    if a.style == "sdk":
+    if a.style == "official":
+        slots = ARM + HEAD          # 허리 없음, mode 0 (예제와 같음)
+        for s in slots:
+            kp, kd = (80.0, 1.5) if s in ARM else (30.0, 1.0)
+            cmd.motor_cmd[s].kp, cmd.motor_cmd[s].kd = kp, kd
+    elif a.style == "sdk":
         slots = ARM + HEAD + WAIST
         for s in slots:
             kp, kd = (80.0, 1.5) if s in ARM else (30.0, 1.0) if s in HEAD else (G["kp_waist"], G["kd_waist"])
@@ -149,6 +182,8 @@ def main():
 
     target = q0 + np.radians(a.deg)
     phases = [("weight 0→1", 1.0), ("이동", 1.0), ("유지", 1.5), ("복귀", 1.0), ("weight 1→0", 1.0)]
+    if a.style == "official":
+        phases[0] = ("weight 1", 0.5)      # 예제처럼 첫 주기부터 1.0
     weight = 0.0
     held = None
 
@@ -165,13 +200,17 @@ def main():
         m = st["msg"]
         for s_ in watch:
             d = np.degrees(float(m.motor_state[s_].q) - q_watch0[s_])
-            if abs(d) > WATCH_DEG:
+            if abs(d) > (WATCH_WAIST_DEG if s_ in WAIST else WATCH_DEG):
                 raise RuntimeError(f"슬롯 {s_} ({NAME.get(s_, '')}) 가 시작 대비 {d:+.1f}° 움직임 — 예상 밖")
 
     try:
         ms0 = st["msg"].motor_state[a.slot]
         print(f"[test] 슬롯 {a.slot} 시작 상태: mode {ms0.mode}, 온도 {list(ms0.temperature)}, motorstate {ms0.motorstate}, "
               f"tau {ms0.tau_est:+.2f} Nm")
+        if a.slot in HEAD:
+            kp_s = float(cmd.motor_cmd[a.slot].kp)
+            print(f"[test] 명령이 모터에 닿으면 유지 구간 토크 ≈ kp {kp_s:.0f} × {abs(np.radians(a.deg)):.3f} rad "
+                  f"= {kp_s * abs(np.radians(a.deg)):.1f} Nm 근처까지 오름 (안 닿으면 0 근처)")
         for name, dur in phases:
             n = int(round(dur / DT))
             tau_pk, dq_pk = 0.0, 0.0
@@ -180,6 +219,8 @@ def main():
                 q_slot = q0
                 if name == "weight 0→1":
                     weight = r
+                elif name == "weight 1":
+                    weight = 1.0
                 elif name == "이동":
                     q_slot = q0 + (target - q0) * r
                 elif name == "유지":
