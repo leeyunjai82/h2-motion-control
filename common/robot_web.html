@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 2.23
+<!-- Version: 2.24
+  2.24 - 잡기 멘트는 영어만 — 2.23 의 한/EN 연동 뺌 (사용자 2026-10-11)
   2.23 - 잡기 멘트(TTS) 언어를 한/EN 버튼에 맞춤 (robot_server GET /set_tts_lang — 페이지를 열 때와 버튼 누를 때)
   2.22 - System 카드를 위 막대 'System' 칩으로 (실데이터 7 줄이면 왼쪽 열이 1366×768 에서 133 px 넘침 — 사용자: 부족하면 System 빼기).
          칩 = OK / CHECK / ERR, 마우스를 올리면 요약, 누르면 줄별 목록(FSM · 서버 · Camera). Camera 줄: 지금 쓰는 숙임각 ·
@@ -453,10 +454,6 @@ document.getElementById('link-box').href=`http://${host}:50010/`;
 // robot-only 3D 뷰 (50003)
 // 언어는 포트가 달라 localStorage 공유가 안 되므로 ?lang= 로 넘기고, 전환 시엔 i18n.js 가 postMessage
 const LANG=()=>(window.G1I18N&&G1I18N.lang)||'ko';
-// 잡기 멘트(TTS) 언어 = 화면 언어 (여러 화면을 열면 마지막에 바꾼 쪽)
-function syncTtsLang(l){fetch('/set_tts_lang?lang='+(l==='en'?'en':'ko')).catch(()=>{});}
-window.addEventListener('g1lang',e=>syncTtsLang(e.detail));
-document.addEventListener('DOMContentLoaded',()=>syncTtsLang(LANG()));
 document.getElementById('robot-frame').src=`http://${host}:50003/robot-only?embed=1&lang=${LANG()}`;
 window.addEventListener('g1lang',e=>{
   document.getElementById('link-dash').href=`http://${host}:50003/dashboard?lang=${e.detail}`;

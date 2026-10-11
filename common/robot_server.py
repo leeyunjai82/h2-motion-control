@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Version: 1.14
+# Version: 1.15
 # Changes:
+#   1.15 - TTS 멘트는 영어만 (사용자 2026-10-11) — 한/영 연동(GET /set_tts_lang)·한국어 멘트 제거, robot.yaml tts.voice 한 개
 #   1.14 - 비스듬한 박스: L/R 점으로 박스 회전각을 구해 접근·하강·잡기·당기기 동안 양손 손목 yaw 에 더함 (손바닥이 옆면과 평행).
 #          ⑥' 대칭 정렬에서 손목을 기본값으로 되돌리며 박스를 반듯하게 펴고, 손 간격은 잡은 두 점 사이 거리 그대로 (돌려도 더 조이지 않게).
 #          |회전| > grab.max_box_yaw_deg 면 잡지 않음. 박스 잡기 시작 멘트 추가 ("Let me pick up the box.")
@@ -149,9 +150,7 @@ WRIST_RPY_DEG  = _wrist_cfg()   # {"left": [r, p, y], "right": [r, p, y]}
 # ↑ 손목 RPY 기본값 [roll, pitch, yaw] deg, 양손 같게. 웹 Wrist RPY 로 바꾸면 그 값
 LEFT_HAND_Y_OFFSET = float(robot_env.CFG["grab"].get("left_hand_y_offset", 0.0))   # 왼손 y 보정 [m] (+ = 바깥/왼쪽)
 GRAB_SQUEEZE = float(robot_env.CFG["grab"].get("squeeze", 0.0))   # 잡을 때 양손을 박스 안쪽으로 더 [m] (각 손)
-_TTS_CFG = robot_env.CFG.get("tts") or {}
-TTS_VOICE = {k: int(v) for k, v in (_TTS_CFG.get("voice") or {"en": 6, "ko": 1}).items()}   # 언어별 TTS 서버 음성 번호
-TTS_DEFAULT_LANG = str(_TTS_CFG.get("default_lang", "en"))      # 제어 화면이 열리면 화면 한/EN 으로 바뀜
+TTS_VOICE = int((robot_env.CFG.get("tts") or {}).get("voice", 6))   # TTS 서버 음성 번호 (멘트는 영어)
 BOX_YAW_FOLLOW = bool(robot_env.CFG["grab"].get("box_yaw_follow", True))     # 비스듬한 박스: 손목 yaw 를 박스 회전만큼 더함
 MAX_BOX_YAW_DEG = float(robot_env.CFG["grab"].get("max_box_yaw_deg", 25.0))  # 이보다 더 돌아 있으면 잡지 않음 [deg]
 WAIST_BASE_PITCH = float(robot_env.CFG["grab"]["waist_base_pitch_deg"])   # Home(pose=zero) 허리 pitch (H2 허리는 arm_sdk 로 안 움직임)
@@ -199,7 +198,7 @@ class GrabController:
     def __init__(self, arm=None, speak=None,
                  robot_available=False):
         self.arm  = arm
-        self.speak = speak or (lambda t, lang=None: print(f"[TTS-DUMMY] {t}"))
+        self.speak = speak or (lambda t: print(f"[TTS-DUMMY] {t}"))
         self.robot_available = robot_available
 
         # 손목 RPY
@@ -207,24 +206,14 @@ class GrabController:
         # handover 방향
         self.handover_direction = DEFAULT_HANDOVER   # center (정면 건네기) | place (제자리 내려놓기)
 
-        # TTS 멘트 (선물 컨셉 제거, 잡기 위주) — 언어는 제어 화면 한/EN 버튼 (GET /set_tts_lang), 처음엔 robot.yaml tts.default_lang
-        self.lang = TTS_DEFAULT_LANG if TTS_DEFAULT_LANG in ("en", "ko") else "en"
-        self.MSGS = {
-            "en": {"start":    "Let me pick up the box.",            # 잡기 시작 (재검출·회전 확인 뒤, 팔이 움직이기 직전)
-                   "picked":   "I got it.",                          # 잡고 몸쪽으로 당긴 뒤
-                   "handover": "Here you go. Please take the box.",  # Center: 가운데로 내민 뒤
-                   "received": "Nicely done!",                       # Center: 2 초 뒤 (받았는지 확인 안 함)
-                   "timeout":  "No one? I will put it down.",        # (지금은 안 쓰임 — 받음 확인이 없음)
-                   "home":     "Bring me another box.",              # Center: 대기 자세 복귀 뒤
-                   "placed":   "I put it back."},                    # Place: 내려놓고 손 뺀 뒤
-            "ko": {"start":    "박스를 집을게요.",
-                   "picked":   "잡았어요.",
-                   "handover": "여기 있어요. 박스를 받아 주세요.",
-                   "received": "잘 받으셨어요!",
-                   "timeout":  "아무도 없나요? 내려놓을게요.",
-                   "home":     "다른 박스를 가져다 주세요.",
-                   "placed":   "제자리에 내려놓았어요."},
-        }
+        # TTS 멘트 (선물 컨셉 제거, 잡기 위주, 영어)
+        self.MSGS = {"start":    "Let me pick up the box.",            # 잡기 시작 (재검출·회전 확인 뒤, 팔이 움직이기 직전)
+                     "picked":   "I got it.",                          # 잡고 몸쪽으로 당긴 뒤
+                     "handover": "Here you go. Please take the box.",  # Center: 가운데로 내민 뒤
+                     "received": "Nicely done!",                       # Center: 2 초 뒤 (받았는지 확인 안 함)
+                     "timeout":  "No one? I will put it down.",        # (지금은 안 쓰임 — 받음 확인이 없음)
+                     "home":     "Bring me another box.",              # Center: 대기 자세 복귀 뒤
+                     "placed":   "I put it back."}                     # Place: 내려놓고 손 뺀 뒤
 
         self.HOME_LEFT  = [READY_XYZ[0],  READY_XYZ[1], READY_XYZ[2]]
         self.HOME_RIGHT = [READY_XYZ[0], -READY_XYZ[1], READY_XYZ[2]]
@@ -260,9 +249,7 @@ class GrabController:
               ", ".join(f"{n} {d:.1f}" for n, d in stages))
 
     def _say(self, key):
-        """지금 언어(self.lang)의 멘트를 TTS 로 (speak(text, lang))."""
-        lang = self.lang if self.lang in self.MSGS else "en"
-        self.speak(self.MSGS[lang][key], lang)
+        self.speak(self.MSGS[key])
 
     # ---- 로봇 저수준 래퍼 ----
     def _rpy_to_quat(self, roll_deg, pitch_deg, yaw_deg):
@@ -793,12 +780,11 @@ async def lifespan(app: FastAPI):
             print(f"⚠️ TTS 실패: {e}")
 
     # 잡기 컨트롤러 (arm 주입)
-    def _speak(text, lang=None):
+    def _speak(text):
         if tts:
-            lang = lang or "en"
-            tts.speak(text, voice=TTS_VOICE.get(lang), lang=lang)
+            tts.speak(text, voice=TTS_VOICE, lang="en")
         else:
-            print(f"[TTS-DUMMY] ({lang}) {text}")
+            print(f"[TTS-DUMMY] {text}")
     grab = GrabController(arm=arm, speak=_speak,
                           robot_available=(arm is not None))
 
@@ -1106,16 +1092,6 @@ def camera_status():
 @app.get("/system", summary="로봇 FSM · 서버 상태 (2초마다 갱신) + 팔이 안 움직일 이유(warn) + 카메라 숙임각 출처")
 def system():                     # def — arm_server 조회가 블로킹이라 스레드풀에서
     return {**SYS.latest(), "warn": arm_warnings(), "camera": camera_status()}
-
-@app.get("/set_tts_lang", summary="잡기 멘트 언어 (ko / en) — 제어 화면 한/EN 버튼이 부름")
-def set_tts_lang(lang: str):
-    if lang not in ("ko", "en"):
-        return JSONResponse({"ok": False, "reason": "lang 은 ko 또는 en"}, status_code=400)
-    if grab is not None and grab.lang != lang:
-        grab.lang = lang
-        print(f"[TTS] 멘트 언어 → {lang} (음성 {TTS_VOICE.get(lang)})")
-    return {"ok": True, "lang": lang}
-
 
 @app.get("/hw", summary="이 PC 의 CPU / GPU / NPU 사용률 [%] (1초마다 갱신, 못 읽으면 pct null + why)")
 async def hw_usage():
