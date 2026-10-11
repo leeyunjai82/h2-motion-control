@@ -10,28 +10,25 @@
 
 이 폴더(`trainer/`)만 있으면 됩니다 — 로봇 SDK·URDF 는 필요 없음.
 
-## 설치 (Ubuntu, RTX 5090)
+## 설치 (Ubuntu, RTX 5090) — 처음 한 번
 
-1. NVIDIA 드라이버 확인 — `nvidia-smi` 오른쪽 위 **CUDA Version 이 12.8 이상**이어야 합니다.
-   RTX 50 시리즈(Blackwell, `sm_120`)는 CUDA 12.8 이상으로 빌드된 PyTorch(2.7 이상)만 돕니다.
-2. conda 환경 (이름 `act` — 다른 이름이면 실행 때 `TRAINER_ENV=<이름>`)
-   ```bash
-   conda create -n act python=3.11 -y
-   conda activate act
-   pip install torch torchvision --index-url https://download.pytorch.org/whl/cu128
-   pip install -r trainer/requirements.txt
-   pip install openvino==<로봇 PC 와 같은 버전>
-   ```
-   - 로봇 PC 버전 확인: `source activate_tv.sh && python -c "import openvino; print(openvino.__version__)"`
-     (학습 PC 가 더 새 버전이면 로봇이 IR 을 못 읽을 수 있음 — 로봇 웹 모델 목록에 주황색 경고로 표시)
-   - cu128 주소는 PyTorch 설치 페이지(https://pytorch.org/get-started/locally/)에서 지금 것으로 확인.
-3. 확인
-   ```bash
-   python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name(0), torch.cuda.get_arch_list())"
-   ```
-   `True`, `NVIDIA GeForce RTX 5090`, 목록에 `sm_120` 이 있어야 함.
+```bash
+./trainer/install_trainer.sh 2026.4.1      # 인자 = 로봇 PC 와 같은 openvino 버전
+```
 
-ResNet18 ImageNet 가중치(45 MB)는 첫 학습 때 인터넷에서 한 번 받습니다 (`~/.cache/torch`). 못 받으면 무작위 초기화로 학습하고 로그에 경고.
+- 로봇 PC openvino 버전 확인: `source activate_tv.sh && python -c "import openvino; print(openvino.__version__)"`
+  (학습 PC 가 더 새 버전이면 로봇이 IR 을 못 읽을 수 있음 — 로봇 웹 모델 목록에 주황색 경고로 표시)
+- 하는 일: ① `nvidia-smi` CUDA Version 12.8 이상인지 (RTX 50 시리즈 = Blackwell `sm_120` → CUDA 12.8 이상 빌드 torch 필요)
+  ② conda 찾기 (없으면 Miniforge 설치 명령 안내) ③ env `act` (python 3.11, conda-forge) ④ torch·torchvision cu128
+  ⑤ requirements.txt + `openvino==<버전>` ⑥ GPU 인식·`sm_120` 지원·GPU 연산 확인 ⑦ ResNet18 가중치 미리 받기
+- torch 는 **2.11.0 + torchvision 0.26.0 (cu128) 고정** — cu128 저장소의 마지막 판 (2026-10 확인).
+  같은 판(CPU)으로 학습·OpenVINO 변환·로봇 쪽 IR 로드까지 확인함 (5090 GPU 위 실행은 아직 미확인).
+  최신 torch 2.14(cu130)도 학습·변환은 됐지만 `torch.jit.trace` deprecated 경고가 나옴 — OpenVINO 변환이 이걸 쓰므로
+  나중 torch 에서 빠지면 변환이 깨질 수 있어 고정함. 바꾸려면 `TORCH_PKGS="torch==… torchvision==…" TORCH_INDEX=…`
+  (cu130 은 nvidia-smi CUDA Version 13.0 이상 필요).
+- 이미 있는 env 는 지우지 않고 그 안에 설치/갱신. env 이름: `TRAINER_ENV=이름`.
+
+ResNet18 ImageNet 가중치(45 MB)는 설치 ⑦ 에서 미리 받습니다 (`~/.cache/torch`). 거기서 못 받았으면 첫 학습 때 다시 시도하고, 그래도 안 되면 무작위 초기화로 학습(로그에 경고).
 
 ## 실행
 
