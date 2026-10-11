@@ -150,7 +150,7 @@ WRIST_RPY_DEG  = _wrist_cfg()   # {"left": [r, p, y], "right": [r, p, y]}
 LEFT_HAND_Y_OFFSET = float(robot_env.CFG["grab"].get("left_hand_y_offset", 0.0))   # 왼손 y 보정 [m] (+ = 바깥/왼쪽)
 GRAB_SQUEEZE = float(robot_env.CFG["grab"].get("squeeze", 0.0))   # 잡을 때 양손을 박스 안쪽으로 더 [m] (각 손)
 _TTS_CFG = robot_env.CFG.get("tts") or {}
-TTS_VOICE = {k: int(v) for k, v in (_TTS_CFG.get("voice") or {"en": 6, "ko": 6}).items()}   # 언어별 TTS 서버 음성 번호
+TTS_VOICE = {k: int(v) for k, v in (_TTS_CFG.get("voice") or {"en": 6, "ko": 1}).items()}   # 언어별 TTS 서버 음성 번호
 TTS_DEFAULT_LANG = str(_TTS_CFG.get("default_lang", "en"))      # 제어 화면이 열리면 화면 한/EN 으로 바뀜
 BOX_YAW_FOLLOW = bool(robot_env.CFG["grab"].get("box_yaw_follow", True))     # 비스듬한 박스: 손목 yaw 를 박스 회전만큼 더함
 MAX_BOX_YAW_DEG = float(robot_env.CFG["grab"].get("max_box_yaw_deg", 25.0))  # 이보다 더 돌아 있으면 잡지 않음 [deg]
