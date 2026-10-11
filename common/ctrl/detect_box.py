@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# Version: 0.12
+# Version: 0.13
 # Changes:
+#   0.13 - 박스 모델 교체 box11s-seg2 (YOLO11s-seg, 카드보드 박스 데이터 강화 cardboard-box-opt-d7aba07c, 사용자 2026-10-11).
+#          학습 검증 mAP50-95 seg 0.956 → 0.993. 실카메라 사진 1 장: 같은 박스, 신뢰도 0.916 → 0.948, 추론 시간 같음 (CPU 약 120 ms).
+#          OpenVINO 변환은 이전과 같게 imgsz 640 · FP32 · batch 1 · nms 없음 (models/box_openvino_model)
 #   0.12 - 흰 번짐(띠) 뺌 (사용자 2026-10-09) — 파지점 L/T/R + 프레임별 인식 위치(흰 점)만
 #   0.11 - seg 끈 화면에 윗면 중심 T 추가, 흰 번짐을 L–T–R 이어지는 띠로 크게 (사용자 2026-10-09)
 #   0.10 - 화면 seg 표시 옵션 (robot.yaml vision.show_seg, 기본 끔 · GET /set_overlay?seg=). 끄면 파지점 L/R 과
