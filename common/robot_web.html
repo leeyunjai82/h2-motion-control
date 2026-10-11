@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 2.24
+<!-- Version: 2.25
+  2.25 - Wrist RPY 기본 yaw −15 · +15 (roll ∓10 그대로, robot.yaml grab.wrist_rpy_deg)
   2.24 - 잡기 멘트는 영어만 — 2.23 의 한/EN 연동 뺌 (사용자 2026-10-11)
   2.23 - 잡기 멘트(TTS) 언어를 한/EN 버튼에 맞춤 (robot_server GET /set_tts_lang — 페이지를 열 때와 버튼 누를 때)
   2.22 - System 카드를 위 막대 'System' 칩으로 (실데이터 7 줄이면 왼쪽 열이 1366×768 에서 133 px 넘침 — 사용자: 부족하면 System 빼기).
@@ -363,7 +364,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
           <span></span><span class="h" style="color:var(--accent)">LEFT</span><span class="h" style="color:var(--amber)">RIGHT</span>
           <span class="k">roll</span><input class="in" id="l-roll" type="number" value="-10" step="5"><input class="in" id="r-roll" type="number" value="10" step="5">
           <span class="k">pitch</span><input class="in" id="l-pitch" type="number" value="0" step="5"><input class="in" id="r-pitch" type="number" value="0" step="5">
-          <span class="k">yaw</span><input class="in" id="l-yaw" type="number" value="-5" step="5"><input class="in" id="r-yaw" type="number" value="5" step="5">
+          <span class="k">yaw</span><input class="in" id="l-yaw" type="number" value="-15" step="5"><input class="in" id="r-yaw" type="number" value="15" step="5">
         </div>
         <button class="btn full" style="margin-top:9px" onclick="applyWrist()">Apply</button>
       </div>
