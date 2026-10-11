@@ -87,7 +87,8 @@ for jid in range(1, RED.njoints):
 # ---- 상태 ----
 state = {"q": np.zeros(N), "t": 0.0}
 # 기본 = 테이블 110 cm · 박스 15 cm (윗면 pelvis + 0.24), 카메라 46.0° 에서 윗면 전체가 보이는 x (38–61 cm) · auto_zone 안
-box = {"present": True, "x": 0.40, "y": 0.0, "top": 0.24, "W": 0.28, "D": 0.20, "H": 0.15}
+box = {"present": True, "x": 0.40, "y": round(robot_env.CAMERA_Y, 3), "top": 0.24, "W": 0.28, "D": 0.20, "H": 0.15}
+# ↑ y = camera.y (RGB 렌즈 바로 앞) — 렌즈가 왼쪽 3.25 cm 라 y 0 이면 28 cm 박스 오른쪽 끝이 화면 밖 (테이블 110 · 박스 15)
 OVERLAY = {"seg": bool((robot_env.CFG.get("vision") or {}).get("show_seg", False))}   # detect_box 와 같은 화면 옵션
 lock = threading.Lock()
 
