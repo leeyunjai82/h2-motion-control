@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-# Version: 1.13
+# Version: 1.14
 # Changes:
+#   1.14 - 비스듬한 박스: L/R 점으로 박스 회전각을 구해 접근·하강·잡기·당기기 동안 양손 손목 yaw 에 더함 (손바닥이 옆면과 평행).
+#          ⑥' 대칭 정렬에서 손목을 기본값으로 되돌리며 박스를 반듯하게 펴고, 손 간격은 잡은 두 점 사이 거리 그대로 (돌려도 더 조이지 않게).
+#          |회전| > grab.max_box_yaw_deg 면 잡지 않음. 박스 잡기 시작 멘트 추가 ("Let me pick up the box.")
+#          접근점을 옆면 바깥 방향 대신 순수 좌우(±y)로 — 비스듬하면 먼 쪽 손이 도달 한계를 넘던 것 (조이기 방향은 옆면 법선 그대로)
+#          TTS 멘트 한/영 — 제어 화면 한/EN 버튼을 따라감 (GET /set_tts_lang), 음성 번호는 robot.yaml tts.voice
 #   1.13 - /system 에 camera (지금 쓰는 숙임각과 출처) — robots/h2/calib_local.yaml (utils/check_rsimu.py --save) 가 있으면 그 값
 #   1.12 - grab.squeeze: 잡을 때 양손을 박스 안쪽으로 더 미는 거리 (위치 제어라 이만큼이 쥐는 힘) — 잡기~들기~건네기 유지,
 #          손 벌림에서 풀림. 이전에는 왼손 보정 +3 cm 때문에 양손 합쳐 1 cm 만 조여 건네는 중 박스가 미끄러짐 (사용자 2026-10-09)
@@ -144,6 +149,11 @@ WRIST_RPY_DEG  = _wrist_cfg()   # {"left": [r, p, y], "right": [r, p, y]}
 # ↑ 손목 RPY 기본값 [roll, pitch, yaw] deg, 양손 같게. 웹 Wrist RPY 로 바꾸면 그 값
 LEFT_HAND_Y_OFFSET = float(robot_env.CFG["grab"].get("left_hand_y_offset", 0.0))   # 왼손 y 보정 [m] (+ = 바깥/왼쪽)
 GRAB_SQUEEZE = float(robot_env.CFG["grab"].get("squeeze", 0.0))   # 잡을 때 양손을 박스 안쪽으로 더 [m] (각 손)
+_TTS_CFG = robot_env.CFG.get("tts") or {}
+TTS_VOICE = {k: int(v) for k, v in (_TTS_CFG.get("voice") or {"en": 6, "ko": 6}).items()}   # 언어별 TTS 서버 음성 번호
+TTS_DEFAULT_LANG = str(_TTS_CFG.get("default_lang", "en"))      # 제어 화면이 열리면 화면 한/EN 으로 바뀜
+BOX_YAW_FOLLOW = bool(robot_env.CFG["grab"].get("box_yaw_follow", True))     # 비스듬한 박스: 손목 yaw 를 박스 회전만큼 더함
+MAX_BOX_YAW_DEG = float(robot_env.CFG["grab"].get("max_box_yaw_deg", 25.0))  # 이보다 더 돌아 있으면 잡지 않음 [deg]
 WAIST_BASE_PITCH = float(robot_env.CFG["grab"]["waist_base_pitch_deg"])   # Home(pose=zero) 허리 pitch (H2 허리는 arm_sdk 로 안 움직임)
 
 # 잡은 뒤 → 건네기 구간 타이밍 (s)
@@ -189,7 +199,7 @@ class GrabController:
     def __init__(self, arm=None, speak=None,
                  robot_available=False):
         self.arm  = arm
-        self.speak = speak or (lambda t: print(f"[TTS-DUMMY] {t}"))
+        self.speak = speak or (lambda t, lang=None: print(f"[TTS-DUMMY] {t}"))
         self.robot_available = robot_available
 
         # 손목 RPY
@@ -197,13 +207,24 @@ class GrabController:
         # handover 방향
         self.handover_direction = DEFAULT_HANDOVER   # center (정면 건네기) | place (제자리 내려놓기)
 
-        # TTS 멘트 (선물 컨셉 제거, 잡기 위주)
-        self.MSG_PICKED   = "I got it."
-        self.MSG_HANDOVER = "Here you go. Please take the box."
-        self.MSG_RECEIVED = "Nicely done!"
-        self.MSG_TIMEOUT  = "No one? I will put it down."
-        self.MSG_HOME      = "Bring me another box."
-        self.MSG_PLACED    = "I put it back."
+        # TTS 멘트 (선물 컨셉 제거, 잡기 위주) — 언어는 제어 화면 한/EN 버튼 (GET /set_tts_lang), 처음엔 robot.yaml tts.default_lang
+        self.lang = TTS_DEFAULT_LANG if TTS_DEFAULT_LANG in ("en", "ko") else "en"
+        self.MSGS = {
+            "en": {"start":    "Let me pick up the box.",            # 잡기 시작 (재검출·회전 확인 뒤, 팔이 움직이기 직전)
+                   "picked":   "I got it.",                          # 잡고 몸쪽으로 당긴 뒤
+                   "handover": "Here you go. Please take the box.",  # Center: 가운데로 내민 뒤
+                   "received": "Nicely done!",                       # Center: 2 초 뒤 (받았는지 확인 안 함)
+                   "timeout":  "No one? I will put it down.",        # (지금은 안 쓰임 — 받음 확인이 없음)
+                   "home":     "Bring me another box.",              # Center: 대기 자세 복귀 뒤
+                   "placed":   "I put it back."},                    # Place: 내려놓고 손 뺀 뒤
+            "ko": {"start":    "박스를 집을게요.",
+                   "picked":   "잡았어요.",
+                   "handover": "여기 있어요. 박스를 받아 주세요.",
+                   "received": "잘 받으셨어요!",
+                   "timeout":  "아무도 없나요? 내려놓을게요.",
+                   "home":     "다른 박스를 가져다 주세요.",
+                   "placed":   "제자리에 내려놓았어요."},
+        }
 
         self.HOME_LEFT  = [READY_XYZ[0],  READY_XYZ[1], READY_XYZ[2]]
         self.HOME_RIGHT = [READY_XYZ[0], -READY_XYZ[1], READY_XYZ[2]]
@@ -238,6 +259,11 @@ class GrabController:
         print(f"[GRAB] 소요 {end - log[0][1]:.1f}s — " +
               ", ".join(f"{n} {d:.1f}" for n, d in stages))
 
+    def _say(self, key):
+        """지금 언어(self.lang)의 멘트를 TTS 로 (speak(text, lang))."""
+        lang = self.lang if self.lang in self.MSGS else "en"
+        self.speak(self.MSGS[lang][key], lang)
+
     # ---- 로봇 저수준 래퍼 ----
     def _rpy_to_quat(self, roll_deg, pitch_deg, yaw_deg):
         r, p, y = np.radians(roll_deg), np.radians(pitch_deg), np.radians(yaw_deg)
@@ -266,17 +292,18 @@ class GrabController:
             print(f"[IK] 오류: {e}")
             return False
 
-    def _wrist_quats(self):
+    def _wrist_quats(self, extra_yaw_deg=0.0):
+        """손목 자세 쿼터니언 (왼, 오른). extra_yaw_deg: 양손 yaw 에 더할 값 (박스 회전 — 몸통 z 축 기준이라 roll·pitch 는 손 기준 그대로)."""
         lp = self.wrist_params['left']
         rp = self.wrist_params['right']
-        return (self._rpy_to_quat(lp['roll'], lp['pitch'], lp['yaw']),
-                self._rpy_to_quat(rp['roll'], rp['pitch'], rp['yaw']))
+        return (self._rpy_to_quat(lp['roll'], lp['pitch'], lp['yaw'] + extra_yaw_deg),
+                self._rpy_to_quat(rp['roll'], rp['pitch'], rp['yaw'] + extra_yaw_deg))
 
     # ---- 공통 후반부: 대칭→들기→handover→복귀 ----
     def _finish_sequence(self, grab_x_base, grp_off_L, grp_off_R,
                          grab_z, lift_z, l_rot, r_rot, yc=0.0):
         # yc: 양손 중심 y (align_to_hands = 실제 잡은 손 중심, 아니면 0)
-        self.speak(self.MSG_PICKED)
+        self._say("picked")
 
         sym_L = [grab_x_base, yc + grp_off_L + LEFT_HAND_Y_OFFSET, grab_z]
         sym_R = [grab_x_base, yc - grp_off_R, grab_z]
@@ -306,14 +333,14 @@ class GrabController:
             return
         time.sleep(STEP_PAUSE)
         self._stage("받기 대기")
-        self.speak(self.MSG_HANDOVER)
+        self._say("handover")
 
         # 받음 처리 — 박스는 받아도 계속 보이므로 고정 대기 후 놓기
         print(f"[HANDOVER] 박스 — {HANDOVER_HOLD_SEC:.0f}초 대기 후 놓기")
         time.sleep(HANDOVER_HOLD_SEC)
         received = True
 
-        self.speak(self.MSG_RECEIVED if received else self.MSG_TIMEOUT)
+        self._say("received" if received else "timeout")
         self._stage("놓기")
 
         if received:
@@ -336,7 +363,7 @@ class GrabController:
         self._stage("복귀")
         print("[HANDOVER] ⑪ 복귀")
         self._move(self.HOME_LEFT, self.HOME_RIGHT, 2.0, "⑪ Home")
-        self.speak(self.MSG_HOME)
+        self._say("home")
 
     # ---- place: 들었던 자리에 다시 내려놓기 (사람 없이 반복 시연) ----
     def _place_back(self, grab_x_base, grp_off_L, grp_off_R, grab_z, lift_z, l_rot, r_rot, yc=0.0):
@@ -365,7 +392,7 @@ class GrabController:
         ur = [px, yc - grp_off_R - 0.10, lift_z]
         if not self._move(ul, ur, 1.0, "⑩' 손 위로 (박스에서 떨어지기)", l_rot, r_rot):
             return
-        self.speak(self.MSG_PLACED)
+        self._say("placed")
         time.sleep(0.3)
         self._stage("복귀")
         print("[PLACE] ⑪ 복귀")
@@ -450,7 +477,17 @@ class GrabController:
         above_z = top_z + 0.10
         lift_z  = top_z + LIFT_ABOVE
 
-        l_rot, r_rot = self._wrist_quats()
+        # 박스 회전 (위에서 볼 때 반시계 + = 오른쪽 변이 더 앞): 돌지 않은 박스면 L→R = (0, −W) → 0°
+        box_yaw = float(np.degrees(np.arctan2(Rx - Lx, Ly - Ry)))
+        if abs(box_yaw) > MAX_BOX_YAW_DEG:
+            print(f"[GRAB-BOX] ❌ 박스가 {box_yaw:+.1f}° 돌아 있음 (한계 ±{MAX_BOX_YAW_DEG:.0f}°) — 잡지 않음. 박스를 반듯하게 놓아 주세요")
+            return
+        yaw_add = box_yaw if BOX_YAW_FOLLOW else 0.0
+        l_rot, r_rot = self._wrist_quats()               # 기본 자세 — ⑥' 대칭 정렬부터 (박스를 반듯하게 편 뒤)
+        gl_rot, gr_rot = self._wrist_quats(yaw_add)      # 잡기까지 — 손바닥을 박스 옆면과 평행하게
+        print(f"[GRAB-BOX] 박스 회전 {box_yaw:+.1f}° → 손목 yaw {'+' if yaw_add >= 0 else ''}{yaw_add:.1f}° (접근~당기기), "
+              f"대칭 정렬에서 기본값으로")
+        self._say("start")
 
         # === L/R 실제 좌표를 직접 손 목표로 사용 (기울어진 박스 대응) ===
         # 왼손 = L점, 오른손 = R점 (각 변의 실제 위치)
@@ -463,17 +500,19 @@ class GrabController:
         oLx, oLy = outward(Lx, Ly)
         oRx, oRy = outward(Rx, Ry)
 
-        # 접근점 (L/R에서 바깥 +APPROACH_EXTRA, X는 안 당김)
-        appL = [Lx + oLx*APPROACH_EXTRA, Ly + oLy*APPROACH_EXTRA + LEFT_HAND_Y_OFFSET, above_z]
-        appR = [Rx + oRx*APPROACH_EXTRA, Ry + oRy*APPROACH_EXTRA, above_z]
+        # 접근점 (L/R 에서 옆으로만 +APPROACH_EXTRA, x 는 L/R 그대로)
+        #   1.14: 박스 옆면 바깥 방향(oL/oR) 대신 순수 좌우(±y) — 비스듬한 박스에서 먼 쪽 손이 옆면 방향으로 더 앞으로 나가
+        #         도달 한계를 넘던 것(20° · x 0.40 에서 앞쪽 손 x 0.49 → ⑤ 측면 하강 4 cm 부족)을 막음. 반듯한 박스면 거의 같음
+        appL = [Lx, Ly + APPROACH_EXTRA + LEFT_HAND_Y_OFFSET, above_z]
+        appR = [Rx, Ry - APPROACH_EXTRA, above_z]
         self._stage("위쪽 접근")
-        if not self._move(appL, appR, 1.5, "④ 위쪽 접근", l_rot, r_rot): return
+        if not self._move(appL, appR, 1.5, "④ 위쪽 접근", gl_rot, gr_rot): return
         time.sleep(0.2)
 
         # 하강 (같은 XY, grab_z로)
         appL[2] = grab_z; appR[2] = grab_z
         self._stage("측면 하강")
-        if not self._move(appL, appR, 1.0, "⑤ 측면 하강", l_rot, r_rot): return
+        if not self._move(appL, appR, 1.0, "⑤ 측면 하강", gl_rot, gr_rot): return
         time.sleep(0.2)
 
         # 잡기 — 실제 L/R 점 + X는 몸쪽으로 당김(GRAB_X_OFFSET)
@@ -485,14 +524,14 @@ class GrabController:
             print(f"[GRAB-BOX] 조이기 각 손 {GRAB_SQUEEZE*100:.1f} cm 안쪽 — 손 간격 {abs(gripL[1] - gripR[1])*100:.1f} cm "
                   f"(L/R 점 간격 {abs(Ly - Ry)*100:.1f} cm)")
         self._stage("잡기")
-        if not self._move(gripL, gripR, 2.5, "⑥ 잡기", l_rot, r_rot): return
+        if not self._move(gripL, gripR, 2.5, "⑥ 잡기", gl_rot, gr_rot): return
         time.sleep(1.0)
 
         # 끌어당기기 — 잡은 뒤 테이블 위에서 몸쪽으로 (팔이 덜 뻗은 자세에서 들기 위해)
         if PULL_X != 0.0:
             pullL = [gripL[0] + PULL_X, gripL[1], grab_z]
             pullR = [gripR[0] + PULL_X, gripR[1], grab_z]
-            if not self._move(pullL, pullR, 1.5, "⑥'' 끌어당기기", l_rot, r_rot): return
+            if not self._move(pullL, pullR, 1.5, "⑥'' 끌어당기기", gl_rot, gr_rot): return
             time.sleep(0.2)
 
         # 대칭 정렬용 파라미터: 잡은 뒤 양손을 평행/대칭으로 정리
@@ -504,6 +543,10 @@ class GrabController:
             yc = (yL + gripR[1]) / 2
             grp_off_L = yL - yc
             grp_off_R = yc - gripR[1]
+            if yaw_add:
+                # 돌아 있던 박스를 ⑥' 에서 반듯하게 펴도 쥔 폭 그대로 — y 차이(W·cos) 대신 두 손 사이 거리(W)의 절반
+                #   (y 차이로 두면 펴는 동안 각 손이 W(1−cos)/2 더 조임: 28 cm · 25° 면 1.3 cm)
+                grp_off_L = grp_off_R = 0.5 * float(np.hypot(gripL[0] - gripR[0], yL - gripR[1]))
         else:
             grab_x_base = cx + GRAB_X_OFFSET + PULL_X
             grp_off_L = abs(Ly - cy)
@@ -750,11 +793,12 @@ async def lifespan(app: FastAPI):
             print(f"⚠️ TTS 실패: {e}")
 
     # 잡기 컨트롤러 (arm 주입)
-    def _speak(text):
+    def _speak(text, lang=None):
         if tts:
-            tts.speak(text)
+            lang = lang or "en"
+            tts.speak(text, voice=TTS_VOICE.get(lang), lang=lang)
         else:
-            print(f"[TTS-DUMMY] {text}")
+            print(f"[TTS-DUMMY] ({lang}) {text}")
     grab = GrabController(arm=arm, speak=_speak,
                           robot_available=(arm is not None))
 
@@ -1062,6 +1106,16 @@ def camera_status():
 @app.get("/system", summary="로봇 FSM · 서버 상태 (2초마다 갱신) + 팔이 안 움직일 이유(warn) + 카메라 숙임각 출처")
 def system():                     # def — arm_server 조회가 블로킹이라 스레드풀에서
     return {**SYS.latest(), "warn": arm_warnings(), "camera": camera_status()}
+
+@app.get("/set_tts_lang", summary="잡기 멘트 언어 (ko / en) — 제어 화면 한/EN 버튼이 부름")
+def set_tts_lang(lang: str):
+    if lang not in ("ko", "en"):
+        return JSONResponse({"ok": False, "reason": "lang 은 ko 또는 en"}, status_code=400)
+    if grab is not None and grab.lang != lang:
+        grab.lang = lang
+        print(f"[TTS] 멘트 언어 → {lang} (음성 {TTS_VOICE.get(lang)})")
+    return {"ok": True, "lang": lang}
+
 
 @app.get("/hw", summary="이 PC 의 CPU / GPU / NPU 사용률 [%] (1초마다 갱신, 못 읽으면 pct null + why)")
 async def hw_usage():
