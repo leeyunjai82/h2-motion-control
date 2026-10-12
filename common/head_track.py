@@ -2,7 +2,8 @@
 head_track.py — H2 머리 카메라 인식 서버 (포트 50013, 보기 전용)
   왼눈  : 얼굴 (없으면 사람) — OpenVINO Open Model Zoo face-detection-retail-0004 / person-detection-0201 (NPU)
   오른눈: 사물 (COCO 80종, 기본 person 제외) — YOLO11s OpenVINO (common/models/yolo11s_openvino_model, NPU)
-  스트립: 두 눈에서 인식된 것만 잘라 한 줄로 (제어 화면 robot_web.html 의 Head Vision 카드)
+  전체 : 두 눈 화면 전체를 작게 나란히 + 인식 박스 (제어 화면 Head Vision 카드 기본, robot.yaml head_track.view.height)
+  스트립: 두 눈에서 인식된 것만 잘라 한 줄로 (Head Vision 카드의 CROP 버튼)
   (가슴 D435i 는 박스 인식 — detect_box, 이 서버와 무관)
 
   ROBOT=h2 python common/head_track.py               # → http://<pc-ip>:50013/   (start_robot.sh 가 H2 에서 띄움)
@@ -19,12 +20,13 @@ head_track.py — H2 머리 카메라 인식 서버 (포트 50013, 보기 전용
 
   API
     GET  /             화면 (스트립 + 왼눈·오른눈 영상 + 상태)
+    GET  /pair         MJPEG — 왼눈·오른눈 전체 화면을 높이 view.height 로 줄여 나란히 + 인식 박스, /pair.jpg = 한 장
     GET  /strip        MJPEG — 인식된 것만 잘라 한 줄 (왼눈 초록·주황, 오른눈 파랑), /strip.jpg = 한 장
     GET  /video_feed   MJPEG 왼눈 (얼굴·사람 박스)
     GET  /video_right  MJPEG 오른눈 (사물 박스)
     GET  /detections   JSON 지금 인식 목록
     GET  /status       {left, right} — fps, 인식 ms, 모델, device(설정) · exec(OpenVINO 실제 실행 장치), error
-  CORS * (제어 화면 :50000 이 /status·/strip.jpg 를 읽음)
+  CORS * (제어 화면 :50000 이 /status·/pair·/strip 을 읽음)
 """
 import argparse
 import os
@@ -220,6 +222,45 @@ def crop_tile(img, box, label, color, h):
     return np.vstack([c, bar])
 
 
+DET_COLOR = {"face": (0, 220, 120), "person": (0, 160, 255)}   # 그 밖(오른눈 사물) = (255, 150, 40)
+
+
+def eye_panel(eye, title, h):
+    """한 눈 전체 화면을 높이 h 로 줄이고 인식 박스·이름을 그 크기에서 다시 그림 (원본 크기 글씨는 줄이면 안 읽힘)."""
+    with eye.lock:
+        last = eye.last
+    w = int(round(h * 544 / 448))                   # 머리 카메라 눈별 544×448 (robots/h2/FACTS.md) — 영상 없을 때 자리
+    if last is None or time.time() - last[2] > 2.0:
+        out = np.full((h, w, 3), 18, np.uint8)
+        cv2.putText(out, title, (6, 16), cv2.FONT_HERSHEY_SIMPLEX, 0.42, (200, 200, 200), 1, cv2.LINE_AA)
+        msg = "no head-cam stream" if last is None or "RGB" in (eye.err or "") else "no update"
+        cv2.putText(out, msg, (6, h // 2), cv2.FONT_HERSHEY_SIMPLEX, 0.45, (90, 150, 230), 1, cv2.LINE_AA)
+        return out
+    img, dets, _ = last
+    s = h / img.shape[0]
+    out = cv2.resize(img, (int(round(img.shape[1] * s)), h), interpolation=cv2.INTER_AREA)
+    for d in dets:
+        c = DET_COLOR.get(d["label"], (255, 150, 40))
+        x0, y0, x1, y1 = (int(round(v * s)) for v in d["box"])
+        cv2.rectangle(out, (x0, y0), (x1, y1), c, 2)
+        cv2.putText(out, f"{d['label']} {d['conf']:.2f}", (x0 + 2, max(11, y0 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
+                    c, 1, cv2.LINE_AA)
+    label = f"{title}  {eye.fps:.1f} fps"
+    tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
+    out[2:20, 2:tw + 10] = (out[2:20, 2:tw + 10] * 0.35).astype(np.uint8)          # 글씨 뒤 어둡게
+    cv2.putText(out, label, (6, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (235, 235, 235), 1, cv2.LINE_AA)
+    return out
+
+
+def build_pair(left, right):
+    """두 눈 전체 화면을 작게 나란히 (왼눈 | 오른눈). 오른눈 인식이 꺼져 있으면 왼눈만."""
+    h = int((cfg("view", {}) or {}).get("height", 200))
+    panels = [eye_panel(left, "L  face / person", h)]
+    if right is not None:
+        panels += [np.full((h, 4, 3), 14, np.uint8), eye_panel(right, "R  objects", h)]
+    return np.hstack(panels)
+
+
 def build_strip(left, right):
     """두 눈에서 지금 인식된 것만 잘라 한 줄 (왼눈 → 오른눈). 없으면 안내 한 줄."""
     s = cfg("strip", {}) or {}
@@ -259,7 +300,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name=
 img{max-width:100%;border:1px solid #444}.row{display:flex;gap:8px;flex-wrap:wrap}.row img{width:calc(50% - 6px);min-width:280px}
 pre{background:#222;padding:8px;white-space:pre-wrap}</style></head><body>
 <h3>H2 Head Vision &mdash; left: face / person, right: objects</h3>
-<div><img src="/strip" style="height:96px;width:auto"></div>
+<div><img src="/pair" style="height:200px;width:auto"> <img src="/strip" style="height:96px;width:auto"></div>
 <div class="row"><img src="/video_feed"><img src="/video_right"></div><pre id="s"></pre>
 <script>setInterval(()=>fetch('/status').then(r=>r.json()).then(j=>{document.getElementById('s').textContent=JSON.stringify(j,null,1)}),1000)</script>
 </body></html>"""
@@ -277,7 +318,7 @@ def mjpeg(get, period=0.05):
     return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
 
-def make_app(left, right, strip):
+def make_app(left, right, strip, pair):
     app = FastAPI(title="H2 head vision")
     app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["GET"], allow_headers=["*"])
 
@@ -307,6 +348,17 @@ def make_app(left, right, strip):
                 out += [dict(eye=eye.name, label=d["label"], conf=round(d["conf"], 3), box=[round(v) for v in d["box"]])
                         for d in last[1]]
         return out
+
+    @app.get("/pair")
+    def pair_feed():
+        return mjpeg(lambda: pair["jpeg"], 0.1)
+
+    @app.get("/pair.jpg")
+    def pair_jpg():
+        j = pair["jpeg"]
+        if j is None:
+            raise HTTPException(503, "not ready")
+        return Response(j, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
 
     @app.get("/strip")
     def strip_feed():
@@ -359,16 +411,18 @@ def main():
           + f", {cfg('fps', 5.0)} fps ->\n    {web_urls(a.port, PC1)}")
 
     strip = {"jpeg": None}
+    pair = {"jpeg": None}
 
     def strip_loop():
         while True:
             strip["jpeg"] = jpeg(build_strip(left, right), 85)
+            pair["jpeg"] = jpeg(build_pair(left, right), 85)
             time.sleep(0.2)
     left.start()
     if right is not None:
         right.start()
     threading.Thread(target=strip_loop, daemon=True).start()
-    uvicorn.run(make_app(left, right, strip), host="0.0.0.0", port=a.port, log_level="warning")
+    uvicorn.run(make_app(left, right, strip, pair), host="0.0.0.0", port=a.port, log_level="warning")
 
 
 if __name__ == "__main__":

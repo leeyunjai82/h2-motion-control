@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<!-- Version: 2.25
+<!-- Version: 2.26
+  2.26 - Head Vision 기본 = 두 눈 전체 화면을 작게 나란히 + 인식 박스 (head_track /pair, robot.yaml head_track.view.height).
+         카드 머리 CROP 버튼 = 예전처럼 인식된 것만 잘라 한 줄 (/strip). 선택은 브라우저에 기억
   2.25 - Wrist RPY 기본 yaw −15 · +15 (roll ∓10 그대로, robot.yaml grab.wrist_rpy_deg)
   2.24 - 잡기 멘트는 영어만 — 2.23 의 한/EN 연동 뺌 (사용자 2026-10-11)
   2.23 - 잡기 멘트(TTS) 언어를 한/EN 버튼에 맞춤 (robot_server GET /set_tts_lang — 페이지를 열 때와 버튼 누를 때)
@@ -244,6 +246,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
 /* head vision strip (head_track :50013) — 인식된 것만 한 줄 */
 .vision-b{padding:6px 8px;overflow-x:auto;overflow-y:hidden}
 .vision-strip{height:90px;width:auto;max-width:none;display:block;border-radius:6px}
+.vision-full{width:100%;height:auto;max-height:200px;object-fit:contain;display:block;border-radius:6px}   /* 두 눈 전체 (/pair) */
 
 /* robot-only iframe */
 .robot-frame{width:100%;border:1px solid var(--line);border-radius:8px;background:#05080c;
@@ -426,8 +429,8 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
   <!-- ===== RIGHT: robot 3D + control ===== -->
   <div class="col">
     <div class="card" id="card-vision" style="display:none">
-      <div class="card-h">Head Vision <span class="hd-r"><span id="dev-vision"></span><a id="link-vision" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
-      <div class="card-b vision-b"><img id="vision-strip" class="vision-strip" alt=""></div>
+      <div class="card-h">Head Vision <span class="hd-r"><span id="dev-vision"></span><button class="segbtn" id="crop-btn" onclick="toggleCrop()" title="CROP: 인식된 것만 잘라 한 줄 / 끄면 두 눈 전체 화면">CROP</button><a id="link-vision" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
+      <div class="card-b vision-b"><img id="vision-strip" class="vision-full" alt=""></div>
     </div>
     <div class="card grow fill robot">
       <div class="card-h">Robot View <a id="link-robotonly" href="#" target="_blank" style="color:var(--accent2)">↗</a></div>
@@ -461,16 +464,32 @@ window.addEventListener('g1lang',e=>{
   document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only?lang=${e.detail}`;});
 document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`;
 
-// 머리 카메라 인식 한 줄 (head_track :50013, H2). 10초마다 /strip.jpg 로 살아 있는지 보고, 없으면 카드 숨김 (G1 등)
+// 머리 카메라 (head_track :50013, H2). 기본 = 두 눈 전체 화면 작게 (/pair), CROP = 인식된 것만 잘라 한 줄 (/strip).
+// 10초마다 /strip.jpg 로 살아 있는지 보고, 없으면 카드 숨김 (G1 등)
 (function(){
   const card=document.getElementById('card-vision'), img=document.getElementById('vision-strip');
   const base=`http://${host}:50013`;
   document.getElementById('link-vision').href=`${base}/`;
-  let live=false;
+  let live=false, crop=false, pairOk=true, shown='';
+  try{crop=localStorage.getItem('hv_crop')==='1';}catch(e){}
+  function show(){
+    const c=crop||!pairOk;          // head_track 이 예전 판이라 /pair 가 없으면 잘라 보기
+    document.getElementById('crop-btn').classList.toggle('on',crop);
+    img.className=c?'vision-strip':'vision-full';
+    const want=live?(c?'strip':'pair'):'';
+    if(want&&want!==shown)img.src=`${base}/${want}?t=${Date.now()}`;
+    shown=want;
+  }
+  window.toggleCrop=()=>{crop=!crop;try{localStorage.setItem('hv_crop',crop?'1':'0');}catch(e){}show();};
+  show();
   function check(){
+    const pp=new Image();
+    pp.onload=()=>{if(!pairOk){pairOk=true;show();}};
+    pp.onerror=()=>{if(pairOk){pairOk=false;show();}};
+    pp.src=`${base}/pair.jpg?t=${Date.now()}`;
     const probe=new Image();
-    probe.onload=()=>{ if(!live){live=true;card.style.display='';img.src=`${base}/strip?t=${Date.now()}`;devs();} };
-    probe.onerror=()=>{ if(live){live=false;img.removeAttribute('src');} card.style.display='none'; };
+    probe.onload=()=>{ if(!live){live=true;card.style.display='';show();devs();} };
+    probe.onerror=()=>{ if(live){live=false;shown='';img.removeAttribute('src');} card.style.display='none'; };
     probe.src=`${base}/strip.jpg?t=${Date.now()}`;
   }
   // 왼눈(L)·오른눈(R) 실제 실행 장치 — AUTO 는 처음 몇 초 CPU 였다가 바뀔 수 있어 3초마다

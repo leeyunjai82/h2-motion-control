@@ -264,7 +264,8 @@ head_track:
   # 오른눈 사물 인식 (COCO 80종) — common/models/yolo11s_openvino_model (yolo11s.pt → OpenVINO FP16, imgsz 448)
   objects: {enabled: true, model: yolo11s_openvino_model, device: "intel:npu", conf: 0.45, imgsz: 448,
             exclude: [person], max: 6}   # device 는 ultralytics 형식, 없는 장치면 AUTO. person 은 왼눈이 맡음
-  strip: {height: 72, max_left: 3}       # 제어 화면 Head Vision 한 줄: 인식된 것만 잘라 높이 72 px
+  view: {height: 200}                    # 제어 화면 Head Vision 기본: 두 눈 전체 화면(544×448)을 높이 200 px 로 줄여 나란히 + 인식 박스
+  strip: {height: 72, max_left: 3}       # Head Vision CROP 버튼: 인식된 것만 잘라 높이 72 px 한 줄
   mode: auto                  # face | person | auto (얼굴 우선, 얼굴이 person_after_s 동안 없으면 사람)
   device: NPU                 # 얼굴·사람 OpenVINO 장치 (사용자 2026-10-09: NPU). 안 되면 HETERO:NPU,CPU → CPU 자동 — utils/get_dev.py
   face_conf: 0.6
