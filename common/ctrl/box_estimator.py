@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 3.19
+# Version: 3.20
 # Changes:
+#   3.20 - seg 마스크를 원본 프레임에 맞춤 (retina_masks=True). 전에는 레터박스(640×640) 마스크를 그대로
+#          원본 크기로 늘려 세로가 눌렸음 — 848×480 에서 0.57 배, 640×480 에서 0.75 배 (윗면이 잘려 보이던 원인)
 #   3.19 - 비교용 'alt' 추정 추가 (fit_top_plane_rect): 윗면 RANSAC 평면 피팅(기울기 실측) +
 #          평면 좌표(미터)에서 사각형 피팅 + 경계 1셀 깎기. 기존 결과는 그대로, out['alt'] 에만 기록
 #   3.18 - VERBOSE 진단로그 켬 (up/h_top/h_table/H/윗면비율)
@@ -166,6 +168,19 @@ def fit_top_plane_rect(pts3d, h, h_top, up, table_pts=None, rng=None):
             "inliers": int(inl.sum()), "band": int(len(P))}
 
 
+def letterbox_to_image(m, H, W):
+    """모델 입력 크기 마스크 → 원본 (H, W). 이미 원본 크기면 그대로.
+    ultralytics LetterBox(center=True) 와 같게: 비율 유지 축소 + 양쪽 같은 여백 → 여백 잘라 내고 늘림."""
+    mh, mw = m.shape[:2]
+    if (mh, mw) == (H, W):
+        return m
+    g = min(mh / H, mw / W)
+    pw, ph = (mw - W * g) / 2, (mh - H * g) / 2
+    x0, y0 = int(round(pw - 0.1)), int(round(ph - 0.1))
+    x1, y1 = int(round(mw - pw + 0.1)), int(round(mh - ph + 0.1))
+    return cv2.resize(m[y0:y1, x0:x1], (W, H), interpolation=cv2.INTER_LINEAR)
+
+
 class BoxEstimator:
     def __init__(self, model_path, K, conf=0.4, device="cpu", imgsz=640):
         from ultralytics import YOLO
@@ -176,9 +191,11 @@ class BoxEstimator:
         self.imgsz  = imgsz
 
     def detect(self, color_bgr, depth_mm, gravity_cam=None):
+        # retina_masks=True: masks.data 가 원본 프레임 크기 (레터박스 여백 없이). 기본(False)이면 모델 입력
+        # (imgsz×imgsz, 위아래 회색 여백 포함) 크기라 그대로 늘리면 어긋남.
         results = self.model(color_bgr, conf=self.conf,
                              device=self.device, imgsz=self.imgsz,
-                             verbose=False)
+                             retina_masks=True, verbose=False)
         if len(results) == 0 or results[0].masks is None:
             return None
 
@@ -190,8 +207,7 @@ class BoxEstimator:
 
         mask_raw = results[0].masks.data[idx].cpu().numpy()
         H_img, W_img = color_bgr.shape[:2]
-        mask = cv2.resize(mask_raw, (W_img, H_img),
-                          interpolation=cv2.INTER_LINEAR) > 0.5
+        mask = letterbox_to_image(mask_raw, H_img, W_img) > 0.5
 
         if mask.sum() < MIN_PIXELS:
             return None
