@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 1.1
+<!-- Version: 1.2
+  1.2 - 자동 반복 '잡은 뒤' 에 left / right 건네기 (사람 기준) 추가
   1.1 - 저장 해상도 선택지를 카메라 해상도에서 (H2 848×480 → 원본 / 424×240)
   1.0 - 피지컬 AI (ACT) 로봇 PC 화면: 수집(잡기 연동·수동·자동 반복) · 에피소드 · 데이터셋 zip · 모델 업로드/로드 · 정책 실행(안전 필터)
         색·글꼴·카드는 제어 UI(common/robot_web.html 2.25)와 같음 -->
@@ -235,7 +236,9 @@ select.in{padding:5px}
         <div class="fld">
           <div><span class="mini">잡은 뒤</span>
             <select class="in" id="au-handover"><option value="place">place — 제자리 내려놓기</option>
-              <option value="center">center — 건네기</option></select></div>
+              <option value="center">center — 건네기</option>
+              <option value="left">left — 건네기 (사람 기준 왼쪽)</option>
+              <option value="right">right — 건네기 (사람 기준 오른쪽)</option></select></div>
           <div style="display:flex;align-items:flex-end"><label class="sw" style="margin:0 0 4px"><input type="checkbox" id="au-off"><span class="tr"></span><span style="font-size:11.5px">끝나면 모드 OFF</span></label></div>
         </div>
         <label class="sw" id="au-sim-row" style="display:none"><input type="checkbox" id="au-sim"><span class="tr"></span>

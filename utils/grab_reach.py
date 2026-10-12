@@ -3,7 +3,7 @@
 grab_reach.py — 박스 위치별로 잡기 시퀀스를 '서버와 같은 IK' 로 풀어 손이 끝까지 가는지 확인 (오프라인, 로봇 불필요)
 
   ROBOT=h2 python utils/grab_reach.py                       # 기본 격자 (place, 윗면 +0.15/+0.20/+0.25, x 0.35–0.60)
-  ROBOT=h2 python utils/grab_reach.py --mode center         # 건네기
+  ROBOT=h2 python utils/grab_reach.py --mode center         # 건네기 (--mode left / right: 사람 기준 좌우 건네기)
   ROBOT=h2 python utils/grab_reach.py --x 0.45 --y 0.05 --top 0.20 -v   # 한 점, 단계별 오차 출력
   ROBOT=h2 python utils/grab_reach.py --frac 0 0.25 --D 0.20        # grab.grab_inset_frac 값별 비교 (박스 깊이 D)
   ROBOT=h2 python utils/grab_reach.py --inset 0 0.03 0.05            # D 미측정 고정값(grab.grab_inset_x) 비교 (frac 0)
@@ -123,7 +123,8 @@ def run(ik, rec, q0, verbose=False):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=("place", "center"), default="place")
+    ap.add_argument("--mode", choices=("place", "center", "left", "right"), default="place",
+                    help="잡은 뒤 동작 (left/right = 사람 기준 건네기, robot.yaml grab.handover_side_deg)")
     ap.add_argument("--x", type=float, nargs="*", default=[0.35, 0.40, 0.45, 0.50, 0.55, 0.60], help="박스 중심 x (IK)")
     ap.add_argument("--y", type=float, nargs="*", default=[0.0, 0.05], help="박스 중심 y (대칭이라 + 만)")
     ap.add_argument("--top", type=float, nargs="*", default=[0.15, 0.20, 0.25], help="박스 윗면 z (pelvis 위)")

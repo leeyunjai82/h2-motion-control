@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 2.29
+<!-- Version: 2.30
+  2.30 - Handover 버튼 Left / Right 추가 (로봇 앞에 선 사람 기준, 각도 = robot.yaml grab.handover_side_deg)
   2.29 - Performance 표 모델 이름을 한/EN 에 맞춰 그림 (얼굴·나이성별 → face·age/gender, 행동 → actions — i18n 사전에 없어 영문에서도 한글이던 것)
   2.28 - Performance 표 이름: 왼눈 나이·성별 모델이 있으면 '얼굴·나이성별', 오른눈 title actions = '행동'
   2.27 - Performance 표의 머리 카메라 모델 이름을 head_track /status 에서 (왼눈 mode: 얼굴 / 사람 / 얼굴·사람, 오른눈 title: 자세 / 사물)
@@ -380,9 +381,12 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
       <div class="card-h">Handover</div>
       <div class="card-b">
         <div class="seg" id="ho-seg" style="display:flex">
+          <button class="btn" id="ho-left" style="flex:1" onclick="setHandover('left')">◀ Left<span class="sub ho-deg">10°</span></button>
           <button class="btn on" id="ho-center" style="flex:1" onclick="setHandover('center')">■ Center<span class="sub">건네기</span></button>
+          <button class="btn" id="ho-right" style="flex:1" onclick="setHandover('right')">▶ Right<span class="sub ho-deg">10°</span></button>
           <button class="btn" id="ho-place" style="flex:1" onclick="setHandover('place')">⤓ Place<span class="sub">내려놓기</span></button>
         </div>
+        <div class="hint" style="margin-top:6px">Left / Right = 로봇 앞에 선 사람 기준</div>
       </div>
     </div>
 
@@ -606,12 +610,13 @@ function toggleAuto(){
 function applyWrist(){const g=id=>document.getElementById(id).value||0;
   const q=`l_roll=${g('l-roll')}&l_pitch=${g('l-pitch')}&l_yaw=${g('l-yaw')}&r_roll=${g('r-roll')}&r_pitch=${g('r-pitch')}&r_yaw=${g('r-yaw')}`;
   fetch('/set_wrist?'+q).then(()=>toast('Wrist applied'));}
-// H2 는 허리 고정 — 건네기 방향은 center(앞으로 건네기) / place(내려놓기) 만
+// H2 는 허리 고정 — 건네기는 팔로만: left / center / right (사람 기준, 좌우는 robot.yaml grab.handover_side_deg) / place(내려놓기)
 function setHandover(dir){
   fetch(`/set_handover_direction?direction=${dir}`).then(r=>r.json()).then(d=>{
     if(d&&d.direction)hoMark(d.direction);else toast('Failed: '+((d&&d.error)||''));}).catch(e=>toast('Error: '+e.message));}
-function hoMark(dir){['center','place'].forEach(k=>document.getElementById('ho-'+k).classList.toggle('on',k===dir));}
-document.addEventListener('DOMContentLoaded',()=>{if(window.UI&&window.UI.handover)hoMark(window.UI.handover);});
+function hoMark(dir){['left','center','right','place'].forEach(k=>document.getElementById('ho-'+k).classList.toggle('on',k===dir));}
+document.addEventListener('DOMContentLoaded',()=>{if(window.UI&&window.UI.handover)hoMark(window.UI.handover);
+  if(window.UI&&window.UI.handover_side!=null)document.querySelectorAll('.ho-deg').forEach(e=>e.textContent=(+window.UI.handover_side).toFixed(0)+'°');});
 // 손목 입력칸 = 서버의 지금 값 (기본 robot.yaml grab.wrist_rpy_deg, Apply 하면 그 값)
 document.addEventListener('DOMContentLoaded',()=>{const w=window.UI&&window.UI.wrist;if(!w)return;
   for(const [s,k] of [['l','left'],['r','right']])for(const a of ['roll','pitch','yaw']){const e=document.getElementById(`${s}-${a}`);if(e&&w[k])e.value=w[k][a];}});

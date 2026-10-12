@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.20
+# Version: 1.21
 # Changes:
+#   1.21 - 건네기 left / right 추가 (사용자 2026-10-12, 앞에 선 사람 기준): 정면 건네기 자리를 몸통 z 축 기준으로
+#          grab.handover_side_deg(10°) 돌림 — 손 위치 + 손목 yaw 같이 (허리 고정이라 팔로만). 사람 왼쪽 = 로봇 오른쪽(−y)
 #   1.20 - 웹 UI(/)·/i18n.js 에 Cache-Control: no-cache — git pull 뒤 새로고침해도 브라우저가 예전 i18n.js 를 쓰던 것
 #          (FileResponse 는 Last-Modified 가 있어 브라우저가 검증 없이 한동안 캐시를 씀)
 #   1.19 - place(제자리 내려놓기) 손 벌림 0.10 → grab.place_open (0.15) — 손을 들 때 박스가 따라 올라옴 (사용자 2026-10-12)
@@ -52,7 +54,8 @@ robot_server.py — H2 잡기 제어 서버 (포트 50000)
   · GET  /grab_status  — busy 등
 
 팔 명령은 arm_server(:50022, rt/arm_sdk 단독 점유)를 HTTP 로 거친다.
-H2: 보행 없음, 허리 고정(arm_sdk 로 안 움직임) — 건네기는 정면(center) / 제자리(place) 만.
+H2: 보행 없음, 허리 고정(arm_sdk 로 안 움직임) — 건네기는 정면(center) · 좌/우(left/right, 팔로만 몸통 기준 ±10°) /
+    제자리(place). left/right 는 로봇 앞에 선 사람 기준.
 """
 
 import os
@@ -169,7 +172,11 @@ STEP_PAUSE        = 0.1   # 대칭정렬/들기/건네기 동작 사이 정지
 HANDOVER_HOLD_SEC = 2.0   # center: 건넨 뒤 손 벌리기까지 대기
 PLACE_HOLD_SEC    = 1.5   # place: 들어 올린 채 보여 주는 시간
 PLACE_Z_CLEAR     = 0.005 # place: 내려놓을 때 잡았던 높이보다 이만큼 위에서 놓기 (테이블 누름 방지)
-HANDOVER_MODES = ("center", "place")   # 허리 고정이라 정면 건네기 / 제자리 내려놓기만
+HANDOVER_SIDE_DEG = float(robot_env.CFG["grab"].get("handover_side_deg", 10.0))
+# ↑ 건네기 left/right: 정면 건네기 자리(handover_x, y 0)를 몸통 z 축 기준으로 이만큼 돌림 [deg] — 손 위치 + 손목 yaw
+HANDOVER_MODES = ("center", "left", "right", "place")   # 허리 고정이라 팔로만 정면·좌/우 건네기 / 제자리 내려놓기
+# left/right = 로봇 앞에 선 사람 기준 (사람 왼쪽 = 로봇 오른쪽 −y). 각도는 위에서 볼 때 반시계 + (로봇 왼쪽으로)
+HANDOVER_YAW = {"center": 0.0, "left": -HANDOVER_SIDE_DEG, "right": HANDOVER_SIDE_DEG}
 DEFAULT_HANDOVER = str(robot_env.CFG["grab"].get("default_handover", "place"))
 assert DEFAULT_HANDOVER in HANDOVER_MODES, f"robot.yaml grab.default_handover: {DEFAULT_HANDOVER}"
 
@@ -318,13 +325,23 @@ class GrabController:
             self._place_back(grab_x_base, grp_off_L, grp_off_R, grab_z, lift_z, l_rot, r_rot, yc)
             return
 
-        # 건네기는 항상 몸 정면 가운데 (y 0) — 옆에서 잡았어도 양손 가운데를 0 으로 옮김 (허리 고정이라 팔로만)
+        # 건네기 자리 = 몸 정면 가운데 (x handover_x, y 0) — 옆에서 잡았어도 양손 가운데를 0 으로 옮김 (허리 고정이라 팔로만).
+        #   left/right 는 그 자리를 몸통 z 축 기준으로 HANDOVER_YAW 만큼 돌림: 손 위치 + 손목 yaw (박스가 사람 쪽을 향함).
+        #   오프라인 (grab_reach IK, 2026-10-12): ±10° 손 오차 ≤ 1.1 cm · 팔 ↔ 거치대 요크 ≥ 16 mm (정면 23 mm, ±15° 는 9.6 mm)
         if abs(yc) > 0.005:
             print(f"[HANDOVER] 잡은 자리 y {yc*100:+.1f} cm → 가운데(y 0)로 건넴")
-        yc = 0.0
+        yaw = HANDOVER_YAW.get(self.handover_direction, 0.0)
+        cz, sz = np.cos(np.radians(yaw)), np.sin(np.radians(yaw))
+
+        def ho(x, y, z):
+            # 정면 건네기 좌표 → 몸통 z 축 기준으로 yaw 돌린 자리
+            return [x * cz - y * sz, x * sz + y * cz, z]
+        if yaw:
+            l_rot, r_rot = self._wrist_quats(yaw)
+            print(f"[HANDOVER] {self.handover_direction} (사람 기준) — 정면에서 {yaw:+.0f}° (로봇 {'왼' if yaw > 0 else '오른'}쪽)")
         self._stage("건네기")
-        hl = [HANDOVER_X, yc + grp_off_L, lift_z]
-        hr = [HANDOVER_X, yc - grp_off_R, lift_z]
+        hl = ho(HANDOVER_X, grp_off_L, lift_z)
+        hr = ho(HANDOVER_X, -grp_off_R, lift_z)
         if not self._move(hl, hr, 1.5, "⑧ 건네기", l_rot, r_rot):
             return
         time.sleep(STEP_PAUSE)
@@ -341,18 +358,18 @@ class GrabController:
 
         if received:
             # 받음 — 그 높이에서 손 벌려 놓기
-            open_L = [HANDOVER_X, yc + grp_off_L + HANDOVER_OPEN, lift_z]
-            open_R = [HANDOVER_X, yc - grp_off_R - HANDOVER_OPEN, lift_z]
+            open_L = ho(HANDOVER_X, grp_off_L + HANDOVER_OPEN, lift_z)
+            open_R = ho(HANDOVER_X, -grp_off_R - HANDOVER_OPEN, lift_z)
             self._move(open_L, open_R, 1.0, "⑩ 손 벌림 (놓기)", l_rot, r_rot)
         else:
             # 못 받음 — 약간 내려서 살포시 놓고 손 벌림
             down_z = lift_z - 0.12
-            dl = [HANDOVER_X, yc + grp_off_L, down_z]
-            dr = [HANDOVER_X, yc - grp_off_R, down_z]
+            dl = ho(HANDOVER_X, grp_off_L, down_z)
+            dr = ho(HANDOVER_X, -grp_off_R, down_z)
             self._move(dl, dr, 1.2, "⑩ 내려놓기", l_rot, r_rot)
             time.sleep(0.2)
-            open_L = [HANDOVER_X, yc + grp_off_L + HANDOVER_OPEN, down_z]
-            open_R = [HANDOVER_X, yc - grp_off_R - HANDOVER_OPEN, down_z]
+            open_L = ho(HANDOVER_X, grp_off_L + HANDOVER_OPEN, down_z)
+            open_R = ho(HANDOVER_X, -grp_off_R - HANDOVER_OPEN, down_z)
             self._move(open_L, open_R, 1.0, "⑩' 손 벌림 (놓기)", l_rot, r_rot)
         time.sleep(0.3)
 
@@ -1048,7 +1065,7 @@ async def set_wrist(l_roll: float=0, l_pitch: float=0, l_yaw: float=0,
 @app.get("/set_handover_direction")
 async def set_handover_direction(direction: str = "center"):
     if direction not in HANDOVER_MODES:
-        return JSONResponse({"success": False, "error": f"invalid: {direction} (center / place)"})
+        return JSONResponse({"success": False, "error": f"invalid: {direction} ({' / '.join(HANDOVER_MODES)})"})
     grab.handover_direction = direction
     print(f"[HANDOVER] {direction}")
     return {"success": True, "direction": direction}
@@ -1311,7 +1328,7 @@ def _ui_inject():
     """페이지에 서버 상태 전달 (window.UI) + 모션 파일이 없으면 Motions 카드 숨김."""
     has_motions = any(MOTIONS_DIR.glob("*.json"))
     ui = {"robot": robot_env.ROBOT, "motions": has_motions,
-          "handover": grab.handover_direction if grab else DEFAULT_HANDOVER,
+          "handover": grab.handover_direction if grab else DEFAULT_HANDOVER, "handover_side": HANDOVER_SIDE_DEG,
           "wrist": grab.wrist_params if grab else None}
     css = "" if has_motions else "#card-motions{display:none!important}"
     return f"<script>window.UI={json.dumps(ui, ensure_ascii=False)};</script><style>{css}</style>"

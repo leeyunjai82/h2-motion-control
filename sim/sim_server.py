@@ -404,9 +404,10 @@ iframe{width:100%;height:560px;border:0;border-radius:6px;background:#000}
  </div>
  <div class="card"><h3>동작</h3>
   <button class="go" onclick="post('/sim/grab')">잡기 → 건네기</button>
+  <button onclick="post('/sim/handover?direction=left')">건네기 좌 (사람 기준)</button>
   <button onclick="post('/sim/handover?direction=center')">건네기 정면</button>
-  <button onclick="post('/sim/handover?direction=left')">좌</button>
-  <button onclick="post('/sim/handover?direction=right')">우</button><br>
+  <button onclick="post('/sim/handover?direction=right')">건네기 우 (사람 기준)</button>
+  <button onclick="post('/sim/handover?direction=place')">제자리</button><br>
   <button class="st" onclick="post('/sim/stop')">정지</button><button onclick="post('/sim/home')">홈</button>
   <div id="msg" style="color:var(--dim);margin-top:6px"></div>
  </div>
