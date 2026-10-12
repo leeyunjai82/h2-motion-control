@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Version: 1.18
+# Version: 1.19
 # Changes:
+#   1.19 - place(제자리 내려놓기) 손 벌림 0.10 → grab.place_open (0.15) — 손을 들 때 박스가 따라 올라옴 (사용자 2026-10-12)
 #   1.18 - 1.17 다시 잡기 되돌림 (사용자 2026-10-11: 당기기 전에 다시 잡는 건 원한 동작이 아님 → 원래대로).
 #          건네기 놓을 때 손 벌림 0.10 → grab.handover_open (0.15) 은 유지 — 박스를 확실히 놓게 (사용자)
 #   1.16 - 왼손 y 보정(grab.left_hand_y_offset)은 ④ 접근·⑤ 하강에만 — 넓게 내려가고, ⑥ 잡기부터는 양손 같게 조임
@@ -158,6 +159,7 @@ TTS_VOICE = int((robot_env.CFG.get("tts") or {}).get("voice", 6))   # TTS 서버
 BOX_YAW_FOLLOW = bool(robot_env.CFG["grab"].get("box_yaw_follow", True))     # 비스듬한 박스: 손목 yaw 를 박스 회전만큼 더함
 MAX_BOX_YAW_DEG = float(robot_env.CFG["grab"].get("max_box_yaw_deg", 25.0))  # 이보다 더 돌아 있으면 잡지 않음 [deg]
 HANDOVER_OPEN = float(robot_env.CFG["grab"].get("handover_open", 0.15))      # 건네기 놓을 때 각 손을 바깥으로 [m]
+PLACE_OPEN = float(robot_env.CFG["grab"].get("place_open", 0.15))            # 제자리 내려놓은 뒤 각 손을 바깥으로 [m]
 WAIST_BASE_PITCH = float(robot_env.CFG["grab"]["waist_base_pitch_deg"])   # Home(pose=zero) 허리 pitch (H2 허리는 arm_sdk 로 안 움직임)
 
 # 잡은 뒤 → 건네기 구간 타이밍 (s)
@@ -376,12 +378,12 @@ class GrabController:
         if not self._move(dl, dr, 1.5, "⑨' 제자리 내려놓기", l_rot, r_rot):
             return
         time.sleep(0.3)
-        ol = [px, yc + grp_off_L + 0.10, down_z]
-        orr = [px, yc - grp_off_R - 0.10, down_z]
+        ol = [px, yc + grp_off_L + PLACE_OPEN, down_z]
+        orr = [px, yc - grp_off_R - PLACE_OPEN, down_z]
         if not self._move(ol, orr, 1.0, "⑩ 손 벌림", l_rot, r_rot):
             return
-        ul = [px, yc + grp_off_L + 0.10, lift_z]
-        ur = [px, yc - grp_off_R - 0.10, lift_z]
+        ul = [px, yc + grp_off_L + PLACE_OPEN, lift_z]
+        ur = [px, yc - grp_off_R - PLACE_OPEN, lift_z]
         if not self._move(ul, ur, 1.0, "⑩' 손 위로 (박스에서 떨어지기)", l_rot, r_rot):
             return
         self._say("placed")
