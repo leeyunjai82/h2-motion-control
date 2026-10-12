@@ -1,13 +1,15 @@
 """
 head_track.py — H2 머리 카메라 인식 서버 (포트 50013, 보기 전용)
-  왼눈  : 얼굴 (없으면 사람) — OpenVINO Open Model Zoo face-detection-retail-0004 / person-detection-0201 (NPU)
-  오른눈: 사물 (COCO 80종, 기본 person 제외) — YOLO11s OpenVINO (common/models/yolo11s_openvino_model, NPU)
+  왼눈  : 얼굴 (robot.yaml head_track.mode — face / person / auto) — OpenVINO Open Model Zoo face-detection-retail-0004
+          / person-detection-0201 (NPU). 지금 face (사용자 2026-10-12)
+  오른눈: robot.yaml head_track.objects.model 의 YOLO 검출 (OpenVINO, NPU) — 지금 자세 9종
+          (polar11s_openvino_model, 사용자 POLAR 학습 YOLO11s). 예전 COCO 사물(yolo11s_openvino_model)로 되돌릴 수 있음
   전체 : 두 눈 화면 전체를 작게 나란히 + 인식 박스 (제어 화면 Head Vision 카드 기본, robot.yaml head_track.view.height)
   스트립: 두 눈에서 인식된 것만 잘라 한 줄로 (Head Vision 카드의 CROP 버튼)
   (가슴 D435i 는 박스 인식 — detect_box, 이 서버와 무관)
 
   ROBOT=h2 python common/head_track.py               # → http://<pc-ip>:50013/   (start_robot.sh 가 H2 에서 띄움)
-  ROBOT=h2 python common/head_track.py --no-objects  # 오른눈 사물 인식 끔
+  ROBOT=h2 python common/head_track.py --no-objects  # 오른눈 인식 끔
 
   머리 추종(머리 돌리기)은 뺐음 — 실기 2026-10-09: 703 에서 rt/arm_sdk 머리 29/30 명령이 반영 안 됨 (robots/h2/FACTS.md).
   펌웨어가 머리를 arm_sdk 에 넘겨주면 커밋 8dddfe4 의 head_track.py (--drive, /track·/look·/home) 를 되살리면 됨.
@@ -23,7 +25,7 @@ head_track.py — H2 머리 카메라 인식 서버 (포트 50013, 보기 전용
     GET  /pair         MJPEG — 왼눈·오른눈 전체 화면을 높이 view.height 로 줄여 나란히 + 인식 박스, /pair.jpg = 한 장
     GET  /strip        MJPEG — 인식된 것만 잘라 한 줄 (왼눈 초록·주황, 오른눈 파랑), /strip.jpg = 한 장
     GET  /video_feed   MJPEG 왼눈 (얼굴·사람 박스)
-    GET  /video_right  MJPEG 오른눈 (사물 박스)
+    GET  /video_right  MJPEG 오른눈 (자세/사물 박스)
     GET  /detections   JSON 지금 인식 목록
     GET  /status       {left, right} — fps, 인식 ms, 모델, device(설정) · exec(OpenVINO 실제 실행 장치), error
   CORS * (제어 화면 :50000 이 /status·/pair·/strip 을 읽음)
@@ -166,10 +168,11 @@ class Faces(EyeLoop):
 
 
 class Objects(EyeLoop):
-    """오른눈: COCO 사물 (ultralytics YOLO, OpenVINO). device 는 ultralytics 형식 (intel:npu / intel:gpu / intel:cpu)."""
+    """오른눈: YOLO 검출 (ultralytics, OpenVINO) — 자세(POLAR) 또는 COCO 사물. device 는 ultralytics 형식 (intel:npu / intel:gpu / intel:cpu)."""
 
-    def __init__(self, port, model, device, conf, imgsz, exclude):
+    def __init__(self, port, model, device, conf, imgsz, exclude, title="objects"):
         super().__init__(port, "right")
+        self.title = title
         from ultralytics import YOLO
         self.model = YOLO(model, task="detect")
         self.model_name = os.path.basename(model.rstrip("/"))
@@ -195,7 +198,7 @@ class Objects(EyeLoop):
 
     def status(self):
         # ultralytics 는 없는 장치를 조용히 AUTO 로 바꿈 → exec 가 실제 장치 (첫 추론 전에는 [])
-        return {"fps": round(self.fps, 1), "det_ms": round(self.det_ms, 1), "models": [self.model_name],
+        return {"fps": round(self.fps, 1), "det_ms": round(self.det_ms, 1), "models": [self.model_name], "title": self.title,
                 "device": self.device, "exec": yolo_devices(self.model), "error": self.err}
 
 
@@ -222,7 +225,8 @@ def crop_tile(img, box, label, color, h):
     return np.vstack([c, bar])
 
 
-DET_COLOR = {"face": (0, 220, 120), "person": (0, 160, 255)}   # 그 밖(오른눈 사물) = (255, 150, 40)
+DET_COLOR = {"face": (0, 220, 120), "person": (0, 160, 255)}   # 그 밖(오른눈 자세·사물) = (255, 150, 40)
+LEFT_TITLE = {"face": "face", "person": "person", "auto": "face / person"}
 
 
 def eye_panel(eye, title, h):
@@ -255,9 +259,9 @@ def eye_panel(eye, title, h):
 def build_pair(left, right):
     """두 눈 전체 화면을 작게 나란히 (왼눈 | 오른눈). 오른눈 인식이 꺼져 있으면 왼눈만."""
     h = int((cfg("view", {}) or {}).get("height", 200))
-    panels = [eye_panel(left, "L  face / person", h)]
+    panels = [eye_panel(left, f"L  {LEFT_TITLE.get(left.mode, left.mode)}", h)]
     if right is not None:
-        panels += [np.full((h, 4, 3), 14, np.uint8), eye_panel(right, "R  objects", h)]
+        panels += [np.full((h, 4, 3), 14, np.uint8), eye_panel(right, f"R  {right.title}", h)]
     return np.hstack(panels)
 
 
@@ -299,7 +303,7 @@ PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name=
 <title>H2 Head Vision</title><style>body{font-family:sans-serif;margin:12px;background:#111;color:#eee}
 img{max-width:100%;border:1px solid #444}.row{display:flex;gap:8px;flex-wrap:wrap}.row img{width:calc(50% - 6px);min-width:280px}
 pre{background:#222;padding:8px;white-space:pre-wrap}</style></head><body>
-<h3>H2 Head Vision &mdash; left: face / person, right: objects</h3>
+<h3>H2 Head Vision &mdash; left: __LEFT__, right: __RIGHT__</h3>
 <div><img src="/pair" style="height:200px;width:auto"> <img src="/strip" style="height:96px;width:auto"></div>
 <div class="row"><img src="/video_feed"><img src="/video_right"></div><pre id="s"></pre>
 <script>setInterval(()=>fetch('/status').then(r=>r.json()).then(j=>{document.getElementById('s').textContent=JSON.stringify(j,null,1)}),1000)</script>
@@ -330,7 +334,8 @@ def make_app(left, right, strip, pair):
 
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return PAGE
+        return PAGE.replace("__LEFT__", LEFT_TITLE.get(left.mode, left.mode)).replace(
+            "__RIGHT__", right.title if right else "off")
 
     @app.get("/status")
     def status():
@@ -383,10 +388,10 @@ def make_app(left, right, strip, pair):
 
 
 def main():
-    ap = argparse.ArgumentParser(description="H2 head camera vision (left: face/person, right: objects)")
+    ap = argparse.ArgumentParser(description="H2 head camera vision (left: face/person, right: YOLO detect — posture/objects)")
     ap.add_argument("--mode", choices=("face", "person", "auto"), default=cfg("mode", "auto"))
     ap.add_argument("--device", default=cfg("device", "CPU"), help="face/person OpenVINO device CPU / GPU / NPU / AUTO")
-    ap.add_argument("--no-objects", action="store_true", help="disable right-eye object detection")
+    ap.add_argument("--no-objects", action="store_true", help="disable right-eye detection")
     ap.add_argument("--port", type=int, default=int(cfg("port", 50013)))
     ap.add_argument("--face-conf", type=float, default=None, help="override robot.yaml head_track.face_conf")
     ap.add_argument("--person-conf", type=float, default=None, help="override robot.yaml head_track.person_conf")
@@ -400,10 +405,10 @@ def main():
     right = None
     oc = cfg("objects", {}) or {}
     if not a.no_objects and oc.get("enabled", True):
-        path = os.path.join(MODEL_DIR, oc.get("model", "yolo11s_openvino_model"))
+        path = os.path.join(MODEL_DIR, oc.get("model", "polar11s_openvino_model"))
         if os.path.exists(path):
             right = Objects(RGB_PORTS["right"], path, oc.get("device", "intel:cpu"), float(oc.get("conf", 0.45)),
-                            int(oc.get("imgsz", 448)), oc.get("exclude", ["person"]))
+                            int(oc.get("imgsz", 640)), oc.get("exclude", []), str(oc.get("title", "objects")))
         else:
             print(f"[head_track] WARNING object model not found ({path}) - right eye off")
     print(f"[head_track] left {[m.name + '@' + m.device for m in left.models()]}"

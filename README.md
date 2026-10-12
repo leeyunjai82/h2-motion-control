@@ -1,7 +1,7 @@
 # H2 Motion Control
 
 **Unitree H2** 휴머노이드로 박스를 잡아 내려놓거나 건네는 시연 패키지입니다.
-외장 Intel mini PC(Ubuntu 24.04) + 가슴의 Intel RealSense D435i(박스 인식) + H2 머리 쌍안 카메라(얼굴·사람·사물 보기)로 구성하고,
+외장 Intel mini PC(Ubuntu 24.04) + 가슴의 Intel RealSense D435i(박스 인식) + H2 머리 쌍안 카메라(얼굴·자세 보기)로 구성하고,
 기능별 작은 HTTP 서버로 나눠 돌립니다.
 
 - H2 전용입니다. 로봇 파일·설정은 `robots/h2/`, 공통 코드는 `common/`.
@@ -30,7 +30,7 @@
 rs_stream      :50001   RealSense D435i (단독 점유) → MJPEG / depth API
 detect_box     :50010   박스 인식(YOLO seg, OpenVINO GPU), 파지점 (rs_stream 사용)
 arm_server     :50022   rt/arm_sdk 단독 점유 — 팔, IK, hold/release
-head_track     :50013   머리 카메라 인식 — 왼눈 얼굴·사람(NPU), 오른눈 사물(NPU), 보기 전용
+head_track     :50013   머리 카메라 인식 — 왼눈 얼굴(NPU), 오른눈 자세 9종 POLAR YOLO11s(NPU), 보기 전용
 robot_server   :50000   잡기 시퀀스 + 제어 웹 UI (CPU·GPU·NPU 사용률, System 카드 = 로봇 FSM·서버 상태)
 dashboard      :50003   3D URDF 뷰어 / 관절 상태 (rt/lowstate 읽기 전용)
 simulator      :8000    모션 에디터 (Joint + IK), arm_server 경유
@@ -158,7 +158,7 @@ h2-motion-control/
 │   ├── dashboard.py        # 3D URDF 뷰어
 │   ├── rs_stream.py        # D435i 서버
 │   ├── ctrl/               # 팔 래퍼, IK, detect_box, 머리 카메라 수신, OpenVINO 검출, 사용률(hw_usage), 손, TTS
-│   ├── models/             # 박스 seg 모델, yolo11s, OMZ 얼굴·사람
+│   ├── models/             # 박스 seg 모델, polar11s(자세), yolo11s(COCO, 예비), OMZ 얼굴·사람
 │   └── assets/vendor/      # three.min.js
 ├── robots/h2/              # URDF, meshes/, motions/, IK 모델 캐시, robot.yaml, FACTS.md, cad/
 ├── third_party/            # unitree_sdk2_python-814556d (activate_tv.sh 가 받음)

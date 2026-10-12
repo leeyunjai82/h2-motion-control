@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 2.26
+<!-- Version: 2.27
+  2.27 - Performance 표의 머리 카메라 모델 이름을 head_track /status 에서 (왼눈 mode: 얼굴 / 사람 / 얼굴·사람, 오른눈 title: 자세 / 사물)
   2.26 - Head Vision 기본 = 두 눈 전체 화면을 작게 나란히 + 인식 박스 (head_track /pair, robot.yaml head_track.view.height).
          카드 머리 CROP 버튼 = 예전처럼 인식된 것만 잘라 한 줄 (/strip). 선택은 브라우저에 기억
   2.25 - Wrist RPY 기본 yaw −15 · +15 (roll ∓10 그대로, robot.yaml grab.wrist_rpy_deg)
@@ -499,6 +500,8 @@ document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`
       const it=[['L',devName(s.left&&s.left.exec,s.left&&s.left.device)]];
       if(s.right)it.push(['R',devName(s.right.exec,s.right.device)]);
       devBadges('dev-vision',it);
+      if(s.left&&s.left.mode)USE_NAME.face=HT_NAME[s.left.mode]||s.left.mode;
+      if(s.right&&s.right.title)USE_NAME.obj=HT_NAME[s.right.title]||s.right.title;
       useDev('face',it[0][1],s.left&&s.left.det_ms);
       useDev('obj',s.right?it[1][1]:null,s.right&&s.right.det_ms);
     }).catch(()=>{devBadges('dev-vision',[]);useDev('face',null);useDev('obj',null);});
@@ -508,7 +511,8 @@ document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`
 
 // ---- Performance 표: 이 PC 의 CPU / GPU / NPU 사용률 (robot_server /hw, 1초) + 그 장치에서 도는 모델 ----
 //   사용률 60 % 이상 주황, 85 % 이상 빨강. 행에 마우스 올리면 읽는 곳(sysfs). 모델 = detect_box / head_track 의 실제 실행 장치
-const USE_NAME={box:'박스 seg',face:'얼굴·사람',obj:'사물'};
+const USE_NAME={box:'박스 seg',face:'얼굴',obj:'자세'};      // face·obj 는 head_track /status 로 바뀜 (devs)
+const HT_NAME={face:'얼굴',person:'사람',auto:'얼굴·사람',posture:'자세',objects:'사물'};
 const devUse={};                                   // {box|face|obj: {dev:'GPU', ms: 12.3, t}}
 function useDev(k,dev,ms){if(dev)devUse[k]={dev,ms,t:Date.now()};else delete devUse[k];}
 function pollHw(){
