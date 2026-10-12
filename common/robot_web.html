@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 2.28
+<!-- Version: 2.29
+  2.29 - Performance 표 모델 이름을 한/EN 에 맞춰 그림 (얼굴·나이성별 → face·age/gender, 행동 → actions — i18n 사전에 없어 영문에서도 한글이던 것)
   2.28 - Performance 표 이름: 왼눈 나이·성별 모델이 있으면 '얼굴·나이성별', 오른눈 title actions = '행동'
   2.27 - Performance 표의 머리 카메라 모델 이름을 head_track /status 에서 (왼눈 mode: 얼굴 / 사람 / 얼굴·사람, 오른눈 title: 자세 / 사물)
   2.26 - Head Vision 기본 = 두 눈 전체 화면을 작게 나란히 + 인식 박스 (head_track /pair, robot.yaml head_track.view.height).
@@ -501,9 +502,8 @@ document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`
       const it=[['L',devName(s.left&&s.left.exec,s.left&&s.left.device)]];
       if(s.right)it.push(['R',devName(s.right.exec,s.right.device)]);
       devBadges('dev-vision',it);
-      if(s.left&&s.left.mode)USE_NAME.face=(HT_NAME[s.left.mode]||s.left.mode)+
-        ((s.left.models||[]).some(m=>m.startsWith('age-gender'))?'·나이성별':'');
-      if(s.right&&s.right.title)USE_NAME.obj=HT_NAME[s.right.title]||s.right.title;
+      if(s.left&&s.left.mode)USE_KEY.face=[s.left.mode].concat((s.left.models||[]).some(m=>m.startsWith('age-gender'))?['ag']:[]);
+      if(s.right&&s.right.title)USE_KEY.obj=[s.right.title];
       useDev('face',it[0][1],s.left&&s.left.det_ms);
       useDev('obj',s.right?it[1][1]:null,s.right&&s.right.det_ms);
     }).catch(()=>{devBadges('dev-vision',[]);useDev('face',null);useDev('obj',null);});
@@ -513,8 +513,11 @@ document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`
 
 // ---- Performance 표: 이 PC 의 CPU / GPU / NPU 사용률 (robot_server /hw, 1초) + 그 장치에서 도는 모델 ----
 //   사용률 60 % 이상 주황, 85 % 이상 빨강. 행에 마우스 올리면 읽는 곳(sysfs). 모델 = detect_box / head_track 의 실제 실행 장치
-const USE_NAME={box:'박스 seg',face:'얼굴',obj:'자세'};      // face·obj 는 head_track /status 로 바뀜 (devs)
-const HT_NAME={face:'얼굴',person:'사람',auto:'얼굴·사람',posture:'자세',objects:'사물',actions:'행동'};
+// 표시 이름 — 그릴 때 한/EN 에 맞춰 고름 (i18n 사전에 맡기면 없는 말은 영문에서도 한글로 남음)
+const USE_NAMES={ko:{box:'박스 seg',face:'얼굴',person:'사람',auto:'얼굴·사람',posture:'자세',objects:'사물',actions:'행동',ag:'·나이성별'},
+                 en:{box:'box seg',face:'face',person:'person',auto:'face·person',posture:'posture',objects:'objects',actions:'actions',ag:'·age/gender'}};
+const USE_KEY={box:['box'],face:['face'],obj:['posture']};   // face·obj 는 head_track /status 로 바뀜 (devs)
+function useName(n){const t=USE_NAMES[LANG()==='en'?'en':'ko'];return (USE_KEY[n]||[n]).map(k=>t[k]||k).join('');}
 const devUse={};                                   // {box|face|obj: {dev:'GPU', ms: 12.3, t}}
 function useDev(k,dev,ms){if(dev)devUse[k]={dev,ms,t:Date.now()};else delete devUse[k];}
 function pollHw(){
@@ -527,7 +530,7 @@ function pollHw(){
       row.querySelector('.u span').textContent=p==null?'-':Math.round(p)+'%';
       row.title=p==null?(v.why||'-'):(v.src||'')+(v.note?'\n'+v.note:'');
       const users=Object.entries(devUse).filter(([,u])=>Date.now()-u.t<10000&&u.dev.toUpperCase().includes(k.toUpperCase()))
-        .map(([n,u])=>`<b>${USE_NAME[n]}</b>${u.ms!=null?' '+(+u.ms).toFixed(0)+' ms':''}`);
+        .map(([n,u])=>`<b>${useName(n)}</b>${u.ms!=null?' '+(+u.ms).toFixed(0)+' ms':''}`);
       row.querySelector('.m').innerHTML=users.length?users.join('<br>'):'-';
     }
   }).catch(()=>{for(const k of ['cpu','gpu','npu']){const row=document.getElementById('pr-'+k);
