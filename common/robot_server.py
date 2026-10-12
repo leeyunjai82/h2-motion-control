@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# Version: 1.24
+# Version: 1.25
 # Changes:
+#   1.25 - 잡은 뒤 가운데로 (grab.center_after_grab): ⑥'' 끌어당기기 때 양손 가운데를 y 0 으로 같이 옮김 →
+#          대칭 정렬·들기·Place 모두 로봇 정면. Place 는 원래 x · y 0 (앞에 선 사람 앞) 에 내려놓음 (사용자 2026-10-12).
+#          10-07 align_to_hands 때 x 와 함께 빠졌던 y 가운데 정렬을 y 만 되살림 (x 는 잡은 손 기준 그대로)
 #   1.24 - 건네기 Left/Right 기본 각 10° → 15° (robot.yaml grab.handover_side_deg, 사용자 2026-10-12)
 #   1.23 - 건네기 높이 상한 grab.handover_z_max (pelvis +0.35) — 올리는 양만 줄임 (들기 높이보다 낮추지는 않음).
 #          높은 테이블(윗면 +0.25)에서 팔 ↔ 거치대 요크 9 mm → 15 mm (사용자 2026-10-12)
@@ -145,6 +148,8 @@ def grab_inset(box_d):
         return min(GRAB_INSET_FRAC * box_d, max(0.0, box_d / 2 - GRAB_INSET_MARGIN))
     return GRAB_INSET_X
 PULL_X = float(robot_env.CFG["grab"].get("pull_x", 0.0))
+CENTER_AFTER_GRAB = bool(robot_env.CFG["grab"].get("center_after_grab", False))
+# ↑ 잡은 뒤 당길 때 양손 가운데를 y 0(로봇 정면)으로 같이 옮김 — 이후 대칭 정렬·들기·Place·건네기 모두 정면 기준
 # ↑ 좁혀 잡은 '뒤' 그 높이 그대로 x 로 끌어당김 [m] (− = 몸쪽). 팔을 덜 뻗은 자세에서 들기 위해
 ALIGN_TO_HANDS = bool(robot_env.CFG["grab"].get("align_to_hands", True))
 # ↑ 잡은 뒤 '대칭 정렬'·들기·놓기 기준을 실제 잡은 손 위치로 (박스 중심 추정과 L/R 점이 어긋나도 손이 튀지 않게)
@@ -395,9 +400,9 @@ class GrabController:
 
     # ---- place: 들었던 자리에 다시 내려놓기 (사람 없이 반복 시연) ----
     def _place_back(self, grab_x_base, grp_off_L, grp_off_R, grab_z, lift_z, l_rot, r_rot, yc=0.0):
-        # 잡기에서 박스를 몸쪽으로 (GRAB_X_OFFSET + PULL_X) 만큼 당겼으므로, 원래 자리로 다시 밀어 놓는다
-        #   px = 처음 잡은 손 x (박스 중심 − GRAB_INSET_X) → 박스가 원래 자리에 놓임
-        #   → 다음 회에도 같은 자리에서 인식·잡기 (반복 시연). 들어 올린 높이에서 앞으로 → 내려놓기
+        # 잡기에서 박스를 몸쪽으로 (GRAB_X_OFFSET + PULL_X) 만큼 당겼으므로, 원래 x 로 다시 밀어 놓는다.
+        #   y = yc: center_after_grab 면 0 (로봇 정면 = 앞에 선 사람 앞), 아니면 잡았던 y
+        #   px = 처음 잡은 손 x (박스 중심 − GRAB_INSET_X) → 박스가 원래 앞뒤 자리에 놓임. 들어 올린 높이에서 앞으로 → 내려놓기
         px = grab_x_base - GRAB_X_OFFSET - PULL_X
         print(f"[PLACE] 들어 올린 채 {PLACE_HOLD_SEC:.1f}초")
         time.sleep(PLACE_HOLD_SEC)
@@ -555,11 +560,17 @@ class GrabController:
         if not self._move(gripL, gripR, 2.5, "⑥ 잡기", gl_rot, gr_rot): return
         time.sleep(1.0)
 
-        # 끌어당기기 — 잡은 뒤 테이블 위에서 몸쪽으로 (팔이 덜 뻗은 자세에서 들기 위해)
-        if PULL_X != 0.0:
-            pullL = [gripL[0] + PULL_X, gripL[1], grab_z]
-            pullR = [gripR[0] + PULL_X, gripR[1], grab_z]
-            if not self._move(pullL, pullR, 1.5, "⑥'' 끌어당기기", gl_rot, gr_rot): return
+        # 끌어당기기 — 잡은 뒤 테이블 위에서 몸쪽으로 (팔이 덜 뻗은 자세에서 들기 위해).
+        #   center_after_grab: 같이 y 도 가운데로 — 양손 가운데를 y 0 (로봇 정면) 으로 밀어 옴
+        y_shift = -(gripL[1] + gripR[1]) / 2 if CENTER_AFTER_GRAB else 0.0
+        if abs(y_shift) < 0.005:
+            y_shift = 0.0
+        if PULL_X != 0.0 or y_shift:
+            pullL = [gripL[0] + PULL_X, gripL[1] + y_shift, grab_z]
+            pullR = [gripR[0] + PULL_X, gripR[1] + y_shift, grab_z]
+            if y_shift:
+                print(f"[GRAB-BOX] 잡은 자리 y {-y_shift*100:+.1f} cm → 가운데(y 0)로 당김")
+            if not self._move(pullL, pullR, 1.5, "⑥'' 끌어당기기" + (" (가운데로)" if y_shift else ""), gl_rot, gr_rot): return
             time.sleep(0.2)
 
         # 대칭 정렬용 파라미터: 잡은 뒤 양손을 평행/대칭으로 정리
@@ -571,6 +582,7 @@ class GrabController:
             yc = (yL + gripR[1]) / 2
             grp_off_L = yL - yc
             grp_off_R = yc - gripR[1]
+            yc += y_shift                            # center_after_grab 면 0 (⑥'' 에서 가운데로 옮긴 뒤)
             if yaw_add:
                 # 돌아 있던 박스를 ⑥' 에서 반듯하게 펴도 쥔 폭 그대로 — y 차이(W·cos) 대신 두 손 사이 거리(W)의 절반
                 #   (y 차이로 두면 펴는 동안 각 손이 W(1−cos)/2 더 조임: 28 cm · 25° 면 1.3 cm)
