@@ -69,7 +69,7 @@ cd ~/project/h2-motion-control
 
 Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위쪽 접근 → 측면 하강 → 잡기 → 몸쪽으로 당기기 → 들기 →
 **Place**: 원래 자리에 내려놓기 / **Center**: 몸 정면 가운데로 건네기 — 옆에서 잡았어도 가운데로 옮김 (2초 뒤 놓기) /
-**Left·Right**: 정면 건네기 자리를 몸통 기준 10° 돌려 건네기 (로봇 앞에 선 사람 기준 왼쪽·오른쪽, 허리 고정이라 팔로만) → 대기 자세 복귀.
+**Left·Right**: 정면 건네기 자리를 몸통 기준 15° 돌려 건네기 (로봇 앞에 선 사람 기준 왼쪽·오른쪽, 허리 고정이라 팔로만) → 대기 자세 복귀.
 
 값은 전부 `robots/h2/robot.yaml grab` 에 있습니다.
 
@@ -86,7 +86,7 @@ Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위�
 | `handover_open` | 0.15 | 건네기(Left·Center·Right) 놓을 때 각 손을 벌리는 거리 |
 | `handover_raise` | 0.05 | 건네기 높이 = 들기 높이 + 이 값 (앞으로 내밀면서 같이 올림) |
 | `handover_z_max` | 0.35 | 건네기 높이 상한 (pelvis 기준 z) — 올리는 양만 줄임. 오프라인: 팔 ↔ 거치대 요크 Left·Right 최소 약 15 mm (상한 없으면 윗면 +0.25 에서 9 mm) |
-| `handover_side_deg` | 10 | 건네기 Left·Right 각 (사람 기준). 오프라인 IK 10°: 손 오차 ≤ 1.1 cm · 팔 ↔ 거치대 ≥ 16 mm (15° 는 9.6 mm) |
+| `handover_side_deg` | 15 | 건네기 Left·Right 각 (사람 기준). 오프라인 IK: 손 오차 ≤ 0.8 cm · 팔 ↔ 거치대 요크 최소 9.6 mm (10° 면 15 mm) |
 | `place_open` | 0.15 | Place(제자리 내려놓기) 뒤 각 손을 벌리는 거리 — 벌린 채 들어 올림 (이전 0.10) |
 | `auto_zone` | x 0.32–0.45 | 자동 잡기 영역 (박스 중심, torso 기준) — 테이블 110 cm · 카메라 46.0° 기준 |
 | `default_handover` | place | 기본 = 제자리 내려놓기 |

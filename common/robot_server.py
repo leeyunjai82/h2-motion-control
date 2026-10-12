@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Version: 1.23
+# Version: 1.24
 # Changes:
+#   1.24 - 건네기 Left/Right 기본 각 10° → 15° (robot.yaml grab.handover_side_deg, 사용자 2026-10-12)
 #   1.23 - 건네기 높이 상한 grab.handover_z_max (pelvis +0.35) — 올리는 양만 줄임 (들기 높이보다 낮추지는 않음).
 #          높은 테이블(윗면 +0.25)에서 팔 ↔ 거치대 요크 9 mm → 15 mm (사용자 2026-10-12)
 #   1.22 - 건네기 높이 = 들기 높이 + grab.handover_raise (0.05) — 앞으로 내밀면서 5 cm 더 올려 줌 (사용자 2026-10-12)
@@ -57,7 +58,7 @@ robot_server.py — H2 잡기 제어 서버 (포트 50000)
   · GET  /grab_status  — busy 등
 
 팔 명령은 arm_server(:50022, rt/arm_sdk 단독 점유)를 HTTP 로 거친다.
-H2: 보행 없음, 허리 고정(arm_sdk 로 안 움직임) — 건네기는 정면(center) · 좌/우(left/right, 팔로만 몸통 기준 ±10°) /
+H2: 보행 없음, 허리 고정(arm_sdk 로 안 움직임) — 건네기는 정면(center) · 좌/우(left/right, 팔로만 몸통 기준 ±handover_side_deg) /
     제자리(place). left/right 는 로봇 앞에 선 사람 기준.
 """
 
@@ -175,7 +176,7 @@ STEP_PAUSE        = 0.1   # 대칭정렬/들기/건네기 동작 사이 정지
 HANDOVER_HOLD_SEC = 2.0   # center: 건넨 뒤 손 벌리기까지 대기
 PLACE_HOLD_SEC    = 1.5   # place: 들어 올린 채 보여 주는 시간
 PLACE_Z_CLEAR     = 0.005 # place: 내려놓을 때 잡았던 높이보다 이만큼 위에서 놓기 (테이블 누름 방지)
-HANDOVER_SIDE_DEG = float(robot_env.CFG["grab"].get("handover_side_deg", 10.0))
+HANDOVER_SIDE_DEG = float(robot_env.CFG["grab"].get("handover_side_deg", 15.0))
 HANDOVER_RAISE = float(robot_env.CFG["grab"].get("handover_raise", 0.0))
 _hz = robot_env.CFG["grab"].get("handover_z_max")
 HANDOVER_Z_MAX = float(_hz) if _hz is not None else None
@@ -335,7 +336,8 @@ class GrabController:
 
         # 건네기 자리 = 몸 정면 가운데 (x handover_x, y 0) — 옆에서 잡았어도 양손 가운데를 0 으로 옮김 (허리 고정이라 팔로만).
         #   left/right 는 그 자리를 몸통 z 축 기준으로 HANDOVER_YAW 만큼 돌림: 손 위치 + 손목 yaw (박스가 사람 쪽을 향함).
-        #   오프라인 (grab_reach IK, 2026-10-12): ±10° 손 오차 ≤ 1.1 cm · 팔 ↔ 거치대 요크 ≥ 16 mm (정면 23 mm, ±15° 는 9.6 mm)
+        #   오프라인 (grab_reach IK, 2026-10-12, 건네기 높이 상한 0.35): ±15° 손 오차 ≤ 0.8 cm · 팔 ↔ 거치대 요크 ≥ 9.6 mm
+        #   (±10° 15 mm, 정면 22 mm)
         if abs(yc) > 0.005:
             print(f"[HANDOVER] 잡은 자리 y {yc*100:+.1f} cm → 가운데(y 0)로 건넴")
         yaw = HANDOVER_YAW.get(self.handover_direction, 0.0)
