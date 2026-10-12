@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.22
+# Version: 1.23
 # Changes:
+#   1.23 - 건네기 높이 상한 grab.handover_z_max (pelvis +0.35) — 올리는 양만 줄임 (들기 높이보다 낮추지는 않음).
+#          높은 테이블(윗면 +0.25)에서 팔 ↔ 거치대 요크 9 mm → 15 mm (사용자 2026-10-12)
 #   1.22 - 건네기 높이 = 들기 높이 + grab.handover_raise (0.05) — 앞으로 내밀면서 5 cm 더 올려 줌 (사용자 2026-10-12)
 #   1.21 - 건네기 left / right 추가 (사용자 2026-10-12, 앞에 선 사람 기준): 정면 건네기 자리를 몸통 z 축 기준으로
 #          grab.handover_side_deg(10°) 돌림 — 손 위치 + 손목 yaw 같이 (허리 고정이라 팔로만). 사람 왼쪽 = 로봇 오른쪽(−y)
@@ -175,6 +177,9 @@ PLACE_HOLD_SEC    = 1.5   # place: 들어 올린 채 보여 주는 시간
 PLACE_Z_CLEAR     = 0.005 # place: 내려놓을 때 잡았던 높이보다 이만큼 위에서 놓기 (테이블 누름 방지)
 HANDOVER_SIDE_DEG = float(robot_env.CFG["grab"].get("handover_side_deg", 10.0))
 HANDOVER_RAISE = float(robot_env.CFG["grab"].get("handover_raise", 0.0))
+_hz = robot_env.CFG["grab"].get("handover_z_max")
+HANDOVER_Z_MAX = float(_hz) if _hz is not None else None
+# ↑ 건네기 높이 상한 [m, IK(pelvis) z] — handover_raise 로 올리는 양만 줄임 (들기 높이보다 낮추지는 않음: 앞으로 내밀 때 박스가 테이블에 가까워지지 않게)
 # ↑ 건네기(⑧) 높이 = 들기 높이 + 이 값 [m] — 들기(⑦)는 그대로, 앞으로 내미는 동안 같이 올림 (몸쪽에서 높이 들면 어깨가 거치대에 가까워짐)
 # ↑ 건네기 left/right: 정면 건네기 자리(handover_x, y 0)를 몸통 z 축 기준으로 이만큼 돌림 [deg] — 손 위치 + 손목 yaw
 HANDOVER_MODES = ("center", "left", "right", "place")   # 허리 고정이라 팔로만 정면·좌/우 건네기 / 제자리 내려놓기
@@ -343,7 +348,11 @@ class GrabController:
             l_rot, r_rot = self._wrist_quats(yaw)
             print(f"[HANDOVER] {self.handover_direction} (사람 기준) — 정면에서 {yaw:+.0f}° (로봇 {'왼' if yaw > 0 else '오른'}쪽)")
         self._stage("건네기")
-        ho_z = lift_z + HANDOVER_RAISE
+        raise_z = HANDOVER_RAISE
+        if HANDOVER_Z_MAX is not None and lift_z + raise_z > HANDOVER_Z_MAX:
+            raise_z = max(0.0, HANDOVER_Z_MAX - lift_z)
+            print(f"[HANDOVER] 건네기 높이 상한 {HANDOVER_Z_MAX:.2f} — 들기 높이 {lift_z:.3f} 에서 {raise_z*100:.1f} cm 만 올림")
+        ho_z = lift_z + raise_z
         hl = ho(HANDOVER_X, grp_off_L, ho_z)
         hr = ho(HANDOVER_X, -grp_off_R, ho_z)
         if not self._move(hl, hr, 1.5, "⑧ 건네기", l_rot, r_rot):
