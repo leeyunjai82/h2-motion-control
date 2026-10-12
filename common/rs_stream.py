@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-# Version: 1.1
+# Version: 1.2
 """
 RealSense → HTTP MJPEG 서버 (canvas viewer)
+  1.2 - 해상도를 robot.yaml camera.resolution 에서 (H2: 848×480 — 640×480 보다 가로 화각 56° → 70°), 깊이 보기 크기도 같은 비율
 
 라우트:
   /            : canvas 기반 뷰어
   /video_feed  : color MJPEG (ik_box.py 등에서 사용)
-  /depth_feed  : depth MJPEG (320x240 q60, 디버깅용 시각화)
+  /depth_feed  : depth MJPEG (해상도 절반 q60, 디버깅용 시각화)
   /depth_raw   : depth 16bit PNG 스트림 (mm 원본, detect_box용) ← v1.1 추가
 """
 
@@ -15,6 +16,7 @@ import time
 import cv2
 import numpy as np
 import pyrealsense2 as rs
+import robot_env   # ROBOT 미지정/미지원이면 여기서 종료 — camera.resolution
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -22,8 +24,9 @@ from fastapi.responses import StreamingResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 
-COLOR_W, COLOR_H, FPS = 640, 480, 30
-DEPTH_W, DEPTH_H      = 320, 240
+COLOR_W, COLOR_H = robot_env.CAMERA_RES   # 컬러·깊이 (깊이는 컬러에 정렬) — robot.yaml camera.resolution
+FPS = 30
+DEPTH_W, DEPTH_H = COLOR_W // 2, COLOR_H // 2   # /depth_feed 보기용 (같은 비율)
 COLOR_Q, DEPTH_Q      = 80, 60
 DEPTH_MAX_MM          = 3000
 FAIL_RESTART          = 3      # wait_for_frames(2초) 연속 실패 횟수 → 카메라 다시 열기 (약 6초)
@@ -197,7 +200,7 @@ async def depth_raw():
 async def index():
     return HTMLResponse("<h2>RealSense Stream</h2>"
                         "<p>/video_feed (color), /depth_feed (vis), /depth_raw (16bit mm)</p>"
-                        '<img src="/video_feed" width="480">')
+                        '<img src="/video_feed" style="width:100%;max-width:848px">')
 
 
 if __name__ == "__main__":

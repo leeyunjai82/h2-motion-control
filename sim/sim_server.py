@@ -12,7 +12,7 @@ sim_server.py — 시뮬레이터: 가상 박스 + 가짜 detect_box (포트 500
     (robot_server.camera_to_torso 의 역변환 — 허리 yaw 를 돌리면 카메라 좌표도 같이 바뀐다).
   · detect_box 와 같은 /pose, /status, /video_feed 를 제공 → robot_server 의 잡기 시퀀스
     (재검출 → 접근 → 잡기 → 들기 → 놓기/건네기) 를 코드 수정 없이 그대로 돌린다.
-  · 카메라 화면 시야(640×480, detect_box 의 K) 밖이면 found=False — 장착 위치 검토용.
+  · 카메라 화면 시야(robot.yaml camera.resolution · intrinsics — detect_box 와 같음) 밖이면 found=False — 장착 위치 검토용.
   · 손 위치 오차: robot_server 의 IK 목표 vs 현재 팔 관절로 계산한 손끝(L_ee/R_ee) — IK 도달 여부 확인용.
 
 없는 것: 실제 영상 인식(YOLO), 접촉/물리, 박스가 손에 따라 움직이는 것, 보행.
@@ -51,7 +51,7 @@ PORT = 50012 if REAL_CAM else 50010   # 가상 카메라일 때는 detect_box �
 DETECT = "http://localhost:50010"
 ROBOT_SERVER = "http://localhost:50000"
 ARM_SERVER = "http://localhost:50022"
-IMG_W, IMG_H = 640, 480
+IMG_W, IMG_H = robot_env.CAMERA_RES   # robot.yaml camera.resolution (rs_stream 과 같음)
 INSET = 0.02                       # L/R = 윗면 좌우 변 중점에서 안쪽 2 cm (box_estimator 와 동일)
 
 # ---- 카메라 내부 파라미터: detect_box 와 같은 값 (robot.yaml camera.intrinsics) ----

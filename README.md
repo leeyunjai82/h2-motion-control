@@ -128,7 +128,10 @@ OpenVINO 로 로봇에서 돌립니다. 기존 잡기·제어 기능은 그대�
 ## 카메라
 
 - **D435i (가슴, 박스 인식)**: 등판 거치대 `robots/h2/cad/camera_bracket/` (지금 v3 요크 + v1 가로대: 숙임 실측 46.0°, z 0.365). 장착값은 `robot.yaml camera`
-  (x, y, z [m, torso_link 기준], pitch_deg). 숙임각 실측·저장: `sudo ROBOT=h2 python utils/check_rsimu.py --save` (start_robot.sh 끈 상태, 703 서기)
+  (x, y, z [m, torso_link 기준], pitch_deg, resolution, intrinsics). 해상도 848×480 (2026-10-12, 640×480 보다 가로 화각 56° → 70° —
+  박스 좌우 여유 x 0.38 에서 1.3 → 10.8 cm, 숙임 50° 거치대보다 효과 큼). rs_stream · detect_box · 시뮬 · 수집 웹이 모두 `camera.resolution` 을 씀.
+  **RealSense 는 한 프로그램만 열 수 있음** — 다른 프로젝트(예: pibog-v1)가 먼저 열면 rs_stream 이 `errno=16 busy` / `errno=5` 로 못 뜸
+  (`fuser /dev/video*` 로 확인). 숙임각 실측·저장: `sudo ROBOT=h2 python utils/check_rsimu.py --save` (start_robot.sh 끈 상태, 703 서기)
   → `robots/h2/calib_local.yaml` (이 PC 전용, git 에 안 올라감) 이 robot.yaml 값을 덮어씀. 거치대를 다시 조일 때마다 다시 잴 것.
   지금 쓰는 값은 제어 화면 위 막대 System 칩 → Camera 줄. 위치 확인: `utils/cam_marker_check.py`.
 - **머리 쌍안 카메라**: `utils/check_head_cam.py` (수신 확인·깊이 클릭), 인식은 `common/head_track.py` (`robot.yaml head_track`).

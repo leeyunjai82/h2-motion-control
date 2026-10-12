@@ -500,8 +500,9 @@ async def lifespan(app: FastAPI):
     print(f"[YOLO] 로드: {YOLO_MODEL} (device={YOLO_DEVICE})")
     estimator = BoxEstimator(YOLO_MODEL, camera_K, conf=YOLO_CONF, device=YOLO_DEVICE)
     # 워밍업
-    estimator.detect(np.zeros((480,640,3),np.uint8),
-                     np.zeros((480,640),np.uint16), gravity_cam=GRAVITY_CAM)
+    _w, _h = robot_env.CAMERA_RES          # robot.yaml camera.resolution (rs_stream 과 같음)
+    estimator.detect(np.zeros((_h,_w,3),np.uint8),
+                     np.zeros((_h,_w),np.uint16), gravity_cam=GRAVITY_CAM)
     threading.Thread(target=color_reader_loop, daemon=True).start()
     threading.Thread(target=depth_reader_loop, daemon=True).start()
     threading.Thread(target=detect_loop, daemon=True).start()
@@ -662,7 +663,7 @@ button{background:#FF9800;border:none;color:#000;padding:8px;border-radius:5px;c
 </style></head><body>
 <h1>📦 Detect Box (50010)</h1>
 <div id="wrap">
-  <img src="/video_feed" width="640" height="480">
+  <img src="/video_feed" style="width:100%;max-width:848px;height:auto">
   <div class="panel">
     <div class="card">
       <div class="card-title">박스</div>

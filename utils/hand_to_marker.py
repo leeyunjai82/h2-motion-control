@@ -96,8 +96,8 @@ def marker_ik(mid, sec):
     import pyrealsense2 as rs
     pipe = rs.pipeline()
     cfg = rs.config()
-    cfg.enable_stream(rs.stream.color, 640, 480, rs.format.bgr8, 30)
-    cfg.enable_stream(rs.stream.depth, 640, 480, rs.format.z16, 30)
+    cfg.enable_stream(rs.stream.color, *robot_env.CAMERA_RES, rs.format.bgr8, 30)
+    cfg.enable_stream(rs.stream.depth, *robot_env.CAMERA_RES, rs.format.z16, 30)
     prof = pipe.start(cfg)
     try:
         align = rs.align(rs.stream.color)

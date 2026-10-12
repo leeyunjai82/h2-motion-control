@@ -57,7 +57,10 @@ def load_config(robot):
             raise ValueError(f"{path}: camera.{k} 없음")
     _k = cfg["camera"].get("intrinsics")
     if not (isinstance(_k, list) and len(_k) == 4 and all(isinstance(v, (int, float)) for v in _k)):
-        raise ValueError(f"{path}: camera.intrinsics [fx, fy, ppx, ppy] (컬러 640×480) 4개 필요")
+        raise ValueError(f"{path}: camera.intrinsics [fx, fy, ppx, ppy] (camera.resolution 컬러) 4개 필요")
+    _r = cfg["camera"].get("resolution", [640, 480])
+    if not (isinstance(_r, list) and len(_r) == 2 and all(isinstance(v, int) and v > 0 for v in _r)):
+        raise ValueError(f"{path}: camera.resolution [W, H] 정수 2개 필요")
 
     # 실행에 꼭 필요한 값 — enabled: true 일 때만 검사 (enabled: false 로봇은 "확인 필요" 를 null 로 둔다)
     if cfg.get("enabled", False):
@@ -167,7 +170,8 @@ CAMERA_Y     = float(CAMERA["y"])
 CAMERA_Z     = float(CAMERA["z"])
 CAMERA_PITCH_DEG = float(CAMERA["pitch_deg"])
 CAMERA_PITCH = float(np.radians(CAMERA_PITCH_DEG))
-CAMERA_K     = tuple(float(v) for v in CAMERA["intrinsics"])   # (fx, fy, ppx, ppy) 컬러 640×480 — detect_box / sim
+CAMERA_K     = tuple(float(v) for v in CAMERA["intrinsics"])   # (fx, fy, ppx, ppy) 컬러 CAMERA_RES — detect_box / sim
+CAMERA_RES   = tuple(int(v) for v in CAMERA.get("resolution", [640, 480]))   # (W, H) 컬러·깊이 — rs_stream / detect_box / sim
 
 JOINTS = CFG["joints"]
 FSM    = CFG["fsm"]

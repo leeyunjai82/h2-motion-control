@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 1.0
+<!-- Version: 1.1
+  1.1 - 저장 해상도 선택지를 카메라 해상도에서 (H2 848×480 → 원본 / 424×240)
   1.0 - 피지컬 AI (ACT) 로봇 PC 화면: 수집(잡기 연동·수동·자동 반복) · 에피소드 · 데이터셋 zip · 모델 업로드/로드 · 정책 실행(안전 필터)
         색·글꼴·카드는 제어 UI(common/robot_web.html 2.25)와 같음 -->
 <html lang="ko"><head><meta charset="UTF-8">
@@ -206,7 +207,7 @@ select.in{padding:5px}
         <div class="fld">
           <div><span class="mini">저장 해상도</span>
             <select class="in" id="rec-image" onchange="saveSet({record:{image:this.value}})">
-              <option value="320x240">320×240 (용량 1/4)</option><option value="640x480">640×480 원본</option></select></div>
+              <option value="">-</option></select></div>
           <div><span class="mini">기록 범위</span>
             <select class="in" id="rec-until" onchange="saveSet({record:{until:this.value}})">
               <option value="all">복귀까지 (전체)</option><option value="lift">들기까지</option></select></div>
@@ -379,8 +380,13 @@ const f1 = v => (v == null || isNaN(v)) ? '-' : (+v).toFixed(1);
 
 // ---------------- 설정 ----------------
 async function saveSet(obj){ const d = await api('POST', '/api/settings', obj); if(d){ S && (S.settings = d.settings); } }
-function fillSettings(st){
-  $('rec-link').checked = st.record.link; $('rec-image').value = st.record.image;
+function fillSettings(st, cam){
+  const sel = $('rec-image');
+  if(cam && cam.images && sel.options.length !== 2){      // 카메라 해상도에 맞춘 선택지 (절반 = 용량 1/4 / 원본)
+    sel.innerHTML = `<option value="${cam.images[0]}">${cam.images[0].replace('x','×')} (용량 1/4)</option>` +
+                    `<option value="${cam.images[1]}">${cam.images[1].replace('x','×')} 원본</option>`;
+  }
+  $('rec-link').checked = st.record.link; sel.value = st.record.image;
   $('rec-until').value = st.record.until; $('rec-failed').checked = st.record.save_failed;
   if(settingsFilled) return;           // 입력 중인 값을 폴링이 덮지 않게 — 처음 한 번만
   settingsFilled = true;
@@ -545,7 +551,7 @@ async function poll(){
        p.loading ? 'busy' : (p.model ? 'info' : ''));
   $('au-sim-row').style.display = sv.sim_virtual ? '' : 'none';
   $('cam-tag').textContent = sv.sim ? (sv.sim_virtual ? 'SIM 가상 카메라' : 'SIM · 실물 D435i') : 'D435i RGB';
-  fillSettings(d.settings);
+  fillSettings(d.settings, sv.camera);
   if(epsFor !== d.settings.dataset){ loadDatasets(); loadEpisodes(); }
 
   // 기록

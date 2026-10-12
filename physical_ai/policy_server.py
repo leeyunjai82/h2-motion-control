@@ -65,6 +65,8 @@ SETTINGS_PATH = os.path.join(DATA, "settings.json")
 MAX_EP_SEC = 120.0                         # 한 에피소드 최대 길이 (넘으면 끊고 실패 처리)
 LIFT_STAGE = "들기"                         # record until=lift 일 때 이 단계가 끝나면 기록 끝
 NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+CAM_W, CAM_H = robot_env.CAMERA_RES          # 카메라 원본 (robot.yaml camera.resolution — H2 848×480)
+IMG_NATIVE, IMG_HALF = f"{CAM_W}x{CAM_H}", f"{CAM_W // 2}x{CAM_H // 2}"
 for d in (DS_DIR, MD_DIR, TMP_DIR):
     os.makedirs(d, exist_ok=True)
 
@@ -74,7 +76,7 @@ for d in (DS_DIR, MD_DIR, TMP_DIR):
 # =====================================================================
 DEFAULTS = {
     "dataset": "box_grab",
-    "record": {"image": "320x240",      # 저장 해상도 (원본 640x480 / 320x240 = 용량 1/4)
+    "record": {"image": IMG_HALF,       # 저장 해상도 (원본 IMG_NATIVE / 절반 IMG_HALF = 용량 1/4)
                "until": "all",          # all = 복귀까지 / lift = 들기까지
                "save_failed": False,    # 실패한 잡기도 저장
                "link": False},          # 잡기 연동 기록
@@ -107,6 +109,8 @@ def load_settings():
 
 
 SET = load_settings()
+if SET["record"]["image"] not in (IMG_NATIVE, IMG_HALF):     # 카메라 해상도가 바뀐 뒤 예전 설정 (예: 320x240)
+    SET["record"]["image"] = IMG_HALF
 
 
 def save_settings():
@@ -278,8 +282,9 @@ class Recorder:
         self.ep = None          # 기록 중 에피소드 (dict)
         self.last = None        # 마지막 저장 결과 (UI 표시)
         # 첫 호출이 느린 것들(JPEG 코덱·FK) 미리 — 안 하면 첫 에피소드 첫 틱이 0.3 s 늦음
-        img = np.zeros((480, 640, 3), np.uint8)
-        cv2.imdecode(cv2.imencode(".jpg", cv2.resize(img, (320, 240), interpolation=cv2.INTER_AREA))[1], cv2.IMREAD_COLOR)
+        img = np.zeros((CAM_H, CAM_W, 3), np.uint8)
+        cv2.imdecode(cv2.imencode(".jpg", cv2.resize(img, (CAM_W // 2, CAM_H // 2), interpolation=cv2.INTER_AREA))[1],
+                     cv2.IMREAD_COLOR)
         fk.hands(np.zeros(14))
         threading.Thread(target=self._run, daemon=True).start()
 
@@ -316,7 +321,7 @@ class Recorder:
                 ep["abort"] = f"{why} 끊김 누적 1초 넘음"
             return
         if n_img != ep["last_cam"]:          # 새 프레임만 변환 (카메라가 30 fps 보다 느리면 같은 프레임 재사용)
-            if (ep["w"], ep["h"]) != (640, 480):   # 원본(640x480)이면 받은 JPEG 그대로 — 재압축 없음
+            if (ep["w"], ep["h"]) != (CAM_W, CAM_H):   # 원본이면 받은 JPEG 그대로 — 재압축 없음
                 img = cv2.imdecode(np.frombuffer(jpg, np.uint8), cv2.IMREAD_COLOR)
                 if img is None:
                     return
@@ -896,6 +901,7 @@ def _servers():
                   "is_running": grabmon.st.get("is_running"), "stage": grabmon.st.get("stage"),
                   "stage_idx": grabmon.st.get("stage_idx", -1), "stages": STAGE_NAMES, "err": grabmon.err},
         "camera": {"ok": cam.age() < 0.5, "fps": round(cam.fps, 1), "url": CAMERA_URL, "err": cam.err,
+                   "res": [CAM_W, CAM_H], "images": [IMG_HALF, IMG_NATIVE],
                    "age": round(min(cam.age(), 99), 2)},
         "dds": {"ok": bool(s) and now - s["t_state"] < 0.2, "state_age": round(now - s["t_state"], 3) if s else None,
                 "cmd_age": round(now - s["t_cmd"], 3) if s else None, "weight": round(s["weight"], 2) if s else None,
@@ -940,8 +946,8 @@ def api_settings(body: dict):
             for k, v in vals.items():
                 if k in SET[sec]:
                     SET[sec][k] = v
-    if SET["record"]["image"] not in ("640x480", "320x240"):
-        SET["record"]["image"] = "320x240"
+    if SET["record"]["image"] not in (IMG_NATIVE, IMG_HALF):
+        SET["record"]["image"] = IMG_HALF
     if SET["record"]["until"] not in ("all", "lift"):
         SET["record"]["until"] = "all"
     save_settings()
