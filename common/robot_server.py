@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.19
+# Version: 1.20
 # Changes:
+#   1.20 - 웹 UI(/)·/i18n.js 에 Cache-Control: no-cache — git pull 뒤 새로고침해도 브라우저가 예전 i18n.js 를 쓰던 것
+#          (FileResponse 는 Last-Modified 가 있어 브라우저가 검증 없이 한동안 캐시를 씀)
 #   1.19 - place(제자리 내려놓기) 손 벌림 0.10 → grab.place_open (0.15) — 손을 들 때 박스가 따라 올라옴 (사용자 2026-10-12)
 #   1.18 - 1.17 다시 잡기 되돌림 (사용자 2026-10-11: 당기기 전에 다시 잡는 건 원한 동작이 아님 → 원래대로).
 #          건네기 놓을 때 손 벌림 0.10 → grab.handover_open (0.15) 은 유지 — 박스를 확실히 놓게 (사용자)
@@ -1297,10 +1299,12 @@ async def arm_hold():
 # 웹 UI — robot_web.html 읽어 viewer 코드 삽입
 # ==========================================
 WEB_HTML_PATH = os.path.join(current_dir, "robot_web.html")
+NO_CACHE = {"Cache-Control": "no-cache"}   # 매번 서버에 확인 (git pull 뒤 바로 새 파일)
 
 @app.get("/i18n.js", include_in_schema=False)
 async def i18n_js():
-    return FileResponse(os.path.join(current_dir, "i18n.js"), media_type="application/javascript")
+    return FileResponse(os.path.join(current_dir, "i18n.js"), media_type="application/javascript",
+                        headers=NO_CACHE)
 
 
 def _ui_inject():
@@ -1316,7 +1320,7 @@ def _ui_inject():
 @app.get("/", include_in_schema=False)
 async def index():
     html = open(WEB_HTML_PATH, encoding="utf-8").read()
-    return HTMLResponse(html.replace("</head>", _ui_inject() + "</head>", 1))
+    return HTMLResponse(html.replace("</head>", _ui_inject() + "</head>", 1), headers=NO_CACHE)
 
 
 if __name__ == "__main__":
