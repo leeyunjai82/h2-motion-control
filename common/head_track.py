@@ -1,9 +1,10 @@
 """
 head_track.py — H2 머리 카메라 인식 서버 (포트 50013, 보기 전용)
-  왼눈  : 얼굴 (robot.yaml head_track.mode — face / person / auto) — OpenVINO Open Model Zoo face-detection-retail-0004
-          / person-detection-0201 (NPU). 지금 face (사용자 2026-10-12)
-  오른눈: robot.yaml head_track.objects.model 의 YOLO 검출 (OpenVINO, NPU) — 지금 자세 9종
-          (polar11s_openvino_model, 사용자 POLAR 학습 YOLO11s). 예전 COCO 사물(yolo11s_openvino_model)로 되돌릴 수 있음
+  왼눈  : 얼굴 + 나이·성별 (robot.yaml head_track.mode, age_gender) — OpenVINO Open Model Zoo face-detection-retail-0004
+          + age-gender-recognition-retail-0013 (NPU). mode person / auto 면 person-detection-0201 도
+  오른눈: 사람 행동 (robot.yaml head_track.actions) — Open Model Zoo person-detection-action-recognition-0006 (NPU),
+          6종을 3개로 합쳐 표시: sit (앉음·쓰기·책상에 엎드림) / raise hand / stand (서 있음·뒤돌아봄) (사용자 2026-10-12)
+          actions.enabled false 면 objects (YOLO — POLAR 자세 polar11s / COCO 사물 yolo11s)
   전체 : 두 눈 화면 전체를 작게 나란히 + 인식 박스 (제어 화면 Head Vision 카드 기본, robot.yaml head_track.view.height)
   스트립: 두 눈에서 인식된 것만 잘라 한 줄로 (Head Vision 카드의 CROP 버튼)
   (가슴 D435i 는 박스 인식 — detect_box, 이 서버와 무관)
@@ -25,7 +26,7 @@ head_track.py — H2 머리 카메라 인식 서버 (포트 50013, 보기 전용
     GET  /pair         MJPEG — 왼눈·오른눈 전체 화면을 높이 view.height 로 줄여 나란히 + 인식 박스, /pair.jpg = 한 장
     GET  /strip        MJPEG — 인식된 것만 잘라 한 줄 (왼눈 초록·주황, 오른눈 파랑), /strip.jpg = 한 장
     GET  /video_feed   MJPEG 왼눈 (얼굴·사람 박스)
-    GET  /video_right  MJPEG 오른눈 (자세/사물 박스)
+    GET  /video_right  MJPEG 오른눈 (행동 / YOLO 박스)
     GET  /detections   JSON 지금 인식 목록
     GET  /status       {left, right} — fps, 인식 ms, 모델, device(설정) · exec(OpenVINO 실제 실행 장치), error
   CORS * (제어 화면 :50000 이 /status·/pair·/strip 을 읽음)
@@ -43,7 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import robot_env   # noqa: E402  ROBOT 필수
 from ctrl.head_cam import PC1, RGB_PORTS, RgbRx, my_ip, web_urls   # noqa: E402
 from ctrl.hw_usage import exec_devices, yolo_devices   # noqa: E402
-from ctrl.ov_detect import OvSSD   # noqa: E402
+from ctrl.ov_detect import ACTIONS_0006, OvActions, OvAgeGender, OvSSD   # noqa: E402
 
 import uvicorn   # noqa: E402
 from fastapi import FastAPI, HTTPException   # noqa: E402
@@ -130,15 +131,38 @@ class EyeLoop(threading.Thread):
 class Faces(EyeLoop):
     """왼눈: 얼굴 (mode auto 면 얼굴이 person_after_s 동안 없을 때 사람)."""
 
-    def __init__(self, port, mode, device):
+    def __init__(self, port, mode, device, age_gender=False):
         super().__init__(port, "left")
         self.mode, self.device = mode, device
         self.face = OvSSD("face", device, cfg("face_conf", 0.6)) if mode in ("face", "auto") else None
         self.person = OvSSD("person", device, cfg("person_conf", 0.5)) if mode in ("person", "auto") else None
+        self.ag = OvAgeGender(device) if age_gender and self.face is not None else None
+        self.tracks = []                   # 나이·성별 시간 평균용 [{box, age, male, t}]
         self.last_face = 0.0
 
     def models(self):
-        return [m for m in (self.face, self.person) if m is not None]
+        return [m for m in (self.face, self.person, self.ag) if m is not None]
+
+    def _age_gender(self, img, box, now):
+        """얼굴 하나의 (나이, 남자 확률) — 앞 프레임의 같은 얼굴(IoU 0.3 넘음)과 지수 평균 0.7/0.3
+        (5 fps 에서 Intel 데모의 30 fps × 0.05 와 비슷하게 1 초 남짓)."""
+        r = self.ag(img, box)
+        if r is None:
+            return None
+        age, male = r
+        best, best_iou = None, 0.3
+        for t in self.tracks:
+            iou = box_iou(t["box"], box)
+            if iou > best_iou:
+                best, best_iou = t, iou
+        if best is None:
+            best = {"age": age, "male": male}
+            self.tracks.append(best)
+        else:
+            best["age"] = 0.7 * best["age"] + 0.3 * age
+            best["male"] = 0.7 * best["male"] + 0.3 * male
+        best["box"], best["t"] = box, now
+        return best["age"], best["male"]
 
     def process(self, img, now):
         faces = self.face(img) if self.face is not None else []
@@ -154,8 +178,18 @@ class Faces(EyeLoop):
         for b in faces:
             cv2.rectangle(v, (int(b[0]), int(b[1])), (int(b[2]), int(b[3])), (0, 220, 120), 2)
         put_info(v, f"L  {self.fps:.1f} fps  det {self.det_ms:.0f} ms")
-        dets = [dict(label="face", conf=b[4], box=b[:4]) for b in faces] + \
-               [dict(label="person", conf=b[4], box=b[:4]) for b in persons]
+        dets = []
+        for b in faces:
+            d = dict(label="face", conf=b[4], box=b[:4])
+            ag = self._age_gender(img, b[:4], now) if self.ag is not None else None
+            if ag is not None:
+                d.update(age=round(ag[0]), male=round(ag[1], 2),
+                         text=f"{'male' if ag[1] >= 0.5 else 'female'} {round(ag[0])}")
+                cv2.putText(v, d["text"], (int(b[0]), max(12, int(b[1]) - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45,
+                            (0, 220, 120), 1, cv2.LINE_AA)
+            dets.append(d)
+        self.tracks = [t for t in self.tracks if now - t["t"] < 1.0]
+        dets += [dict(label="person", conf=b[4], box=b[:4]) for b in persons]
         return dets, v
 
     def status(self):
@@ -165,6 +199,59 @@ class Faces(EyeLoop):
         return {"mode": self.mode, "fps": round(self.fps, 1), "det_ms": round(self.det_ms, 1),
                 "models": [m.name for m in self.models()], "device": self.device,
                 "exec": ex or sorted({m.device for m in self.models()}), "error": self.err}
+
+
+def box_iou(a, b):
+    iw = max(0.0, min(a[2], b[2]) - max(a[0], b[0]))
+    ih = max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - iw * ih
+    return iw * ih / u if u > 0 else 0.0
+
+
+class Actions(EyeLoop):
+    """오른눈: 사람 행동 (OMZ person-detection-action-recognition-0006). 6종 확률을 groups 대로 더해 가장 큰 묶음을 표시.
+    합친 확률이 act_conf 보다 낮거나, edge_person 이면 화면 왼쪽·오른쪽 끝에 닿은(몸이 잘린) 사람은 행동 없이 'person'
+    (샘플 사진에서 잘린 사람에게 엉뚱한 행동이 붙음 — 2026-10-12)."""
+
+    def __init__(self, port, ac):
+        super().__init__(port, "right")
+        self.title = str(ac.get("title", "actions"))
+        self.device = str(ac.get("device", "CPU"))
+        self.det = OvActions(self.device, float(ac.get("det_conf", 0.4)), str(ac.get("resize", "letterbox")))
+        self.model_name = self.det.name
+        self.act_conf = float(ac.get("act_conf", 0.6))
+        self.edge_person = bool(ac.get("edge_person", True))
+        self.max = int(ac.get("max", 6))
+        groups = ac.get("groups") or {"sit": ["sitting", "writing", "lie_on_desk"], "raise hand": ["raising_hand"],
+                                      "stand": ["standing", "turned_around"]}
+        bad = [a for g in groups.values() for a in g if a not in ACTIONS_0006]
+        if bad:
+            raise ValueError(f"head_track.actions.groups: unknown action {bad} (use {ACTIONS_0006})")
+        self.groups = [(str(name), [ACTIONS_0006.index(a) for a in acts]) for name, acts in groups.items()]
+
+    def process(self, img, now):
+        H, W = img.shape[:2]
+        dets = []
+        for x0, y0, x1, y1, c, prob in self.det(img)[:self.max]:
+            p, name = max((float(prob[ix].sum()), n) for n, ix in self.groups)
+            cut = self.edge_person and (x0 <= 2 or x1 >= W - 2)
+            if p < self.act_conf or cut:
+                name, p = "person", c
+            dets.append(dict(label=name, conf=p, det=round(c, 3), box=(x0, y0, x1, y1), text=f"{name} {p:.2f}",
+                             actions={a: round(float(v), 3) for a, v in zip(ACTIONS_0006, prob)}))
+        v = img.copy()
+        for d in dets:
+            col = DET_COLOR.get(d["label"], (255, 150, 40))
+            x0, y0, x1, y1 = (int(t) for t in d["box"])
+            cv2.rectangle(v, (x0, y0), (x1, y1), col, 2)
+            cv2.putText(v, d["text"], (x0 + 2, max(12, y0 - 4)), cv2.FONT_HERSHEY_SIMPLEX, 0.45, col, 1, cv2.LINE_AA)
+        put_info(v, f"R  {self.fps:.1f} fps  det {self.det_ms:.0f} ms")
+        return dets, v
+
+    def status(self):
+        return {"fps": round(self.fps, 1), "det_ms": round(self.det_ms, 1), "models": [self.det.name], "title": self.title,
+                "device": self.device, "exec": exec_devices(self.det.compiled) or [self.det.device],
+                "groups": {n: [ACTIONS_0006[i] for i in ix] for n, ix in self.groups}, "error": self.err}
 
 
 class Objects(EyeLoop):
@@ -225,7 +312,8 @@ def crop_tile(img, box, label, color, h):
     return np.vstack([c, bar])
 
 
-DET_COLOR = {"face": (0, 220, 120), "person": (0, 160, 255)}   # 그 밖(오른눈 자세·사물) = (255, 150, 40)
+DET_COLOR = {"face": (0, 220, 120), "person": (0, 160, 255),               # BGR. 그 밖(YOLO 자세·사물) = (255, 150, 40)
+             "stand": (255, 150, 40), "raise hand": (0, 200, 255), "sit": (200, 110, 220)}
 LEFT_TITLE = {"face": "face", "person": "person", "auto": "face / person"}
 
 
@@ -247,8 +335,8 @@ def eye_panel(eye, title, h):
         c = DET_COLOR.get(d["label"], (255, 150, 40))
         x0, y0, x1, y1 = (int(round(v * s)) for v in d["box"])
         cv2.rectangle(out, (x0, y0), (x1, y1), c, 2)
-        cv2.putText(out, f"{d['label']} {d['conf']:.2f}", (x0 + 2, max(11, y0 - 3)), cv2.FONT_HERSHEY_SIMPLEX, 0.36,
-                    c, 1, cv2.LINE_AA)
+        cv2.putText(out, d.get("text") or f"{d['label']} {d['conf']:.2f}", (x0 + 2, max(11, y0 - 3)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.36, c, 1, cv2.LINE_AA)
     label = f"{title}  {eye.fps:.1f} fps"
     tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)[0][0]
     out[2:20, 2:tw + 10] = (out[2:20, 2:tw + 10] * 0.35).astype(np.uint8)          # 글씨 뒤 어둡게
@@ -280,8 +368,8 @@ def build_strip(left, right):
         seen = True
         img, dets, _ = last
         for d in sorted(dets, key=lambda d: -d["conf"])[:maxn]:
-            color = {"face": (0, 220, 120), "person": (0, 160, 255)}.get(d["label"], (255, 150, 40))
-            t = crop_tile(img, d["box"], f"{d['label']} {d['conf']:.2f}", color, h)
+            color = DET_COLOR.get(d["label"], (255, 150, 40))
+            t = crop_tile(img, d["box"], d.get("text") or f"{d['label']} {d['conf']:.2f}", color, h)
             if t is not None:
                 tiles.append(t)
     if not tiles:                       # 영상은 오는데 인식 없음 / 영상 자체가 안 옴 (앱 video_hub 끔·Stereo patch PC1 켬 확인)
@@ -350,7 +438,8 @@ def make_app(left, right, strip, pair):
             with eye.lock:
                 last = eye.last
             if last is not None and now - last[2] <= FRESH_S:
-                out += [dict(eye=eye.name, label=d["label"], conf=round(d["conf"], 3), box=[round(v) for v in d["box"]])
+                out += [dict(eye=eye.name, label=d["label"], conf=round(d["conf"], 3), box=[round(v) for v in d["box"]],
+                             **{k: d[k] for k in ("text", "age", "male", "det", "actions") if k in d})
                         for d in last[1]]
         return out
 
@@ -401,10 +490,15 @@ def main():
     if a.person_conf is not None:
         C["person_conf"] = a.person_conf
 
-    left = Faces(RGB_PORTS["left"], a.mode, a.device)
+    left = Faces(RGB_PORTS["left"], a.mode, a.device, bool((cfg("age_gender", {}) or {}).get("enabled", False)))
     right = None
+    ac = cfg("actions", {}) or {}
     oc = cfg("objects", {}) or {}
-    if not a.no_objects and oc.get("enabled", True):
+    if a.no_objects:
+        pass
+    elif ac.get("enabled", False):
+        right = Actions(RGB_PORTS["right"], ac)
+    elif oc.get("enabled", True):
         path = os.path.join(MODEL_DIR, oc.get("model", "polar11s_openvino_model"))
         if os.path.exists(path):
             right = Objects(RGB_PORTS["right"], path, oc.get("device", "intel:cpu"), float(oc.get("conf", 0.45)),

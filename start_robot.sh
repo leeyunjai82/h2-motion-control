@@ -162,7 +162,7 @@ if [ "$HEADCAM" = "1" ]; then
   echo "[start] head_cam_on         ... 머리 카메라 로봇 서비스 준비 (로그 head_track_$DAY.log)"
   python -u ../utils/head_cam_on.py > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
   PIDS+=($!); NAMES+=("head_cam_on")
-  echo "[start] head_track    (50013) ... 머리 카메라 왼눈 얼굴 / 오른눈 자세 (보기만)"
+  echo "[start] head_track    (50013) ... 머리 카메라 왼눈 얼굴·나이성별 / 오른눈 행동 (보기만)"
   python -u head_track.py       > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
   PIDS+=($!); NAMES+=("head_track")
   sleep 1

@@ -256,12 +256,27 @@ vision:
   show_seg: false             # 화면 seg 표시 (영역·윗면·꼭짓점). false = 파지점 L/T/R + 최근 2 초 프레임별 인식 위치(흰 점)만 — 표시 전용.
                               #   사용자 2026-10-09: seg 경계가 실제와 어긋나 보여 신뢰가 떨어짐. 제어 화면 Camera View 의 SEG 버튼으로 켜고 끔
 
-# 머리 카메라 인식 (common/head_track.py :50013, start_robot.sh 가 띄움, 보기 전용) — 왼눈 얼굴, 오른눈 자세 (POLAR 9종)
+# 머리 카메라 인식 (common/head_track.py :50013, start_robot.sh 가 띄움, 보기 전용) — 왼눈 얼굴 + 나이·성별, 오른눈 행동 (앉음 / 손 듦 / 서 있음)
 #   머리 추종은 뺌 (실기 2026-10-09: 703 에서 rt/arm_sdk 로 머리 29/30 이 안 움직임, FACTS.md). 되살릴 때는 커밋 8dddfe4 참고
 head_track:
   port: 50013
   fps: 5                      # 눈별 인식 횟수 [회/s] (사용자 2026-10-09: 5 fps 면 충분)
-  # 오른눈 자세 인식 — common/models/polar11s_openvino_model (사용자 POLAR 학습 YOLO11s, 2026-10-12):
+  # 오른눈 행동 (사용자 2026-10-12) — Open Model Zoo person-detection-action-recognition-0006 (common/models/omz).
+  #   사람 검출 + 행동 6종 (sitting writing raising_hand standing turned_around lie_on_desk — 교실 장면으로 학습) 을
+  #   groups 대로 확률을 더해 3 개로 표시. 합친 확률 < act_conf 또는 화면 옆 끝에 닿은 사람은 'person'.
+  #   resize letterbox = 비율 유지 (머리 카메라 544×448 → 모델 680×400). 샘플 사진에서 서 있는 사람을 늘려 넣기(stretch)보다 잘 잡음
+  #   enabled: false 면 아래 objects (YOLO) 를 씀
+  actions:
+    enabled: true
+    device: NPU                # 안 되면 HETERO:NPU,CPU → CPU 자동
+    det_conf: 0.4              # 사람 검출 (Intel smart_classroom 데모 기본)
+    act_conf: 0.6              # 합친 행동 확률
+    edge_person: true          # 화면 왼쪽·오른쪽 끝에 닿은(몸이 잘린) 사람 → 행동 없이 'person'
+    resize: letterbox          # letterbox | stretch
+    max: 6
+    title: actions
+    groups: {sit: [sitting, writing, lie_on_desk], raise hand: [raising_hand], stand: [standing, turned_around]}
+  # 오른눈 YOLO (actions.enabled false 일 때) — 자세 polar11s_openvino_model (사용자 POLAR 학습 YOLO11s, 2026-10-12):
   #   squat run sit stretch walk jump bendover stand lying (9종). polar11s.pt (학습 imgsz 640) → OpenVINO FP16 imgsz 640
   #   (448 보다 샘플 사진에서 사람을 더 잡음). 예전 COCO 사물 인식으로 되돌리려면
   #   model: yolo11s_openvino_model, imgsz: 448, exclude: [person], title: objects
@@ -270,6 +285,7 @@ head_track:
   view: {height: 200}                    # 제어 화면 Head Vision 기본: 두 눈 전체 화면(544×448)을 높이 200 px 로 줄여 나란히 + 인식 박스
   strip: {height: 72, max_left: 3}       # Head Vision CROP 버튼: 인식된 것만 잘라 높이 72 px 한 줄
   mode: face                  # face | person | auto (얼굴 우선, 얼굴이 person_after_s 동안 없으면 사람). 사용자 2026-10-12: 왼눈은 얼굴만
+  age_gender: {enabled: true}  # 왼눈 얼굴마다 나이·성별 — OMZ age-gender-recognition-retail-0013 (18~75세 학습, 문서: 성별 95.8 %, 나이 평균 오차 7 년)
   device: NPU                 # 왼눈(얼굴·사람) OpenVINO 장치 (사용자 2026-10-09: NPU). 안 되면 HETERO:NPU,CPU → CPU 자동 — utils/get_dev.py
   face_conf: 0.6
   person_conf: 0.5
