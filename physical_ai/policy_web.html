@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 1.5
+<!-- Version: 1.6
+  1.6 - 한/영 전환 (common/i18n.js — 제어 UI 와 같은 버튼·사전). 그래프 캔버스 글자도 영문 모드에서 번역
   1.5 - 반복 실행 (N 회 · 사이 쉬기 · 매 회 박스 인식 기다림) · 한 회 끝(데모 끝 자세로 돌아옴) 표시 · 기본 최대 속도 0.7
   1.4 - 에피소드 보기 (사용자 2026-10-13): Episodes 행을 누르면 영상 재생(슬라이더·속도) · 잡기 단계 띠 ·
         관절 실측/지령 · 토크 · 두 손 거리(실측/지령) 그래프, 앞뒤 에피소드 이동 · 삭제. 키: Space 재생, ←/→ 프레임(Shift ×10)
@@ -195,8 +196,10 @@ select.in{padding:5px}
   .jbars,.pre{grid-template-columns:1fr}
   .metrics{grid-template-columns:1fr 1fr}
 }
-</style></head>
+</style>
+</head>
 <body>
+<script src="/i18n.js"></script>
 
 <div class="topbar">
   <span class="dot" id="livedot"></span>
@@ -211,6 +214,7 @@ select.in{padding:5px}
       <span class="chip" id="chip-model">Model <b>-</b></span>
     </div>
     <a id="link-ctl" href="#">control ↗</a>
+    <span id="lang-slot"></span>
   </div>
 </div>
 
@@ -623,7 +627,7 @@ function plotEp(cv, series, opt){
   const vals = series.flatMap(x => x.d || []).filter(v => v != null && isFinite(v));
   c.font = '10px ui-monospace,Menlo,Consolas,monospace';
   if(!opt.bare){
-    if(!vals.length){ c.fillStyle = '#6b7785'; c.fillText(opt.empty || '데이터 없음', L + 8, H / 2); }
+    if(!vals.length){ c.fillStyle = '#6b7785'; c.fillText(trUi(opt.empty || '데이터 없음'), L + 8, H / 2); }
     else{
       let lo = Math.min(...vals), hi = Math.max(...vals);
       if(hi - lo < 1e-6){ lo -= 1; hi += 1; }
@@ -644,6 +648,9 @@ function plotEp(cv, series, opt){
   const x = X(EPV.i); c.strokeStyle = '#ffffffcc'; c.lineWidth = 1.5;
   c.beginPath(); c.moveTo(x, T); c.lineTo(x, H - B); c.stroke();
 }
+// 캔버스 글자는 i18n.js 가 못 바꾸므로 직접 (영문 모드일 때만)
+const trUi = t => (window.G1I18N && G1I18N.lang === 'en') ? G1I18N.tr(t) : t;
+window.addEventListener('g1lang', () => drawEpv());
 function drawEpv(){
   const s = EPV.s; if(!s) return;
   const j = EPV.joint ?? 0, acc = '#00b7eb', amb = '#ffb454';

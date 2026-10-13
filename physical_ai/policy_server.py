@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Version: 1.7
+# Version: 1.8
 # Changes:
+#   1.8 - GET /i18n.js (common/i18n.js) — 웹 한/영 전환
 #   1.7 - (사용자 2026-10-13) ① 정책 실행 중 detect_box 인식 쉬기 (GET /pause, 1 초마다 3 초씩 연장) — 박스 인식이 같은
 #         Intel GPU 를 써서 정책이 'rt/lowstate·카메라 끊김' 으로 멈추고 웹이 느렸음 ② 한 회 끝 판정: 시작 자세에서 20° 넘게
 #         움직였다가 데모 끝 자세(데이터셋 마지막 지령 평균) 5° 안으로 1 초 머물면 '완료' 로 정지 (전엔 60 초까지 대기)
@@ -1073,6 +1074,13 @@ app = FastAPI(title="Physical AI — policy server")
 def index():
     with open(os.path.join(HERE, "policy_web.html"), encoding="utf-8") as f:
         return f.read()
+
+
+@app.get("/i18n.js", include_in_schema=False)
+def i18n_js():
+    """제어 UI 와 같은 한/EN 전환 (common/i18n.js — ?lang= / 버튼, 브라우저에 기억)."""
+    return FileResponse(os.path.join(os.path.dirname(HERE), "common", "i18n.js"), media_type="application/javascript",
+                        headers={"Cache-Control": "no-cache"})
 
 
 @app.get("/video_feed")
