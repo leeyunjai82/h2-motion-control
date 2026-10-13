@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<!-- Version: 2.30
+<!-- Version: 2.31
+  2.31 - Head Vision 두 눈 화면에 안경테 (사용자 2026-10-13, 시안 A). 화면은 네모 그대로 — 테·코다리·다리만 둘레에 그림.
+         /pair 스트림 하나를 받아 왼눈·오른눈 반쪽을 각각 캔버스에 그림 (스트림 두 개 안 염). CROP 은 그대로
   2.30 - Handover 버튼 Left / Right 추가 (로봇 앞에 선 사람 기준, 각도 = robot.yaml grab.handover_side_deg)
   2.29 - Performance 표 모델 이름을 한/EN 에 맞춰 그림 (얼굴·나이성별 → face·age/gender, 행동 → actions — i18n 사전에 없어 영문에서도 한글이던 것)
   2.28 - Performance 표 이름: 왼눈 나이·성별 모델이 있으면 '얼굴·나이성별', 오른눈 title actions = '행동'
@@ -251,6 +253,18 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
 .vision-b{padding:6px 8px;overflow-x:auto;overflow-y:hidden}
 .vision-strip{height:90px;width:auto;max-width:none;display:block;border-radius:6px}
 .vision-full{width:100%;height:auto;max-height:200px;object-fit:contain;display:block;border-radius:6px}   /* 두 눈 전체 (/pair) */
+/* 안경테 — 렌즈 안 화면은 네모 그대로 (모서리 안 깎음), 테만 둥글게 */
+.glasses{display:flex;align-items:flex-start;justify-content:center;padding:6px 18px 4px}
+.glasses .lens{position:relative;background:#3a3632;border-radius:26px;padding:10px;flex:0 1 auto;max-width:240px;
+  box-shadow:0 0 0 2px var(--accent)}
+.glasses .lens canvas{display:block;width:100%;height:auto;background:#05080c}
+.glasses .bridge{flex:none;width:26px;height:14px;margin-top:30px;border:7px solid #3a3632;border-bottom:none;
+  border-radius:16px 16px 0 0;box-sizing:content-box}
+.glasses .temple{flex:none;width:20px;height:7px;margin-top:22px;background:#3a3632;border-radius:4px}
+.glasses .temple.l{transform:rotate(12deg);margin-right:-2px}
+.glasses .temple.r{transform:rotate(-12deg);margin-left:-2px}
+.glasses .one .bridge,.glasses.one .bridge,.glasses.one .lens.r,.glasses.one .temple.r{display:none}
+.pair-src{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
 /* robot-only iframe */
 .robot-frame{width:100%;border:1px solid var(--line);border-radius:8px;background:#05080c;
@@ -437,7 +451,11 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
   <div class="col">
     <div class="card" id="card-vision" style="display:none">
       <div class="card-h">Head Vision <span class="hd-r"><span id="dev-vision"></span><button class="segbtn" id="crop-btn" onclick="toggleCrop()" title="CROP: 인식된 것만 잘라 한 줄 / 끄면 두 눈 전체 화면">CROP</button><a id="link-vision" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
-      <div class="card-b vision-b"><img id="vision-strip" class="vision-full" alt=""></div>
+      <div class="card-b vision-b"><img id="vision-strip" class="vision-full" alt="">
+        <div class="glasses" id="glasses" style="display:none">
+          <span class="temple l"></span><span class="lens l"><canvas id="eye-l"></canvas></span>
+          <span class="bridge"></span><span class="lens r"><canvas id="eye-r"></canvas></span><span class="temple r"></span>
+        </div><img id="pair-src" class="pair-src" alt=""></div>
     </div>
     <div class="card grow fill robot">
       <div class="card-h">Robot View <a id="link-robotonly" href="#" target="_blank" style="color:var(--accent2)">↗</a></div>
@@ -479,12 +497,32 @@ document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`
   document.getElementById('link-vision').href=`${base}/`;
   let live=false, crop=false, pairOk=true, shown='';
   try{crop=localStorage.getItem('hv_crop')==='1';}catch(e){}
+  // 두 눈 = /pair 스트림 하나(왼눈 | 4px | 오른눈)를 숨긴 img 로 받아 반쪽씩 안경 렌즈 캔버스에 그림
+  const gl=document.getElementById('glasses'), src=document.getElementById('pair-src');
+  const cvL=document.getElementById('eye-l'), cvR=document.getElementById('eye-r');
+  const GAP=4;                      // head_track build_pair 의 눈 사이 띠 폭 [px]
+  function drawEyes(){
+    if(shown!=='pair'||!src.complete||!src.naturalWidth)return;
+    const nw=src.naturalWidth, nh=src.naturalHeight, two=nw>1.6*nh, w=two?Math.floor((nw-GAP)/2):nw;
+    gl.classList.toggle('one',!two);
+    for(const [cv,x] of [[cvL,0]].concat(two?[[cvR,w+GAP]]:[])){
+      if(cv.width!==w||cv.height!==nh){cv.width=w;cv.height=nh;}
+      try{cv.getContext('2d').drawImage(src,x,0,w,nh,0,0,w,nh);}catch(e){}
+    }
+  }
+  setInterval(drawEyes,100);
   function show(){
     const c=crop||!pairOk;          // head_track 이 예전 판이라 /pair 가 없으면 잘라 보기
     document.getElementById('crop-btn').classList.toggle('on',crop);
-    img.className=c?'vision-strip':'vision-full';
+    img.className='vision-strip';
     const want=live?(c?'strip':'pair'):'';
-    if(want&&want!==shown)img.src=`${base}/${want}?t=${Date.now()}`;
+    if(want!==shown){
+      if(want==='strip'){img.src=`${base}/strip?t=${Date.now()}`;src.removeAttribute('src');}
+      else if(want==='pair'){src.src=`${base}/pair?t=${Date.now()}`;img.removeAttribute('src');}
+      else{img.removeAttribute('src');src.removeAttribute('src');}
+    }
+    img.style.display=want==='strip'?'':'none';
+    gl.style.display=want==='pair'?'':'none';
     shown=want;
   }
   window.toggleCrop=()=>{crop=!crop;try{localStorage.setItem('hv_crop',crop?'1':'0');}catch(e){}show();};
@@ -496,7 +534,7 @@ document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`
     pp.src=`${base}/pair.jpg?t=${Date.now()}`;
     const probe=new Image();
     probe.onload=()=>{ if(!live){live=true;card.style.display='';show();devs();} };
-    probe.onerror=()=>{ if(live){live=false;shown='';img.removeAttribute('src');} card.style.display='none'; };
+    probe.onerror=()=>{ if(live){live=false;shown='';img.removeAttribute('src');src.removeAttribute('src');} card.style.display='none'; };
     probe.src=`${base}/strip.jpg?t=${Date.now()}`;
   }
   // 왼눈(L)·오른눈(R) 실제 실행 장치 — AUTO 는 처음 몇 초 CPU 였다가 바뀔 수 있어 3초마다
