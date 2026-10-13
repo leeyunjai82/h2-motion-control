@@ -323,13 +323,38 @@ DEFAULT_SAFETY = {
 }
 
 
-class Safety:
-    """정책 출력 a (14, rad) → 안전한 목표 또는 거부. stop 조건은 check_* 가 사유 문자열을 돌려준다."""
+def cmd_hand_stats(fk, actions):
+    """지령(action) 관절각들 → 그 지령 손 위치(FK) 범위·두 손 거리 범위. actions: (N,14) 들의 목록.
+    안전 필터는 정책의 '지령' 을 검사하므로 기준도 데모의 '지령' 손 위치여야 함 — 실측(ee)은 박스에 막혀 지령보다 바깥
+    (조이기: 지령 손이 박스 면보다 L/R 2 cm + squeeze 3 cm 안쪽 → 실측 두 손 거리보다 약 10 cm 가까움)."""
+    lo, hi, gmin, gmax, n = np.full(6, np.inf), np.full(6, -np.inf), np.inf, -np.inf, 0
+    for A in actions:
+        for q in np.asarray(A, dtype=float):
+            h = fk.hands(q)
+            lo, hi = np.minimum(lo, h), np.maximum(hi, h)
+            g = float(np.linalg.norm(h[:3] - h[3:]))
+            gmin, gmax, n = min(gmin, g), max(gmax, g), n + 1
+    if not n:
+        return None
+    return {"ee_cmd_min": lo.tolist(), "ee_cmd_max": hi.tolist(), "hand_gap_cmd_min": gmin, "hand_gap_cmd_max": gmax,
+            "frames": n}
 
-    def __init__(self, meta, fk: HandFK, cfg):
+
+class Safety:
+    """정책 출력 a (14, rad) → 안전한 목표 또는 거부. stop 조건은 check_* 가 사유 문자열을 돌려준다.
+    손 작업 공간·두 손 거리는 데모 '지령' 손 위치 기준 (meta stats 의 ee_cmd_* 또는 로봇 PC 데이터셋에서 계산한 cmd_stats).
+    둘 다 없으면 실측(ee) 기준 — 조일 때 지령이 실측보다 안쪽이라 거부될 수 있음 (2026-10-13 실기: 0.236 < 0.292 m 로 정지)."""
+
+    def __init__(self, meta, fk: HandFK, cfg, cmd_stats=None):
         self.cfg = dict(DEFAULT_SAFETY)
         self.cfg.update({k: float(v) for k, v in (cfg or {}).items() if k in DEFAULT_SAFETY})
-        st = meta["stats"]
+        st = dict(meta["stats"])
+        cs = cmd_stats if cmd_stats else (st if "ee_cmd_min" in st else None)
+        if cs:
+            st["ee_min"], st["ee_max"], st["hand_gap_min"] = cs["ee_cmd_min"], cs["ee_cmd_max"], cs["hand_gap_cmd_min"]
+            self.hand_ref = "지령"
+        else:
+            self.hand_ref = "실측 (지령 기준 없음 — 조일 때 거부될 수 있음)"
         m = np.radians(self.cfg["margin_deg"])
         lo = np.asarray(st["action_min"], dtype=float) - m
         hi = np.asarray(st["action_max"], dtype=float) + m

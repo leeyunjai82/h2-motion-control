@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
-# Version: 1.3
+# Version: 1.5
 # Changes:
+#   1.5 - 정책 시작 조건 (사용자 2026-10-13): 박스 없으면 시작 안 함 — detect_box 가 박스를 보고 있고 너비가
+#         robot.yaml grab.box_width_range 안. 시작 자세는 Box 버튼 대기 자세 — 잡기 모드 OFF 대신 Box 이어야 시작
+#         (detect_box 는 Box 모드에서만 인식). detect_box Auto Grab 은 꺼져 있어야 함 (정책과 규칙 잡기가 겹치지 않게)
+#   1.4 - 안전 필터의 손 작업 공간·두 손 거리 기준을 데모 '지령' 손 위치로 (실기 2026-10-13: 정책이 데모처럼 조이자
+#         '두 손 너무 가까움 0.236 < 0.292 m' 로 정지 — 기준이 실측 손 위치라 박스에 막힌 바깥 값이었음).
+#         모델 로드 때 로봇 PC 의 학습 데이터셋(meta.dataset) 지령으로 FK 계산(모델 폴더 cmd_stats.json 에 저장),
+#         새로 모으는 에피소드에는 ee_cmd (지령 손 위치) 도 저장 → trainer 가 stats 에 넣음
 #   1.3 - 정책 추론의 모터 온도 70 °C 정지 뺌 (근거 없는 임의값 — H2 팔 모터 보호 온도 자료 없음, 사용자 2026-10-13). 온도는 표시만
 #   1.2 - 기록 끝 경합 수정: stop() 이 진행 중인 틱(한 프레임을 여러 배열에 차례로 추가)과 겹치면 마지막 프레임이 일부 배열에만
 #         들어간 채 저장돼 학습에서 '배열 길이가 맞지 않음' (실기 2026-10-13, 33 개 중 ep_000003). 틱과 stop() 을 같은 잠금으로
@@ -281,7 +288,7 @@ def list_datasets():
     return out
 
 
-FRAME_KEYS = ("t", "state", "action", "tau", "ee", "stage", "weight", "jpeg", "img_t")   # 프레임마다 하나씩 쌓는 배열
+FRAME_KEYS = ("t", "state", "action", "tau", "ee", "ee_cmd", "stage", "weight", "jpeg", "img_t")   # 프레임마다 하나씩 쌓는 배열
 
 
 class Recorder:
@@ -314,7 +321,7 @@ class Recorder:
             self.ep = {"id": next_ep_id(p), "dataset": SET["dataset"], "path": p, "source": source,
                        "t0": time.time(), "w": w, "h": h, "until": SET["record"]["until"],
                        "capturing": True, "lift_seen": False, "past_lift": False, "gap": 0.0,
-                       "t": [], "state": [], "action": [], "tau": [], "ee": [], "stage": [], "weight": [],
+                       "t": [], "state": [], "action": [], "tau": [], "ee": [], "ee_cmd": [], "stage": [], "weight": [],
                        "jpeg": [], "img_t": [], "extra": dict(extra or {}), "last_cam": -1, "abort": ""}
             log(f"기록 시작 {self.ep['dataset']}/{self.ep['id']} ({source})")
             return self.ep["id"]
@@ -346,6 +353,7 @@ class Recorder:
         ep["action"].append(snap["cmd_q"])
         ep["tau"].append(snap["tau"])
         ep["ee"].append(fk.hands(snap["q"]))
+        ep["ee_cmd"].append(fk.hands(snap["cmd_q"]))
         ep["stage"].append(si)
         ep["weight"].append(snap["weight"])
         ep["jpeg"].append(ep["cur_jpg"])
@@ -416,6 +424,7 @@ class Recorder:
                  action=np.asarray(ep["action"], dtype=np.float32),
                  tau=tau,
                  ee=np.asarray(ep["ee"], dtype=np.float32),
+                 ee_cmd=np.asarray(ep["ee_cmd"], dtype=np.float32),
                  stage=np.asarray(ep["stage"], dtype=np.int8),
                  weight=np.asarray(ep["weight"], dtype=np.float32),
                  img_t=np.asarray(ep["img_t"], dtype=np.float64),
@@ -609,6 +618,63 @@ auto = AutoCollect()
 # =====================================================================
 # 모델
 # =====================================================================
+def model_cmd_stats(model_dir, meta):
+    """안전 필터용 데모 '지령' 손 범위 → (stats 또는 None, 출처 설명).
+    meta.stats 에 이미 있으면(ee_cmd 를 기록한 데이터셋으로 학습) 그것, 없으면 로봇 PC 의 그 데이터셋 action 으로 FK 계산
+    (모델 폴더 cmd_stats.json 에 저장 — 다음 로드부터 바로)."""
+    if "ee_cmd_min" in (meta.get("stats") or {}):
+        return None, "지령 (모델 stats)"
+    cache = os.path.join(model_dir, "cmd_stats.json")
+    if os.path.isfile(cache):
+        with open(cache, encoding="utf-8") as f:
+            cs = json.load(f)
+        return cs, f"지령 (데이터셋 {cs.get('dataset')} {cs.get('frames')} 프레임)"
+    name = meta.get("dataset") or ""
+    p = os.path.join(DS_DIR, name) if NAME_RE.match(name) else ""
+    if not p or not os.path.isdir(os.path.join(p, "episodes")):
+        return None, f"실측 (로봇 PC 에 데이터셋 {name!r} 없음 — 조일 때 거부될 수 있음)"
+    acts = []
+    for e in sorted(os.listdir(os.path.join(p, "episodes"))):
+        d = os.path.join(p, "episodes", e)
+        try:
+            with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+                if not json.load(f).get("ok"):
+                    continue
+            with np.load(os.path.join(d, "episode.npz"), allow_pickle=False) as z:
+                acts.append(np.asarray(z["action"], dtype=np.float64))
+        except Exception as ex:   # noqa: BLE001
+            log(f"cmd_stats: {e} 건너뜀 ({ex})")
+    cs = rt.cmd_hand_stats(fk, acts)
+    if cs is None:
+        return None, f"실측 (데이터셋 {name!r} 에 성공 에피소드 없음)"
+    cs["dataset"] = name
+    with open(cache, "w", encoding="utf-8") as f:
+        json.dump(cs, f, indent=1)
+    return cs, f"지령 (데이터셋 {name} {cs['frames']} 프레임에서 계산)"
+
+
+BOX_W_RANGE = [float(v) for v in robot_env.CFG["grab"].get("box_width_range", [0.12, 0.50])]
+LR_INSET_M = 0.02   # detect_box L/R 점이 좌우 변에서 안쪽으로 들어간 거리 (robot_server 와 같음) — 너비 = L/R 간격 + 2 × 이 값
+
+
+def box_preconditions():
+    """정책 시작 조건 중 박스 쪽: detect_box Auto Grab 꺼짐 · 박스 인식 · 너비 범위 (robot_server 잡기와 같은 기준)."""
+    out = []
+    code, s = try_json(f"{DETECT}/status", timeout=0.5)
+    if code != 200:
+        return [("detect_box", False, s.get("error") or f"HTTP {code}")]
+    out.append(("Auto Grab OFF", not s.get("auto_enabled"), "제어 화면 Auto Grab 끄기" if s.get("auto_enabled") else ""))
+    code, p = try_json(f"{DETECT}/pose", timeout=0.5)
+    if code != 200 or not p.get("found") or not p.get("L") or not p.get("R"):
+        out.append(("박스 인식", False, "박스 안 보임" if code == 200 else (p.get("error") or f"HTTP {code}")))
+        return out
+    w = float(np.linalg.norm(np.asarray(p["L"], dtype=float) - np.asarray(p["R"], dtype=float))) + 2 * LR_INSET_M
+    ok = BOX_W_RANGE[0] <= w <= BOX_W_RANGE[1]
+    out.append(("박스 인식", ok, f"너비 {w * 100:.1f} cm" + ("" if ok else f" — 범위 {BOX_W_RANGE[0] * 100:.0f}–"
+                                                              f"{BOX_W_RANGE[1] * 100:.0f} cm 밖 (grab.box_width_range)")))
+    return out
+
+
 def md_path(name):
     if not NAME_RE.match(name or ""):
         raise HTTPException(400, f"모델 이름은 영문·숫자·_.- 1~64자: {name!r}")
@@ -701,6 +767,7 @@ class PolicyRunner:
         def _do():
             try:
                 pol = rt.OVPolicy(p, device)
+                pol.cmd_stats, pol.cmd_src = model_cmd_stats(p, pol.meta)
                 # 첫 추론 (GPU/NPU 커널 준비) — 시간 측정용
                 dummy = cv2.imencode(".jpg", np.zeros((pol.H, pol.W, 3), np.uint8))[1].tobytes()
                 pol.infer(dummy, np.zeros(14))
@@ -710,7 +777,7 @@ class PolicyRunner:
                 SET["policy"].update(model=name, device=device)
                 save_settings()
                 log(f"모델 로드 {name} @ {device} (실행 {pol.exec_devices}, 컴파일 {pol.compile_s:.1f}s, "
-                    f"추론 {pol.last_ms:.1f} ms)")
+                    f"추론 {pol.last_ms:.1f} ms) · 손 범위 기준: {pol.cmd_src}")
             except Exception as e:   # noqa: BLE001
                 self.load_err = f"{type(e).__name__}: {e}"
                 log(f"모델 로드 실패: {self.load_err}")
@@ -732,11 +799,13 @@ class PolicyRunner:
         out.append(("팔 동작 없음", bool(arm_free), "busy" if code == 200 and a.get("busy") else ""))
         g = grabmon.st if grabmon.alive() else {}
         if grabmon.alive():
-            out.append(("잡기 모드 OFF", g.get("mode") == "none", f"mode={g.get('mode')}"))
+            out.append(("잡기 모드 Box (대기 자세)", g.get("mode") == "box",
+                        f"mode={g.get('mode')} — 제어 화면 Box 버튼" if g.get("mode") != "box" else "box"))
             out.append(("잡기/모션 안 도는 중", not g.get("busy") and not g.get("is_running"),
                         f"busy={g.get('busy')} run={g.get('is_running')}"))
         else:
             out.append(("robot_server", True, "응답 없음 — 충돌할 잡기 없음"))
+        out += box_preconditions()
         out.append(("카메라", cam.age() < 0.5, f"{cam.fps:.0f} fps" if cam.age() < 0.5 else (cam.err or "프레임 없음")))
         if watch is None:
             out.append(("rt/lowstate", False, watch_err))
@@ -771,7 +840,8 @@ class PolicyRunner:
 
     def _run(self, pol, pcfg, scfg):
         meta = pol.meta
-        safety = rt.Safety(meta, fk, scfg)
+        safety = rt.Safety(meta, fk, scfg, getattr(pol, "cmd_stats", None))
+        log(f"안전 필터 손 범위 기준: {safety.hand_ref} — 두 손 최소 {safety.gap_min:.3f} m")
         self.safety = safety
         start_q = np.asarray(meta["start_pose"], dtype=float)
         st = {"phase": "start", "why": "", "steps": 0, "t0": time.time(), "model": pol.name, "infer_ms": 0.0,
@@ -835,8 +905,9 @@ class PolicyRunner:
                     why = r_why
                     break
                 g = grabmon.st if grabmon.alive() else {}
-                if g.get("busy") or g.get("is_running") or g.get("mode") not in (None, "none"):
-                    why = f"robot_server 동작 시작됨 (mode={g.get('mode')}, busy={g.get('busy')})"
+                # Box 모드(대기 자세에서 시작)는 그대로 — 규칙 잡기·모션이 실제로 돌기 시작하면 정지
+                if g.get("busy") or g.get("is_running"):
+                    why = f"robot_server 동작 시작됨 (mode={g.get('mode')}, busy={g.get('busy')}, run={g.get('is_running')})"
                     break
                 if pcfg["mode"] == "ensemble":
                     a = ens.update(pol.infer(jpg, snap["q"]))

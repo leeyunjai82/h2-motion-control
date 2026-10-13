@@ -41,14 +41,17 @@ def load_episodes(root, only_ok=True):
             e = {"id": n, "meta": meta, "state": z["state"].astype(np.float32), "action": z["action"].astype(np.float32),
                  "ee": z["ee"].astype(np.float32), "jpeg": z["jpeg"], "off": z["jpeg_off"].astype(np.int64),
                  "stage": z["stage"]}
+            if "ee_cmd" in z:          # 지령 손 위치 (로봇 PC policy_server 1.4 부터) — 로봇 안전 필터 기준
+                e["ee_cmd"] = z["ee_cmd"].astype(np.float32)
         lens = (len(e["state"]), len(e["action"]), len(e["ee"]), len(e["stage"]), len(e["off"]) - 1)
         e["n"] = min(lens)
         if len(set(lens)) != 1:
             # 로봇 PC policy_server 1.1 이하: 기록 끝에서 마지막 프레임이 일부 배열에만 들어간 채 저장될 수 있었음 (1.2 에서 고침).
             #   앞 n 프레임은 같은 틱들이라 짧은 쪽에 맞춰 씀
             print(f"[dataset] {n}: 배열 길이 다름 (state, action, ee, stage, jpeg) = {lens} → 앞 {e['n']} 프레임만 씀", flush=True)
-            for k in ("state", "action", "ee", "stage"):
-                e[k] = e[k][:e["n"]]
+            for k in ("state", "action", "ee", "ee_cmd", "stage"):
+                if k in e:
+                    e[k] = e[k][:e["n"]]
             e["off"] = e["off"][:e["n"] + 1]
         if e["n"] < 2 or e["action"].shape != e["state"].shape:
             print(f"[dataset] {n}: 프레임 {e['n']} 개 — 건너뜀", flush=True)
@@ -69,7 +72,13 @@ def compute_stats(eps, fps):
     EE = np.concatenate([e["ee"] for e in eps])
     gap = np.linalg.norm(EE[:, :3] - EE[:, 3:], axis=1)
     vel = np.concatenate([np.abs(np.diff(e["action"], axis=0)) * fps for e in eps])
-    return {
+    cmd = {}
+    if all("ee_cmd" in e for e in eps):    # 지령 손 위치 — 로봇 안전 필터가 정책 지령을 검사하는 기준 (실측 ee 는 박스에 막혀 바깥)
+        EC = np.concatenate([e["ee_cmd"] for e in eps])
+        gc = np.linalg.norm(EC[:, :3] - EC[:, 3:], axis=1)
+        cmd = {"ee_cmd_min": EC.min(0).tolist(), "ee_cmd_max": EC.max(0).tolist(),
+               "hand_gap_cmd_min": float(gc.min()), "hand_gap_cmd_max": float(gc.max())}
+    return {**cmd,
         "state_mean": S.mean(0).tolist(), "state_std": np.maximum(S.std(0), 1e-3).tolist(),
         "action_mean": A.mean(0).tolist(), "action_std": np.maximum(A.std(0), 1e-3).tolist(),
         "action_min": A.min(0).tolist(), "action_max": A.max(0).tolist(),
