@@ -390,6 +390,8 @@
     '로드 실패하면 학습 PC 를 같은 버전으로': 'if loading fails, use the same version on the training PC',
     '학습 PC': 'training PC',
     'DDS 구독 실패': 'DDS subscribe failed',
+    '끝 자세까지': 'to end pose',
+    '시작 자세에서 최대': 'max from start pose',
     '카메라': 'Camera',
     '모델 없음': 'no model',
     '모델 입력 이름': 'model input names',
@@ -454,6 +456,8 @@
 
   // 숫자가 들어간 문구 (사전보다 먼저)
   const RULES = [
+    [/시작 자세에서 최대 (\d+)° \(완료는 (\d+)° 넘게 움직인 뒤\)/g, 'max $1° from start pose (done needs > $2° of motion first)'],
+    [/끝 자세까지 ([\d.]+)° \(([^,)]+), 완료는 (\d+)° 안\)/g, '$1° to end pose ($2, done within $3°)'],
     [/데이터셋 '([^']*)' 의 에피소드를 전부 지웁니다\. 되돌릴 수 없음\. 계속\?/g, "Delete all episodes of dataset '$1'? This cannot be undone. Continue?"],
     [/^모델 (\S+) 삭제\?$/, 'Delete model $1?'],
     [/^(\S+) 삭제\?$/, 'Delete $1?'],

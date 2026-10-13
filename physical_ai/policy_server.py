@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# Version: 1.8
+# Version: 1.9
 # Changes:
+#   1.9 - 한 회 끝 판정을 '가장 가까운' 데모 끝 자세와 비교 (로봇 PC 데이터셋의 성공 에피소드마다 마지막 지령, end_poses.json).
+#         평균 끝 자세 하나면 대기 자세가 바뀐 전/후 데모가 섞일 때 어느 쪽과도 멀어 완료가 안 남 (사용자 2026-10-13:
+#         82 ep 모델이 복귀까지 해도 60 s 타임아웃). 실행 중 '끝 자세까지 N°' 표시, 최대 시간 정지 사유에 남은 거리
 #   1.8 - GET /i18n.js (common/i18n.js) — 웹 한/영 전환
 #   1.7 - (사용자 2026-10-13) ① 정책 실행 중 detect_box 인식 쉬기 (GET /pause, 1 초마다 3 초씩 연장) — 박스 인식이 같은
 #         Intel GPU 를 써서 정책이 'rt/lowstate·카메라 끊김' 으로 멈추고 웹이 느렸음 ② 한 회 끝 판정: 시작 자세에서 20° 넘게
@@ -629,6 +632,43 @@ auto = AutoCollect()
 # =====================================================================
 # 모델
 # =====================================================================
+def demo_end_poses(model_dir, meta):
+    """데모(성공 에피소드)마다의 끝 자세 [rad] (N, 14) — 로봇 PC 의 그 데이터셋 action 마지막 프레임 (모델 폴더 end_poses.json 에 저장).
+    한 회 끝 판정을 '평균' 끝 자세 하나와 비교하면, 대기 자세가 바뀐 전/후 데모가 섞였을 때 평균이 어느 쪽 끝 자세와도
+    멀어 완료가 안 남 (사용자 2026-10-13: 82 ep — 이전 대기 y 0.25 / 새 y 0.28, ⑪ Home 관절 차이 오프라인 최대 7.9°).
+    → 가장 가까운 데모 끝 자세와 비교. 데이터셋이 없으면 (None, 이유)."""
+    cache = os.path.join(model_dir, "end_poses.json")
+    if os.path.isfile(cache):
+        try:
+            with open(cache, encoding="utf-8") as f:
+                c = json.load(f)
+            return np.asarray(c["end_poses"], dtype=float), f"데모 {len(c['end_poses'])} 개 (데이터셋 {c.get('dataset')})"
+        except Exception as ex:   # noqa: BLE001
+            log(f"end_poses.json 무시 ({ex})")
+    name = meta.get("dataset") or ""
+    p = os.path.join(DS_DIR, name) if NAME_RE.match(name) else ""
+    if not p or not os.path.isdir(os.path.join(p, "episodes")):
+        return None, f"로봇 PC 에 데이터셋 {name!r} 없음 — 평균 끝 자세 하나로 판정"
+    ends = []
+    for e in sorted(os.listdir(os.path.join(p, "episodes"))):
+        d = os.path.join(p, "episodes", e)
+        try:
+            with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+                if not json.load(f).get("ok"):
+                    continue
+            with np.load(os.path.join(d, "episode.npz"), allow_pickle=False) as z:
+                a = np.asarray(z["action"], dtype=np.float64)
+            if len(a) and a.shape[1] == 14:
+                ends.append(a[-1])
+        except Exception as ex:   # noqa: BLE001
+            log(f"end_poses: {e} 건너뜀 ({ex})")
+    if not ends:
+        return None, f"데이터셋 {name!r} 에 성공 에피소드 없음 — 평균 끝 자세 하나로 판정"
+    with open(cache, "w", encoding="utf-8") as f:
+        json.dump({"dataset": name, "end_poses": np.round(ends, 5).tolist()}, f)
+    return np.asarray(ends), f"데모 {len(ends)} 개 (데이터셋 {name})"
+
+
 def model_cmd_stats(model_dir, meta):
     """안전 필터용 데모 '지령' 손 범위 → (stats 또는 None, 출처 설명).
     meta.stats 에 이미 있으면(ee_cmd 를 기록한 데이터셋으로 학습) 그것, 없으면 로봇 PC 의 그 데이터셋 action 으로 FK 계산
@@ -753,7 +793,7 @@ class _Stop(Exception):
 
 
 DONE_AWAY_DEG = 20.0     # 한 회 끝 판정: 시작 자세에서 이만큼 넘게 움직인 적이 있고
-DONE_NEAR_DEG = 5.0      #   데모 끝 자세(모든 관절)에서 이 안으로
+DONE_NEAR_DEG = 5.0      #   가장 가까운 데모 끝 자세(모든 관절)에서 이 안으로 (데이터셋 없으면 평균 끝 자세)
 DONE_HOLD_S = 1.0        #   이만큼 머물면 '완료'
 
 
@@ -791,6 +831,7 @@ class PolicyRunner:
                 pol.cmd_stats, pol.cmd_src = model_cmd_stats(p, pol.meta)
                 ep_ = pol.meta.get("end_pose") or (pol.cmd_stats or {}).get("end_pose")
                 pol.end_pose = np.asarray(ep_, dtype=float) if ep_ and len(ep_) == 14 else None
+                pol.end_poses, pol.end_src = demo_end_poses(p, pol.meta)
                 # 첫 추론 (GPU/NPU 커널 준비) — 시간 측정용
                 dummy = cv2.imencode(".jpg", np.zeros((pol.H, pol.W, 3), np.uint8))[1].tobytes()
                 pol.infer(dummy, np.zeros(14))
@@ -800,7 +841,7 @@ class PolicyRunner:
                 SET["policy"].update(model=name, device=device)
                 save_settings()
                 log(f"모델 로드 {name} @ {device} (실행 {pol.exec_devices}, 컴파일 {pol.compile_s:.1f}s, "
-                    f"추론 {pol.last_ms:.1f} ms) · 손 범위 기준: {pol.cmd_src}")
+                    f"추론 {pol.last_ms:.1f} ms) · 손 범위 기준: {pol.cmd_src} · 끝 자세: {pol.end_src}")
             except Exception as e:   # noqa: BLE001
                 self.load_err = f"{type(e).__name__}: {e}"
                 log(f"모델 로드 실패: {self.load_err}")
@@ -922,7 +963,10 @@ class PolicyRunner:
         self.safety = safety
         start_q = np.asarray(meta["start_pose"], dtype=float)
         end_q = getattr(pol, "end_pose", None)
-        moved, t_near, recent = False, None, deque()
+        ends = getattr(pol, "end_poses", None)            # (N, 14) 데모마다 끝 자세 + 평균
+        if end_q is not None:
+            ends = end_q[None] if ends is None else np.vstack([ends, end_q[None]])
+        moved, t_near, recent, away = False, None, deque(), 0.0
         pz_stop = threading.Event()
 
         def _pauser():
@@ -934,7 +978,7 @@ class PolicyRunner:
         threading.Thread(target=_pauser, daemon=True).start()
         st = {"phase": "start", "why": "", "steps": 0, "t0": time.time(), "model": pol.name, "infer_ms": 0.0, "done": False,
               "infer_ms_avg": 0.0, "hz": 0.0, "n_vel_clip": 0, "n_clip": 0, "n_reject": 0, "reject_why": "",
-              "target_deg": None, "meas_deg": None, "mode": pcfg["mode"]}
+              "target_deg": None, "meas_deg": None, "mode": pcfg["mode"], "end_deg": None, "end_joint": "", "away_deg": 0.0}
         self.st = st
         tok = None
         why = ""
@@ -982,6 +1026,10 @@ class PolicyRunner:
                 now = time.time()
                 if now - t_run0 > safety.cfg["max_run_s"]:
                     why = f"최대 시간 {safety.cfg['max_run_s']:.0f}s"
+                    if not moved:
+                        why += f" — 시작 자세에서 최대 {away:.0f}° (완료는 {DONE_AWAY_DEG:.0f}° 넘게 움직인 뒤)"
+                    elif st["end_deg"] is not None:
+                        why += f" — 끝 자세까지 {st['end_deg']:.1f}° ({st['end_joint']}, 완료는 {DONE_NEAR_DEG:.0f}° 안)"
                     break
                 jpg, t_img, _ = cam.latest()
                 if jpg is None or now - t_img > safety.cfg["frame_stale_s"]:
@@ -1014,13 +1062,20 @@ class PolicyRunner:
                 st["steps"] += 1
                 # 한 회 끝: 시작 자세에서 DONE_AWAY_DEG 넘게 움직였다가 데모 끝 자세 DONE_NEAR_DEG 안으로 DONE_HOLD_S 머묾
                 #   (끝 자세를 모르면 — 예전 모델·데이터셋 없음 — 8 초 지난 뒤 지령이 DONE_HOLD_S 동안 거의 안 움직이면)
-                if np.degrees(np.max(np.abs(prev - start_q))) > DONE_AWAY_DEG:
+                away = max(away, float(np.degrees(np.max(np.abs(prev - start_q)))))
+                st["away_deg"] = round(away, 1)
+                if away > DONE_AWAY_DEG:
                     moved = True
                 recent.append((now, prev))
                 while recent and now - recent[0][0] > DONE_HOLD_S:
                     recent.popleft()
-                if end_q is not None:
-                    near = np.degrees(np.max(np.abs(prev - end_q))) < DONE_NEAR_DEG
+                if ends is not None:
+                    dd = np.degrees(np.abs(prev[None] - ends))      # (N, 14)
+                    mx = dd.max(axis=1)
+                    k = int(mx.argmin())
+                    st["end_deg"] = round(float(mx[k]), 1)
+                    st["end_joint"] = rt.JOINT_NAMES[int(dd[k].argmax())].replace("_joint", "")
+                    near = mx[k] < DONE_NEAR_DEG
                 else:
                     span = np.ptp(np.array([q_ for _, q_ in recent]), axis=0).max() if len(recent) > 1 else 1.0
                     near = now - t_run0 > 8.0 and np.degrees(span) < 1.0

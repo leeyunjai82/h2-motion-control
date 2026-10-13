@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 1.6
+<!-- Version: 1.7
+  1.7 - 실행 중 '끝 자세까지 N° (관절)' 표시 — 한 회 끝 판정이 안 날 때 얼마나 남았는지
   1.6 - 한/영 전환 (common/i18n.js — 제어 UI 와 같은 버튼·사전). 그래프 캔버스 글자도 영문 모드에서 번역
   1.5 - 반복 실행 (N 회 · 사이 쉬기 · 매 회 박스 인식 기다림) · 한 회 끝(데모 끝 자세로 돌아옴) 표시 · 기본 최대 속도 0.7
   1.4 - 에피소드 보기 (사용자 2026-10-13): Episodes 행을 누르면 영상 재생(슬라이더·속도) · 잡기 단계 띠 ·
@@ -822,7 +823,9 @@ async function poll(){
   $('m-clip').textContent = p.n_clip ?? '-'; $('m-rej').textContent = p.n_reject ?? '-';
   const rw = $('run-line');
   rw.className = 'statusline ' + (p.running ? 'busy' : (p.why ? 'err' : ''));
-  $('run-why').textContent = p.running ? (p.reject_why ? `최근 거부: ${p.reject_why}` : '실행 중') : (p.why || '-');
+  const endTxt = p.end_deg != null ? ` · 끝 자세까지 ${p.end_deg.toFixed(1)}° (${p.end_joint})`
+                                    : (p.away_deg != null ? ` · 시작 자세에서 최대 ${p.away_deg.toFixed(0)}°` : '');
+  $('run-why').textContent = p.running ? (p.reject_why ? `최근 거부: ${p.reject_why}` : '실행 중' + endTxt) : (p.why || '-');
   jbars(p, d.joint_names);
   const rp = p.repeat || {};
   $('btn-run').disabled = p.running || !!p.loading || rp.running;
