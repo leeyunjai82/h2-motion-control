@@ -392,6 +392,7 @@
     'DDS 구독 실패': 'DDS subscribe failed',
     '끝 자세까지': 'to end pose',
     '시작 자세에서 최대': 'max from start pose',
+    '잡기 시작 전': 'grab not started',
     '카메라': 'Camera',
     '모델 없음': 'no model',
     '모델 입력 이름': 'model input names',

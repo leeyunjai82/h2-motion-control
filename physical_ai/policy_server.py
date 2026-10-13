@@ -4,6 +4,7 @@
 #   1.9 - 한 회 끝 판정을 '가장 가까운' 데모 끝 자세와 비교 (로봇 PC 데이터셋의 성공 에피소드마다 마지막 지령, end_poses.json).
 #         평균 끝 자세 하나면 대기 자세가 바뀐 전/후 데모가 섞일 때 어느 쪽과도 멀어 완료가 안 남 (사용자 2026-10-13:
 #         82 ep 모델이 복귀까지 해도 60 s 타임아웃). 실행 중 '끝 자세까지 N°' 표시, 최대 시간 정지 사유에 남은 거리
+#         (아직 20° 넘게 안 움직였으면 '시작 자세에서 최대 N°' — 잡기를 시작도 안 한 것)
 #   1.8 - GET /i18n.js (common/i18n.js) — 웹 한/영 전환
 #   1.7 - (사용자 2026-10-13) ① 정책 실행 중 detect_box 인식 쉬기 (GET /pause, 1 초마다 3 초씩 연장) — 박스 인식이 같은
 #         Intel GPU 를 써서 정책이 'rt/lowstate·카메라 끊김' 으로 멈추고 웹이 느렸음 ② 한 회 끝 판정: 시작 자세에서 20° 넘게
@@ -978,7 +979,7 @@ class PolicyRunner:
         threading.Thread(target=_pauser, daemon=True).start()
         st = {"phase": "start", "why": "", "steps": 0, "t0": time.time(), "model": pol.name, "infer_ms": 0.0, "done": False,
               "infer_ms_avg": 0.0, "hz": 0.0, "n_vel_clip": 0, "n_clip": 0, "n_reject": 0, "reject_why": "",
-              "target_deg": None, "meas_deg": None, "mode": pcfg["mode"], "end_deg": None, "end_joint": "", "away_deg": 0.0}
+              "target_deg": None, "meas_deg": None, "mode": pcfg["mode"], "end_deg": None, "end_joint": "", "away_deg": 0.0, "moved": False}
         self.st = st
         tok = None
         why = ""
@@ -1066,6 +1067,7 @@ class PolicyRunner:
                 st["away_deg"] = round(away, 1)
                 if away > DONE_AWAY_DEG:
                     moved = True
+                st["moved"] = moved
                 recent.append((now, prev))
                 while recent and now - recent[0][0] > DONE_HOLD_S:
                     recent.popleft()

@@ -823,8 +823,9 @@ async function poll(){
   $('m-clip').textContent = p.n_clip ?? '-'; $('m-rej').textContent = p.n_reject ?? '-';
   const rw = $('run-line');
   rw.className = 'statusline ' + (p.running ? 'busy' : (p.why ? 'err' : ''));
-  const endTxt = p.end_deg != null ? ` · 끝 자세까지 ${p.end_deg.toFixed(1)}° (${p.end_joint})`
-                                    : (p.away_deg != null ? ` · 시작 자세에서 최대 ${p.away_deg.toFixed(0)}°` : '');
+  // 완료 = 시작 자세에서 20° 넘게 움직인 뒤 끝 자세 5° 안 — 아직 안 움직였으면 끝 자세 거리 대신 움직인 각을 보여 줌
+  const endTxt = !p.moved ? (p.away_deg != null ? ` · 시작 자세에서 최대 ${p.away_deg.toFixed(0)}° (잡기 시작 전)` : '')
+                         : (p.end_deg != null ? ` · 끝 자세까지 ${p.end_deg.toFixed(1)}° (${p.end_joint})` : '');
   $('run-why').textContent = p.running ? (p.reject_why ? `최근 거부: ${p.reject_why}` : '실행 중' + endTxt) : (p.why || '-');
   jbars(p, d.joint_names);
   const rp = p.repeat || {};
