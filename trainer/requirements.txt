@@ -4,4 +4,4 @@
 fastapi>=0.110
 uvicorn>=0.29
 numpy
-opencv-python-headless
+opencv-python-headless<5        # 학습 PC 2026-10-13: 고정 안 하면 5.0.0 이 깔림 — 시험은 4.x 로만 함
