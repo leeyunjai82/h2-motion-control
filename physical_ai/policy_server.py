@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-# Version: 1.2
+# Version: 1.3
 # Changes:
+#   1.3 - 정책 추론의 모터 온도 70 °C 정지 뺌 (근거 없는 임의값 — H2 팔 모터 보호 온도 자료 없음, 사용자 2026-10-13). 온도는 표시만
 #   1.2 - 기록 끝 경합 수정: stop() 이 진행 중인 틱(한 프레임을 여러 배열에 차례로 추가)과 겹치면 마지막 프레임이 일부 배열에만
 #         들어간 채 저장돼 학습에서 '배열 길이가 맞지 않음' (실기 2026-10-13, 33 개 중 ep_000003). 틱과 stop() 을 같은 잠금으로
 #         묶고, 쓰기 전에 모든 프레임 배열을 가장 짧은 길이로 맞춤
@@ -794,7 +795,7 @@ class PolicyRunner:
             for k in range(1, n + 1):
                 if self.stop_ev.is_set():
                     raise _Stop()
-                r_why = safety.check_robot(watch.snapshot(), None, time.time())   # 온도·토크·끊김 (추종 오차 제외)
+                r_why = safety.check_robot(watch.snapshot(), None, time.time())   # 토크·끊김 (추종 오차 제외)
                 if r_why:
                     raise RuntimeError(f"시작 자세 이동 중 — {r_why}")
                 q = q_cur + _smooth(k / n) * (start_q - q_cur)

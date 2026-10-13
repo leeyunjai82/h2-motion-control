@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 1.2
+<!-- Version: 1.3
+  1.3 - 안전 설정에서 '정지 온도' 뺌 — 온도로 멈추지 않음, 표시만 (근거 있는 보호 온도 자료 없음)
   1.2 - 자동 반복 '잡은 뒤' 에 left / right 건네기 (사람 기준) 추가
   1.1 - 저장 해상도 선택지를 카메라 해상도에서 (H2 848×480 → 원본 / 424×240)
   1.0 - 피지컬 AI (ACT) 로봇 PC 화면: 수집(잡기 연동·수동·자동 반복) · 에피소드 · 데이터셋 zip · 모델 업로드/로드 · 정책 실행(안전 필터)
@@ -337,12 +338,11 @@ select.in{padding:5px}
           <div><span class="mini">손 공간 여유 m</span><input class="in" id="s-ws_margin_m" type="number" step="0.01"></div>
           <div><span class="mini">최대 시간 s</span><input class="in" id="s-max_run_s" type="number" step="5"></div>
           <div><span class="mini">추종 오차 °</span><input class="in" id="s-track_err_deg" type="number" step="1"></div>
-          <div><span class="mini">정지 온도 °C</span><input class="in" id="s-temp_stop_c" type="number" step="1"></div>
           <div><span class="mini">토크 비율</span><input class="in" id="s-torque_ratio" type="number" step="0.05"></div>
           <div><span class="mini">연속 거부</span><input class="in" id="s-max_reject" type="number" step="1"></div>
           <div style="display:flex;align-items:flex-end"><button class="btn primary" style="width:100%" onclick="savePolicySet()">저장</button></div>
         </div>
-        <div class="hint">정지 온도는 소프트웨어 정지값 — H2 팔 모터 자체 보호 온도는 <b>확인 필요</b>.
+        <div class="hint">모터 온도는 표시만 하고 멈추지 않음 — H2 팔 모터 보호 온도는 <b>확인 필요</b>.
           토크 비율 = |tau_est| ÷ URDF effort. 다음 실행부터 적용.</div>
       </div>
     </div>
@@ -398,12 +398,12 @@ function fillSettings(st, cam){
   $('au-handover').value = a.handover; $('au-off').checked = a.mode_off_after; $('au-sim').checked = a.sim_random;
   const p = st.policy;
   $('p-mode').value = p.mode; $('p-coeff').value = p.coeff; $('p-steps').value = p.n_action_steps;
-  for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','temp_stop_c','torque_ratio','max_reject'])
+  for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','torque_ratio','max_reject'])
     $('s-' + k).value = st.safety[k];
 }
 async function savePolicySet(){
   const safety = {};
-  for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','temp_stop_c','torque_ratio','max_reject'])
+  for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','torque_ratio','max_reject'])
     safety[k] = parseFloat($('s-' + k).value);
   const d = await api('POST', '/api/settings', {policy: {mode: $('p-mode').value, coeff: parseFloat($('p-coeff').value),
                                                 n_action_steps: parseInt($('p-steps').value)}, safety});

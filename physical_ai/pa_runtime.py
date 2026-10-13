@@ -6,7 +6,7 @@ pa_runtime.py — policy_server 가 쓰는 부품 (카메라 · DDS 상태 · �
   HandFK         : 팔 14축 → 왼손·오른손 끝 위치 (IK 좌표 = pelvis 기준, robot_server/sim_server 와 같은 축소 모델)
   OVPolicy       : 학습 PC 에서 받은 OpenVINO IR (policy.xml/.bin + meta.json) 추론
   TemporalEnsembler : ACT 시간 앙상블 (매 스텝 추론, 겹치는 예측을 지수 가중 평균)
-  Safety         : 관절 범위 · 손 작업 공간 · 손 사이 거리 · 추종 오차 · 온도 · 토크 검사
+  Safety         : 관절 범위 · 손 작업 공간 · 손 사이 거리 · 추종 오차 · 토크 검사 (온도는 표시만 — 정지 안 함)
 
 데이터 형식 (episode.npz) 은 physical_ai/README.md 참고. 관절 순서는 robot.yaml joints.arm (= arm_server 14축) 그대로.
 """
@@ -315,7 +315,6 @@ DEFAULT_SAFETY = {
     "max_reject": 10,          # 연속 거부(작업 공간 밖·손 너무 가까움) 횟수 → 정지 (30 Hz 기준 0.33 s)
     "track_err_deg": 20.0,     # 목표−실측 차이가 이보다 큰 상태가
     "track_err_sec": 0.5,      #   이만큼 이어지면 정지 (막힘·충돌 의심)
-    "temp_stop_c": 70.0,       # 팔 모터 온도(외부·권선 중 큰 값) — 소프트웨어 정지값. 모터 자체 보호 온도는 확인 필요
     "torque_ratio": 0.9,       # |tau_est| / URDF effort 가 이보다 큰 상태가
     "torque_sec": 0.3,         #   이만큼 이어지면 정지
     "max_run_s": 60.0,         # 한 번 실행 최대 시간
@@ -378,10 +377,8 @@ class Safety:
         c = self.cfg
         if now - snap["t_state"] > c["state_stale_s"]:
             return f"rt/lowstate 끊김 ({now - snap['t_state']:.2f}s)"
-        hot = snap["temp"] > c["temp_stop_c"]
-        if np.any(hot):
-            k = int(np.argmax(snap["temp"]))
-            return f"모터 온도 {snap['temp'][k]:.0f}°C > {c['temp_stop_c']:.0f} ({JOINT_NAMES[k]})"
+        # 온도로는 멈추지 않음 (사용자 2026-10-13) — 근거 있는 값이 없음: H2 팔 모터 보호 온도 자료 없음 (확인 필요).
+        #   예전 70 °C 는 실측 최고 61 °C 에 여유를 둔 임의값이었음. 온도는 웹 DDS 칩·모터 최고로 표시만
         if target is not None:
             err = np.abs(np.asarray(target) - snap["q"])
             if np.degrees(err.max()) > c["track_err_deg"]:
