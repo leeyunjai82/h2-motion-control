@@ -308,7 +308,8 @@ class TemporalEnsembler:
 # 안전 필터
 # =====================================================================
 DEFAULT_SAFETY = {
-    "max_vel": 1.5,            # rad/s — arm_server 스트림 세션 속도 제한 (데모 최대 속도는 모델 meta stats.max_vel 로 표시)
+    "max_vel": 0.7,            # rad/s — arm_server 스트림 세션 속도 제한. 1.5 → 0.7 (사용자 2026-10-13: 천천히 움직여야 'AI 느낌')
+                               #   (데모 최대 속도는 모델 meta stats.max_vel 로 표시)
     "margin_deg": 5.0,         # 데이터셋 지령 범위 ± 이만큼 (URDF 한계 안으로 다시 자름)
     "ws_margin_m": 0.05,       # 데이터셋 손 위치 범위(박스) ± 이만큼
     "hand_gap_margin_m": 0.03, # 데이터셋 두 손 최소 거리 − 이만큼 보다 가까우면 거부

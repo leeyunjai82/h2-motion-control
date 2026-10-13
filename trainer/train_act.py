@@ -198,9 +198,11 @@ def main():
     stats = compute_stats(train_eps, fps)
     rng_stats = compute_stats(eps, fps)            # 안전 범위는 모든 에피소드 기준
     for k in ("action_min", "action_max", "state_min", "state_max", "ee_min", "ee_max", "hand_gap_min",
-              "hand_gap_max", "max_vel"):
-        stats[k] = rng_stats[k]
+              "hand_gap_max", "max_vel", "ee_cmd_min", "ee_cmd_max", "hand_gap_cmd_min", "hand_gap_cmd_max"):
+        if k in rng_stats:
+            stats[k] = rng_stats[k]
     start_pose = np.mean([e["action"][0] for e in eps], axis=0).tolist()
+    end_pose = np.mean([e["action"][-1] for e in eps], axis=0).tolist()     # 로봇이 '한 회 끝' 판정에 씀
     n_frames = sum(e["n"] for e in eps)
     log(f"에피소드 {len(eps)} (학습 {len(train_eps)} · 검증 {len(val_eps)}), 프레임 {n_frames}, "
         f"{fps} fps, 이미지 {W}x{H}")
@@ -257,6 +259,7 @@ def main():
                  "robot": info.get("robot"), "episodes": len(eps), "val_episodes": len(val_eps),
                  "frames": n_frames, "fps": fps, "joint_names": joint_names, "state_dim": 14, "action_dim": 14,
                  "chunk_size": cfg.chunk_size, "image": {"h": H, "w": W}, "stats": stats, "start_pose": start_pose,
+                 "end_pose": end_pose,
                  "config": cfg.to_dict(), "train": tc, "torch": torch.__version__, "device": dev_name}
 
     def save(final_loss, val):

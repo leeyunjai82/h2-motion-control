@@ -1,6 +1,11 @@
 #!/usr/bin/env python3
-# Version: 1.6
+# Version: 1.7
 # Changes:
+#   1.7 - (사용자 2026-10-13) ① 정책 실행 중 detect_box 인식 쉬기 (GET /pause, 1 초마다 3 초씩 연장) — 박스 인식이 같은
+#         Intel GPU 를 써서 정책이 'rt/lowstate·카메라 끊김' 으로 멈추고 웹이 느렸음 ② 한 회 끝 판정: 시작 자세에서 20° 넘게
+#         움직였다가 데모 끝 자세(데이터셋 마지막 지령 평균) 5° 안으로 1 초 머물면 '완료' 로 정지 (전엔 60 초까지 대기)
+#         ③ 반복 실행: N 회 · 사이 쉬기 · 매 회 시작 조건(박스 인식 등) 기다림, 완료가 아닌 정지면 반복도 멈춤
+#         ④ 기본 최대 속도 0.7 rad/s (pa_runtime)
 #   1.6 - 에피소드 보기 (사용자 2026-10-13): GET .../episodes/{ep}/series (시각·단계·관절 실측/지령·토크·두 손 거리, JSON)
 #         · .../episodes/{ep}/jpeg (저장된 JPEG 를 이어 붙인 그대로, 오프셋은 series.off) — 웹이 한 번 받아 프레임별로 재생
 #   1.5 - 정책 시작 조건 (사용자 2026-10-13): 박스 없으면 시작 안 함 — detect_box 가 박스를 보고 있고 너비가
@@ -100,7 +105,8 @@ DEFAULTS = {
              "mode_off_after": True,
              "sim_random": True,        # 시뮬(가상 박스)만: 매 회 박스 위치 무작위
              "sim_x": [0.38, 0.44], "sim_y": [0.02, 0.045]},
-    "policy": {"model": None, "device": "CPU", "mode": "ensemble", "coeff": 0.01, "n_action_steps": 20},
+    "policy": {"model": None, "device": "CPU", "mode": "ensemble", "coeff": 0.01, "n_action_steps": 20,
+               "repeat_n": 5, "repeat_rest_s": 3.0, "repeat_wait_s": 30.0},
     "safety": dict(rt.DEFAULT_SAFETY),
 }
 _settings_lk = threading.Lock()
@@ -127,6 +133,8 @@ def load_settings():
 SET = load_settings()
 if SET["record"]["image"] not in (IMG_NATIVE, IMG_HALF):     # 카메라 해상도가 바뀐 뒤 예전 설정 (예: 320x240)
     SET["record"]["image"] = IMG_HALF
+if float(SET["safety"].get("max_vel", 0)) == 1.5:          # 예전 기본값 그대로면 새 기본 0.7 로 (사용자 2026-10-13 — 천천히)
+    SET["safety"]["max_vel"] = rt.DEFAULT_SAFETY["max_vel"]
 
 
 def save_settings():
@@ -624,13 +632,14 @@ def model_cmd_stats(model_dir, meta):
     """안전 필터용 데모 '지령' 손 범위 → (stats 또는 None, 출처 설명).
     meta.stats 에 이미 있으면(ee_cmd 를 기록한 데이터셋으로 학습) 그것, 없으면 로봇 PC 의 그 데이터셋 action 으로 FK 계산
     (모델 폴더 cmd_stats.json 에 저장 — 다음 로드부터 바로)."""
-    if "ee_cmd_min" in (meta.get("stats") or {}):
+    if "ee_cmd_min" in (meta.get("stats") or {}) and meta.get("end_pose"):
         return None, "지령 (모델 stats)"
     cache = os.path.join(model_dir, "cmd_stats.json")
     if os.path.isfile(cache):
         with open(cache, encoding="utf-8") as f:
             cs = json.load(f)
-        return cs, f"지령 (데이터셋 {cs.get('dataset')} {cs.get('frames')} 프레임)"
+        if "end_pose" in cs:                  # 1.6 이전 캐시엔 끝 자세가 없음 → 다시 계산
+            return cs, f"지령 (데이터셋 {cs.get('dataset')} {cs.get('frames')} 프레임)"
     name = meta.get("dataset") or ""
     p = os.path.join(DS_DIR, name) if NAME_RE.match(name) else ""
     if not p or not os.path.isdir(os.path.join(p, "episodes")):
@@ -650,6 +659,7 @@ def model_cmd_stats(model_dir, meta):
     if cs is None:
         return None, f"실측 (데이터셋 {name!r} 에 성공 에피소드 없음)"
     cs["dataset"] = name
+    cs["end_pose"] = np.mean([a[-1] for a in acts], axis=0).tolist()     # 데모 끝 자세 (한 회 끝 판정)
     with open(cache, "w", encoding="utf-8") as f:
         json.dump(cs, f, indent=1)
     return cs, f"지령 (데이터셋 {name} {cs['frames']} 프레임에서 계산)"
@@ -741,6 +751,11 @@ class _Stop(Exception):
     """Stop 버튼 / Esc."""
 
 
+DONE_AWAY_DEG = 20.0     # 한 회 끝 판정: 시작 자세에서 이만큼 넘게 움직인 적이 있고
+DONE_NEAR_DEG = 5.0      #   데모 끝 자세(모든 관절)에서 이 안으로
+DONE_HOLD_S = 1.0        #   이만큼 머물면 '완료'
+
+
 class PolicyRunner:
     def __init__(self):
         self.pol: Optional[rt.OVPolicy] = None
@@ -751,6 +766,9 @@ class PolicyRunner:
         self.st = {"phase": "idle", "why": "", "steps": 0}
         self.history = deque(maxlen=20)
         self.safety = None
+        self.rep_th = None
+        self.rep_stop = threading.Event()
+        self.rep = {"running": False, "i": 0, "n": 0, "ok": 0, "fail": 0, "phase": ""}
 
     def running(self):
         return self.th is not None and self.th.is_alive()
@@ -770,6 +788,8 @@ class PolicyRunner:
             try:
                 pol = rt.OVPolicy(p, device)
                 pol.cmd_stats, pol.cmd_src = model_cmd_stats(p, pol.meta)
+                ep_ = pol.meta.get("end_pose") or (pol.cmd_stats or {}).get("end_pose")
+                pol.end_pose = np.asarray(ep_, dtype=float) if ep_ and len(ep_) == 14 else None
                 # 첫 추론 (GPU/NPU 커널 준비) — 시간 측정용
                 dummy = cv2.imencode(".jpg", np.zeros((pol.H, pol.W, 3), np.uint8))[1].tobytes()
                 pol.infer(dummy, np.zeros(14))
@@ -818,20 +838,74 @@ class PolicyRunner:
         return out
 
     def start(self):
-        if self.running():
+        if self.running() or self.rep["running"]:
             raise HTTPException(409, "이미 실행 중")
         bad = [f"{n}: {d}" for n, ok, d in self.preconditions() if not ok]
         if bad:
             raise HTTPException(409, "시작 조건 안 맞음 — " + " / ".join(bad))
+        self._launch()
+
+    def _launch(self):
         self.stop_ev.clear()
         self.th = threading.Thread(target=self._run, args=(self.pol, dict(SET["policy"]), dict(SET["safety"])),
                                    daemon=True)
         self.th.start()
 
     def stop(self, why="Stop"):
+        self.rep_stop.set()                  # 반복 중이면 반복도 끝
         if self.running():
             self.st["why"] = why
             self.stop_ev.set()
+
+    # ---- 반복 실행: N 회, 매 회 시작 조건(박스 인식 등)을 기다렸다가 시작, 완료가 아닌 정지면 그만 ----
+    def repeat_start(self):
+        if self.running() or self.rep["running"]:
+            raise HTTPException(409, "이미 실행 중")
+        if self.pol is None:
+            raise HTTPException(409, "모델 없음 — 먼저 로드")
+        pc = SET["policy"]
+        n, rest, wait = int(pc.get("repeat_n", 5)), float(pc.get("repeat_rest_s", 3.0)), float(pc.get("repeat_wait_s", 30.0))
+        self.rep_stop.clear()
+        self.rep.update(running=True, i=0, n=n, ok=0, fail=0, phase="시작")
+        self.rep_th = threading.Thread(target=self._repeat, args=(n, rest, wait), daemon=True)
+        self.rep_th.start()
+
+    def _repeat(self, n, rest, wait):
+        rp = self.rep
+        try:
+            for i in range(n):
+                if self.rep_stop.is_set():
+                    break
+                rp["i"] = i + 1
+                if i > 0:
+                    rp["phase"] = f"쉬는 중 {rest:.0f}s"
+                    if self.rep_stop.wait(rest):
+                        break
+                t_end, bad = time.time() + wait, []
+                while not self.rep_stop.is_set():
+                    bad = [f"{nm}: {d}" for nm, ok, d in self.preconditions() if not ok]
+                    if not bad or time.time() > t_end:
+                        break
+                    rp["phase"] = "시작 조건 기다림 — " + " / ".join(bad)
+                    time.sleep(0.5)
+                if self.rep_stop.is_set():
+                    break
+                if bad:
+                    rp["phase"] = f"끝 — {wait:.0f}s 동안 시작 조건 안 맞음: " + " / ".join(bad)
+                    return
+                rp["phase"] = f"{i + 1}/{n} 실행 중"
+                self._launch()
+                self.th.join()
+                if self.st.get("done"):
+                    rp["ok"] += 1
+                else:
+                    rp["fail"] += 1
+                    rp["phase"] = f"끝 — {i + 1} 회째 정지: {self.st.get('why')}"
+                    return
+            rp["phase"] = "중지됨" if self.rep_stop.is_set() else "끝"
+        finally:
+            rp["running"] = False
+            log(f"반복 {rp['phase']} (완료 {rp['ok']} · 실패 {rp['fail']} / {n})")
 
     # ---- 실행 루프 ----
     def _cmd(self, tok, q):
@@ -846,7 +920,18 @@ class PolicyRunner:
         log(f"안전 필터 손 범위 기준: {safety.hand_ref} — 두 손 최소 {safety.gap_min:.3f} m")
         self.safety = safety
         start_q = np.asarray(meta["start_pose"], dtype=float)
-        st = {"phase": "start", "why": "", "steps": 0, "t0": time.time(), "model": pol.name, "infer_ms": 0.0,
+        end_q = getattr(pol, "end_pose", None)
+        moved, t_near, recent = False, None, deque()
+        pz_stop = threading.Event()
+
+        def _pauser():
+            # 정책 도는 동안 detect_box 인식 쉬기 (같은 Intel GPU·CPU 양보). 1 초마다 3 초씩 연장, 끝나면 바로 다시
+            while not pz_stop.is_set():
+                try_json(f"{DETECT}/pause?sec=3", timeout=0.5)
+                pz_stop.wait(1.0)
+            try_json(f"{DETECT}/pause?sec=0", timeout=0.5)
+        threading.Thread(target=_pauser, daemon=True).start()
+        st = {"phase": "start", "why": "", "steps": 0, "t0": time.time(), "model": pol.name, "infer_ms": 0.0, "done": False,
               "infer_ms_avg": 0.0, "hz": 0.0, "n_vel_clip": 0, "n_clip": 0, "n_reject": 0, "reject_why": "",
               "target_deg": None, "meas_deg": None, "mode": pcfg["mode"]}
         self.st = st
@@ -926,6 +1011,25 @@ class PolicyRunner:
                 r = self._cmd(tok, q)
                 prev = np.radians(r["target_deg"])
                 st["steps"] += 1
+                # 한 회 끝: 시작 자세에서 DONE_AWAY_DEG 넘게 움직였다가 데모 끝 자세 DONE_NEAR_DEG 안으로 DONE_HOLD_S 머묾
+                #   (끝 자세를 모르면 — 예전 모델·데이터셋 없음 — 8 초 지난 뒤 지령이 DONE_HOLD_S 동안 거의 안 움직이면)
+                if np.degrees(np.max(np.abs(prev - start_q))) > DONE_AWAY_DEG:
+                    moved = True
+                recent.append((now, prev))
+                while recent and now - recent[0][0] > DONE_HOLD_S:
+                    recent.popleft()
+                if end_q is not None:
+                    near = np.degrees(np.max(np.abs(prev - end_q))) < DONE_NEAR_DEG
+                else:
+                    span = np.ptp(np.array([q_ for _, q_ in recent]), axis=0).max() if len(recent) > 1 else 1.0
+                    near = now - t_run0 > 8.0 and np.degrees(span) < 1.0
+                if moved and near:
+                    t_near = t_near or now
+                    if now - t_near >= DONE_HOLD_S:
+                        why, st["done"] = "완료 — 데모 끝 자세로 돌아옴", True
+                        break
+                else:
+                    t_near = None
                 st["n_vel_clip"] += int(r.get("vel_clip", False))
                 st.update(target_deg=r["target_deg"], meas_deg=r["meas_deg"], infer_ms=round(pol.last_ms, 1),
                           infer_ms_avg=round(ms_sum / st["steps"], 1), n_clip=safety.n_clip,
@@ -945,9 +1049,10 @@ class PolicyRunner:
         except Exception as e:   # noqa: BLE001
             why = f"오류: {e}"
         finally:
+            pz_stop.set()
             if tok:
                 try_json(f"{ARM}/stream/end", {"token": tok}, timeout=1.0)
-            st["phase"] = "정지"
+            st["phase"] = "완료" if st.get("done") else "정지"
             st["why"] = why
             self.history.appendleft({"t": time.strftime("%H:%M:%S", time.localtime(st["t0"])), "model": pol.name,
                                      "dur": round(time.time() - st["t0"], 1), "steps": st["steps"], "why": why,
@@ -1017,6 +1122,7 @@ def api_state():
     return {"servers": _servers(), "settings": SET, "record": rec_st, "last_record": rec.last,
             "auto": auto.st, "auto_running": auto.running(),
             "policy": {"running": policy.running(), **pst, "loading": policy.loading, "load_err": policy.load_err,
+                       "repeat": policy.rep, "end_pose_known": bool(policy.pol is not None and getattr(policy.pol, "end_pose", None) is not None),
                        "model": policy.pol.name if policy.pol else None,
                        "exec": policy.pol.exec_devices if policy.pol else [],
                        "range_deg": [np.degrees(sf.lo).round(1).tolist(), np.degrees(sf.hi).round(1).tolist()]
@@ -1265,6 +1371,12 @@ def api_model_load(name: str, device: str = "CPU"):
 @app.post("/api/policy/start")
 def api_policy_start():
     policy.start()
+    return {"ok": True}
+
+
+@app.post("/api/policy/repeat")
+def api_policy_repeat():
+    policy.repeat_start()
     return {"ok": True}
 
 

@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# Version: 0.13
+# Version: 0.14
 # Changes:
+#   0.14 - GET /pause?sec= — 그 시간 동안 인식 쉬기 (피지컬 AI 정책 실행 중 GPU·CPU 양보, 사용자 2026-10-13).
+#          박스 인식(vision.box_device intel:gpu)이 ACT 정책과 같은 Intel GPU 를 써서 정책이 'rt/lowstate·카메라 끊김' 으로
+#          멈추고 웹이 느렸음. policy_server 가 실행 중 1 초마다 3 초씩 연장, 끝나면 sec=0 (죽어도 3 초 뒤 저절로 다시 인식)
 #   0.13 - 박스 모델 교체 box11s-seg2 (YOLO11s-seg, 카드보드 박스 데이터 강화 cardboard-box-opt-d7aba07c, 사용자 2026-10-11).
 #          학습 검증 mAP50-95 seg 0.956 → 0.993. 실카메라 사진 1 장: 같은 박스, 신뢰도 0.916 → 0.948, 추론 시간 같음 (CPU 약 120 ms).
 #          OpenVINO 변환은 이전과 같게 imgsz 640 · FP32 · batch 1 · nms 없음 (models/box_openvino_model)
@@ -140,6 +143,7 @@ auto_mode = {"enabled": False,
              "z_min": float(_Z.get("z", [-0.15, 0.25])[0]), "z_max": float(_Z.get("z", [-0.15, 0.25])[1]),
              "dwell_sec": float(_Z.get("dwell", 1.5))}
 auto_state = {"in_zone_since": None}
+pause = {"until": 0.0}      # 이 시각까지 인식 쉼 (GET /pause?sec=)
 
 # 인식 성능/결과 (표시용 — 제어에 쓰지 않음)
 perf = {"infer_ms": None, "fps": None, "conf": None,
@@ -397,7 +401,9 @@ def detect_loop():
         time.sleep(0.1)
     print("[DETECT] 시작")
     while True:
-        # box 모드 아닐 때 CPU 절약
+        # box 모드 아닐 때 · 쉬기(/pause) 중 CPU·GPU 절약
+        if time.time() < pause["until"]:
+            time.sleep(0.1); continue
         if robot_mode() != "box":
             time.sleep(0.5); continue
         with color_lock:
@@ -468,7 +474,7 @@ def post_grab(sm):
 def auto_monitor_loop():
     while True:
         time.sleep(0.1)
-        if not auto_mode["enabled"]:
+        if not auto_mode["enabled"] or time.time() < pause["until"]:
             auto_state["in_zone_since"]=None; continue
         sm = get_smoothed()
         if sm.get('_count',0) < 3 or 'top_center' not in sm:
@@ -600,6 +606,7 @@ async def status():
            "auto_elapsed": round(elapsed,2),
            "auto_dwell": auto_mode["dwell_sec"],
            "show_seg": OVERLAY["seg"],
+           "paused": time.time() < pause["until"],
            "cmp": compare_methods(),
            "perf": {**perf, "active": (time.time() - perf["t"]) < 1.5,
                     "model": os.path.basename(YOLO_MODEL.rstrip("/")), "device": YOLO_DEVICE,
@@ -626,6 +633,14 @@ async def set_auto_mode(enabled: bool=None,
         if v is not None: auto_mode[k]=v
     auto_state["in_zone_since"]=None
     return {"success": True, "config": auto_mode}
+
+
+@app.get("/pause", summary="sec 초 동안 인식 쉬기 (0 = 바로 다시) — 피지컬 AI 정책 실행 중 GPU·CPU 양보")
+async def set_pause(sec: float = 0.0):
+    pause["until"] = time.time() + min(max(sec, 0.0), 30.0) if sec > 0 else 0.0
+    if sec > 0:
+        auto_state["in_zone_since"] = None
+    return {"success": True, "paused": sec > 0}
 
 
 @app.get("/set_overlay", summary="화면 표시: seg=true 면 seg 영역·윗면·꼭짓점, false 면 파지점 + 인식 분포만 (표시 전용)")

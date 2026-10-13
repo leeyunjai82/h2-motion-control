@@ -1,5 +1,6 @@
 <!DOCTYPE html>
-<!-- Version: 1.4
+<!-- Version: 1.5
+  1.5 - 반복 실행 (N 회 · 사이 쉬기 · 매 회 박스 인식 기다림) · 한 회 끝(데모 끝 자세로 돌아옴) 표시 · 기본 최대 속도 0.7
   1.4 - 에피소드 보기 (사용자 2026-10-13): Episodes 행을 누르면 영상 재생(슬라이더·속도) · 잡기 단계 띠 ·
         관절 실측/지령 · 토크 · 두 손 거리(실측/지령) 그래프, 앞뒤 에피소드 이동 · 삭제. 키: Space 재생, ←/→ 프레임(Shift ×10)
   1.3 - 안전 설정에서 '정지 온도' 뺌 — 온도로 멈추지 않음, 표시만 (근거 있는 보호 온도 자료 없음)
@@ -297,6 +298,13 @@ select.in{padding:5px}
           <button class="btn primary" id="btn-run" onclick="runStart()" style="font-size:14px;padding:11px">▶ 정책 시작</button>
           <button class="btn stop" onclick="runStop()" style="padding:11px">■ STOP (Esc)</button>
         </div>
+        <div class="row" style="margin-top:8px">
+          <span class="mini" style="margin:0">반복</span><input class="in" id="p-rep-n" type="number" min="1" max="200" step="1" style="width:62px">
+          <span class="mini" style="margin:0">회 · 사이 쉬기</span><input class="in" id="p-rep-rest" type="number" min="0" max="60" step="1" style="width:56px">
+          <span class="mini" style="margin:0">s</span>
+          <button class="btn grow" id="btn-rep" onclick="repStart()">▶ 반복 시작</button>
+        </div>
+        <div class="hint" id="rep-line" style="margin-top:5px">한 회 = 시작 → 데모 끝 자세로 돌아오면 '완료'. 반복은 매 회 박스가 보일 때 시작, 완료가 아닌 정지면 멈춤</div>
         <div class="pre" id="pre"></div>
         <div class="metrics">
           <div class="m"><span>단계</span><b id="m-phase">-</b></div>
@@ -452,6 +460,7 @@ function fillSettings(st, cam){
   $('au-handover').value = a.handover; $('au-off').checked = a.mode_off_after; $('au-sim').checked = a.sim_random;
   const p = st.policy;
   $('p-mode').value = p.mode; $('p-coeff').value = p.coeff; $('p-steps').value = p.n_action_steps;
+  $('p-rep-n').value = p.repeat_n ?? 5; $('p-rep-rest').value = p.repeat_rest_s ?? 3;
   for(const k of ['max_vel','margin_deg','ws_margin_m','max_run_s','track_err_deg','torque_ratio','max_reject'])
     $('s-' + k).value = st.safety[k];
 }
@@ -710,6 +719,10 @@ async function delModel(name){
 
 // ---------------- 정책 ----------------
 async function runStart(){ if(await api('POST', '/api/policy/start')) toast('정책 시작 — 시작 자세로 이동'); }
+async function repStart(){
+  await saveSet({policy: {repeat_n: Math.max(1, parseInt($('p-rep-n').value) || 1), repeat_rest_s: Math.max(0, parseFloat($('p-rep-rest').value) || 0)}});
+  if(await api('POST', '/api/policy/repeat')) toast('반복 시작');
+}
 async function runStop(){ api('POST', '/api/policy/stop'); api('POST', '/api/auto/stop'); }
 document.addEventListener('keydown', e => { if(e.key === 'Escape'){ runStop(); toast('STOP', true); } });
 
@@ -804,7 +817,12 @@ async function poll(){
   rw.className = 'statusline ' + (p.running ? 'busy' : (p.why ? 'err' : ''));
   $('run-why').textContent = p.running ? (p.reject_why ? `최근 거부: ${p.reject_why}` : '실행 중') : (p.why || '-');
   jbars(p, d.joint_names);
-  $('btn-run').disabled = p.running || !!p.loading;
+  const rp = p.repeat || {};
+  $('btn-run').disabled = p.running || !!p.loading || rp.running;
+  $('btn-rep').disabled = p.running || !!p.loading || rp.running || !p.model;
+  if(rp.running || rp.phase)
+    $('rep-line').innerHTML = `<b style="color:${rp.running ? 'var(--amber)' : 'var(--ink)'}">반복 ${rp.i}/${rp.n}</b> · 완료 ${rp.ok} · 실패 ${rp.fail} — ${esc(rp.phase)}`
+      + (p.end_pose_known === false && p.model ? ' · <span style="color:var(--warn)">데모 끝 자세 모름 — 8 초 뒤 멈춰 있으면 완료</span>' : '');
   if(p.load_err) $('md-hint').innerHTML = `<span style="color:var(--warn)">로드 실패: ${esc(p.load_err)}</span>`;
   else $('md-hint').textContent = 'trainer(학습 PC)가 만든 model zip 을 올리고 로드. NPU 는 첫 컴파일이 오래 걸릴 수 있음.';
   if(p.model !== loadModels._cur && !p.loading){ loadModels._cur = p.model; loadModels(); }
