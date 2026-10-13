@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<!-- Version: 1.3
+<!-- Version: 1.4
+  1.4 - 에피소드 보기 (사용자 2026-10-13): Episodes 행을 누르면 영상 재생(슬라이더·속도) · 잡기 단계 띠 ·
+        관절 실측/지령 · 토크 · 두 손 거리(실측/지령) 그래프, 앞뒤 에피소드 이동 · 삭제. 키: Space 재생, ←/→ 프레임(Shift ×10)
   1.3 - 안전 설정에서 '정지 온도' 뺌 — 온도로 멈추지 않음, 표시만 (근거 있는 보호 온도 자료 없음)
   1.2 - 자동 반복 '잡은 뒤' 에 left / right 건네기 (사람 기준) 추가
   1.1 - 저장 해상도 선택지를 카메라 해상도에서 (H2 848×480 → 원본 / 424×240)
@@ -141,6 +143,24 @@ select.in{padding:5px}
 .okb{color:var(--ok)}.ngb{color:var(--warn)}
 .scroll{max-height:260px;overflow-y:auto}
 .thumb{position:fixed;z-index:60;border:1px solid var(--accent);border-radius:6px;pointer-events:none;width:240px;display:none;background:#000}
+.tbl tr[data-ep]{cursor:pointer}
+
+/* 에피소드 보기 */
+.epv{position:fixed;inset:0;z-index:80;background:#000b;display:flex;align-items:center;justify-content:center;padding:18px}
+.epv-box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);width:min(1240px,97vw);max-height:95vh;
+  display:flex;flex-direction:column;overflow:hidden}
+.epv-b{display:grid;grid-template-columns:1.05fr 1fr;gap:14px;padding:12px 14px 14px;overflow:auto}
+.epv-img{position:relative;background:#05080c;border:1px solid var(--line);border-radius:8px;overflow:hidden;aspect-ratio:16/9;
+  display:flex;align-items:center;justify-content:center}
+.epv-img img{width:100%;height:100%;object-fit:contain;display:block}
+.epv-info{position:absolute;top:8px;left:8px;background:#000b;border:1px solid var(--line);border-radius:6px;padding:4px 9px;
+  font-size:11px;line-height:1.55;pointer-events:none}
+.epv canvas{width:100%;display:block;background:#0c1117;border:1px solid var(--line);border-radius:6px;cursor:crosshair}
+.epv .mini{margin-top:9px}
+.epv-lg{display:flex;flex-wrap:wrap;gap:3px 10px;font-size:10.5px;color:var(--dim);margin-top:6px}
+.epv-lg i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:4px;vertical-align:-1px}
+.epv-key{display:inline-block;width:10px;height:3px;border-radius:2px;margin:0 4px 2px 8px;vertical-align:middle}
+@media(max-width:900px){.epv-b{grid-template-columns:1fr}}
 
 ::-webkit-scrollbar{width:5px;height:5px}
 ::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
@@ -303,6 +323,7 @@ select.in{padding:5px}
       <div class="card-h">Episodes <span class="tag" id="ep-tag">-</span></div>
       <div class="card-b">
         <div class="scroll" style="max-height:200px"><table class="tbl" id="ep-tbl"></table></div>
+        <div class="hint" style="margin-top:4px">행을 누르면 그 에피소드 영상·그래프 (마우스를 올리면 첫 프레임)</div>
         <div class="row" style="margin-top:10px">
           <button class="btn primary grow" onclick="dlZip()">⬇ 데이터셋 zip (학습 PC 로)</button>
           <button class="btn warn sm" onclick="delDataset()">데이터셋 삭제</button>
@@ -355,6 +376,39 @@ select.in{padding:5px}
 </div>
 
 <img class="thumb" id="thumb" alt="">
+<div class="epv" id="epv" style="display:none" onclick="if(event.target===this)closeEp()">
+  <div class="epv-box">
+    <div class="card-h"><span>에피소드 <span class="tag" id="epv-title">-</span> <span id="epv-meta" style="text-transform:none;letter-spacing:0"></span></span>
+      <span class="row">
+        <button class="btn sm" onclick="stepEp(-1)" title="앞 번호 에피소드">◀ ep</button>
+        <button class="btn sm" onclick="stepEp(1)" title="뒷 번호 에피소드">ep ▶</button>
+        <button class="btn sm warn" onclick="delEpV()">삭제</button>
+        <button class="btn sm" onclick="closeEp()">닫기</button>
+      </span></div>
+    <div class="epv-b">
+      <div>
+        <div class="epv-img"><img id="epv-img" alt=""><div class="epv-info" id="epv-info"></div></div>
+        <div class="row" style="margin-top:8px">
+          <button class="btn sm" id="epv-play" style="width:42px" onclick="togglePlay()">▶</button>
+          <input type="range" id="epv-pos" class="grow" min="0" max="0" value="0" oninput="seekEp(+this.value)">
+          <select class="in" id="epv-speed" style="width:70px" onchange="if(EPV.play)epvPlay()">
+            <option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option><option value="4">4×</option></select>
+        </div>
+        <div class="mini">잡기 단계</div><canvas id="epv-stage" height="22"></canvas>
+        <div class="epv-lg" id="epv-legend"></div>
+        <div class="hint">Space 재생/멈춤 · ←/→ 한 프레임 (Shift 10) · 그래프를 누르면 그 시각으로</div>
+      </div>
+      <div>
+        <div class="row"><span class="mini" style="margin:0">관절</span><select class="in grow" id="epv-joint" onchange="EPV.joint=+this.value;drawEpv()"></select></div>
+        <div class="mini">각도 ° <span class="epv-key" style="background:var(--accent)"></span>실측 <span class="epv-key" style="background:var(--amber)"></span>지령</div>
+        <canvas id="epv-c-q" height="140"></canvas>
+        <div class="mini">토크 Nm (실측 tau_est)</div><canvas id="epv-c-tau" height="100"></canvas>
+        <div class="mini">두 손 거리 cm <span class="epv-key" style="background:var(--accent)"></span>실측 <span class="epv-key" style="background:var(--amber)"></span>지령</div>
+        <canvas id="epv-c-gap" height="100"></canvas>
+      </div>
+    </div>
+  </div>
+</div>
 <div id="toast"></div>
 
 <script>
@@ -439,15 +493,16 @@ async function loadEpisodes(){
   $('ep-tag').textContent = `${eps.length} ep · ${(tot/60).toFixed(1)} 분`;
   let h = '<tr><th>id</th><th>시각</th><th class="num">s</th><th class="num">프레임</th><th>출처</th><th>결과</th><th></th></tr>';
   for(const e of eps.slice().reverse()){
-    h += `<tr data-ep="${e.id}"><td>${e.id.slice(3)}</td><td>${esc(e.created.slice(5,16))}</td><td class="num">${f1(e.duration)}</td>
+    h += `<tr data-ep="${e.id}"${EPV.id === e.id && $('epv').style.display !== 'none' ? ' class="cur"' : ''}><td>${e.id.slice(3)}</td><td>${esc(e.created.slice(5,16))}</td><td class="num">${f1(e.duration)}</td>
       <td class="num">${e.n}</td><td>${esc(e.source)}</td><td class="${e.ok?'okb':'ngb'}">${e.ok?'OK':'실패'}</td>
-      <td class="x" onclick="delEp('${e.id}')">✕</td></tr>`;
+      <td class="x" onclick="event.stopPropagation();delEp('${e.id}')">✕</td></tr>`;
   }
   $('ep-tbl').innerHTML = h;
   for(const tr of $('ep-tbl').querySelectorAll('tr[data-ep]')){
     tr.onmouseenter = ev => { const t = $('thumb'); t.src = `/api/datasets/${n}/episodes/${tr.dataset.ep}/thumb.jpg`;
       t.style.display = 'block'; t.style.left = (ev.clientX - 260) + 'px'; t.style.top = (ev.clientY - 60) + 'px'; };
     tr.onmouseleave = () => $('thumb').style.display = 'none';
+    tr.onclick = () => { $('thumb').style.display = 'none'; openEp(tr.dataset.ep); };
   }
 }
 async function delEp(id){
@@ -455,6 +510,156 @@ async function delEp(id){
   if(await api('DELETE', `/api/datasets/${S.settings.dataset}/episodes/${id}`)){ loadEpisodes(); loadDatasets(); }
 }
 function dlZip(){ if(S) location.href = `/api/datasets/${S.settings.dataset}/zip`; }
+
+// ---------------- 에피소드 보기 ----------------
+// series(JSON: 시각·단계·관절·토크·두 손 거리·JPEG 오프셋) + jpeg(이어 붙인 바이트) 를 한 번 받아 프레임별로 그림
+const EPV = {ds: '', id: '', s: null, buf: null, i: 0, play: false, t0: 0, i0: 0, url: '', raf: 0, joint: null};
+const STAGE_COL = ['#7fd8f5', '#3ddc97', '#ffb454', '#ff6b6b', '#b48cff', '#ffd166', '#06d6a0', '#ef476f', '#4cc9f0', '#f78c6b', '#9b5de5', '#a3e635'];
+const stCol = k => k < 0 ? '#2a3340' : STAGE_COL[k % STAGE_COL.length];
+async function openEp(id){
+  const ds = S && S.settings.dataset; if(!ds) return;
+  epvStop();
+  $('epv').style.display = 'flex'; $('epv-title').textContent = `${ds} / ${id}`; $('epv-meta').textContent = '불러오는 중…';
+  const s = await api('GET', `/api/datasets/${ds}/episodes/${id}/series`); if(!s){ closeEp(); return; }
+  let buf;
+  try{
+    const r = await fetch(`/api/datasets/${ds}/episodes/${id}/jpeg`);
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    buf = await r.arrayBuffer();
+  }catch(e){ toast('영상 불러오기 실패: ' + e, true); closeEp(); return; }
+  Object.assign(EPV, {ds, id, s, buf, i: 0});
+  $('epv-meta').textContent = `· ${s.created ? s.created.slice(5, 16) : ''} · ${f1(s.duration)} s · ${s.n} 프레임 · ${s.source} · ${s.ok ? 'OK' : '실패'}`
+    + (s.tau ? '' : ' · 토크 없음 (예전 에피소드)') + (s.gap_cmd ? '' : ' · 지령 손 위치 없음 (예전 에피소드)');
+  $('epv-pos').max = s.n - 1;
+  if(EPV.joint == null){       // 처음 = 지령이 가장 크게 움직인 관절
+    let best = 0, bk = 0;
+    s.action_deg.forEach((a, k) => { const r = Math.max(...a) - Math.min(...a); if(r > best){ best = r; bk = k; } });
+    EPV.joint = bk;
+  }
+  $('epv-joint').innerHTML = s.joint_names.map((n, k) => `<option value="${k}">${esc(n)}</option>`).join('');
+  $('epv-joint').value = EPV.joint;
+  const used = [...new Set(s.stage)].sort((a, b) => a - b);
+  $('epv-legend').innerHTML = used.map(k => `<span><i style="background:${stCol(k)}"></i>${esc(k >= 0 ? (s.stage_names[k] || k) : '단계 없음')}</span>`).join('');
+  for(const tr of document.querySelectorAll('#ep-tbl tr[data-ep]')) tr.classList.toggle('cur', tr.dataset.ep === id);
+  showFrame(0);
+}
+function closeEp(){
+  epvStop(); $('epv').style.display = 'none';
+  if(EPV.url){ URL.revokeObjectURL(EPV.url); EPV.url = ''; }
+  EPV.buf = null; EPV.s = null;
+  for(const tr of document.querySelectorAll('#ep-tbl tr.cur')) tr.classList.remove('cur');
+}
+function stepEp(d){
+  const ids = [...document.querySelectorAll('#ep-tbl tr[data-ep]')].map(tr => tr.dataset.ep).sort();
+  const k = ids.indexOf(EPV.id) + d;
+  if(k >= 0 && k < ids.length) openEp(ids[k]); else toast(d < 0 ? '첫 에피소드' : '마지막 에피소드');
+}
+async function delEpV(){
+  if(!EPV.id || !confirm(`${EPV.id} 삭제?`)) return;
+  const ids = [...document.querySelectorAll('#ep-tbl tr[data-ep]')].map(tr => tr.dataset.ep).sort();
+  const nxt = ids[ids.indexOf(EPV.id) + 1] || ids[ids.indexOf(EPV.id) - 1];
+  if(!await api('DELETE', `/api/datasets/${EPV.ds}/episodes/${EPV.id}`)) return;
+  toast(`${EPV.id} 삭제됨`); await loadEpisodes(); loadDatasets();
+  if(nxt && nxt !== EPV.id) openEp(nxt); else closeEp();
+}
+function showFrame(i){
+  const s = EPV.s; if(!s) return;
+  i = Math.max(0, Math.min(s.n - 1, i | 0)); EPV.i = i;
+  const blob = new Blob([new Uint8Array(EPV.buf, s.off[i], s.off[i + 1] - s.off[i])], {type: 'image/jpeg'});
+  const u = URL.createObjectURL(blob), old = EPV.url, img = $('epv-img');
+  img.onload = img.onerror = () => { if(old) URL.revokeObjectURL(old); };
+  img.src = u; EPV.url = u;
+  $('epv-pos').value = i;
+  const st = s.stage[i], name = st >= 0 ? (s.stage_names[st] || st) : '-';
+  const tmax = s.tau ? Math.max(...s.tau.map(r => Math.abs(r[i]))) : null;
+  $('epv-info').innerHTML = `${i + 1} / ${s.n} · ${f1(s.t[i])} s<br>단계 <b style="color:${stCol(st)}">${esc(name)}</b><br>`
+    + `두 손 ${f1(s.gap[i] * 100)} cm` + (s.gap_cmd ? ` · 지령 ${f1(s.gap_cmd[i] * 100)} cm` : '')
+    + (tmax != null ? `<br>|토크| 최대 ${f1(tmax)} Nm` : '');
+  drawEpv();
+}
+function seekEp(i){ showFrame(i); if(EPV.play){ EPV.t0 = performance.now(); EPV.i0 = EPV.i; } }
+function togglePlay(){ EPV.play ? epvStop() : epvPlay(); }
+function epvPlay(){
+  const s = EPV.s; if(!s) return;
+  cancelAnimationFrame(EPV.raf);
+  if(EPV.i >= s.n - 1) EPV.i = 0;
+  EPV.play = true; EPV.t0 = performance.now(); EPV.i0 = EPV.i; $('epv-play').textContent = '❚❚';
+  const tick = now => {
+    if(!EPV.play || EPV.s !== s) return;
+    const k = EPV.i0 + Math.floor((now - EPV.t0) / 1000 * s.fps * (+$('epv-speed').value));
+    if(k >= s.n - 1){ showFrame(s.n - 1); epvStop(); return; }
+    if(k !== EPV.i) showFrame(k);
+    EPV.raf = requestAnimationFrame(tick);
+  };
+  EPV.raf = requestAnimationFrame(tick);
+}
+function epvStop(){ EPV.play = false; cancelAnimationFrame(EPV.raf); $('epv-play').textContent = '▶'; }
+// 선 그래프 (시간축 = 프레임). series: [{d: 값 배열, c: 색}], 단계 띠는 연하게 배경으로, 현재 프레임 = 흰 세로선
+function plotEp(cv, series, opt){
+  const s = EPV.s, dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = +cv.getAttribute('height');
+  if(!W) return;
+  if(cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)){ cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.height = H + 'px'; }
+  const c = cv.getContext('2d'); c.setTransform(dpr, 0, 0, dpr, 0, 0); c.clearRect(0, 0, W, H);
+  const L = opt.bare ? 0 : 40, R = opt.bare ? 0 : 6, T = opt.bare ? 0 : 6, B = opt.bare ? 0 : 13, n = s.n;
+  const X = k => L + (W - L - R) * k / Math.max(1, n - 1);
+  cv._ax = {L, R, W, n};
+  let a = 0;                                   // 단계 띠
+  for(let k = 1; k <= n; k++){
+    if(k === n || s.stage[k] !== s.stage[a]){
+      c.globalAlpha = opt.bare ? 0.85 : 0.10; c.fillStyle = stCol(s.stage[a]);
+      c.fillRect(X(a), T, Math.max(1, X(k - 1) - X(a) + 1), H - T - B); a = k;
+    }
+  }
+  c.globalAlpha = 1;
+  const vals = series.flatMap(x => x.d || []).filter(v => v != null && isFinite(v));
+  c.font = '10px ui-monospace,Menlo,Consolas,monospace';
+  if(!opt.bare){
+    if(!vals.length){ c.fillStyle = '#6b7785'; c.fillText(opt.empty || '데이터 없음', L + 8, H / 2); }
+    else{
+      let lo = Math.min(...vals), hi = Math.max(...vals);
+      if(hi - lo < 1e-6){ lo -= 1; hi += 1; }
+      const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+      const Y = v => T + (H - T - B) * (1 - (v - lo) / (hi - lo));
+      c.strokeStyle = '#2a3340'; c.fillStyle = '#6b7785'; c.lineWidth = 1;
+      for(const f of [0, 0.5, 1]){ const v = lo + (hi - lo) * f, y = Y(v); c.beginPath(); c.moveTo(L, y); c.lineTo(W - R, y); c.stroke(); c.fillText(v.toFixed(opt.dp ?? 1), 2, y + 3); }
+      for(const sr of series){
+        if(!sr.d) continue;
+        c.strokeStyle = sr.c; c.lineWidth = 1.4; c.beginPath();
+        sr.d.forEach((v, k) => { const x = X(k), y = Y(v); k ? c.lineTo(x, y) : c.moveTo(x, y); });
+        c.stroke();
+      }
+    }
+    c.fillStyle = '#6b7785'; c.fillText('0 s', L, H - 2);
+    const te = `${f1(s.t[n - 1])} s`; c.fillText(te, W - R - c.measureText(te).width, H - 2);
+  }
+  const x = X(EPV.i); c.strokeStyle = '#ffffffcc'; c.lineWidth = 1.5;
+  c.beginPath(); c.moveTo(x, T); c.lineTo(x, H - B); c.stroke();
+}
+function drawEpv(){
+  const s = EPV.s; if(!s) return;
+  const j = EPV.joint ?? 0, acc = '#00b7eb', amb = '#ffb454';
+  plotEp($('epv-stage'), [], {bare: true});
+  plotEp($('epv-c-q'), [{d: s.state_deg[j], c: acc}, {d: s.action_deg[j], c: amb}], {dp: 0});
+  plotEp($('epv-c-tau'), [{d: s.tau ? s.tau[j] : null, c: '#ff6b6b'}], {dp: 1, empty: '토크 기록 없음 (예전 에피소드)'});
+  plotEp($('epv-c-gap'), [{d: s.gap.map(v => v * 100), c: acc}, {d: s.gap_cmd ? s.gap_cmd.map(v => v * 100) : null, c: amb}], {dp: 0});
+}
+for(const id of ['epv-stage', 'epv-c-q', 'epv-c-tau', 'epv-c-gap']){
+  $(id).addEventListener('click', ev => {
+    const cv = ev.currentTarget, ax = cv._ax; if(!ax || !EPV.s) return;
+    const r = cv.getBoundingClientRect(), f = (ev.clientX - r.left - ax.L) / Math.max(1, ax.W - ax.L - ax.R);
+    seekEp(Math.round(Math.max(0, Math.min(1, f)) * (ax.n - 1)));
+  });
+}
+window.addEventListener('resize', () => { if(EPV.s) drawEpv(); });
+document.addEventListener('keydown', e => {
+  if($('epv').style.display === 'none' || !EPV.s) return;
+  if(e.target.tagName === 'INPUT' && e.target.type !== 'range' || e.target.tagName === 'SELECT') return;
+  if(e.key === ' '){ e.preventDefault(); togglePlay(); }
+  else if(e.key === 'ArrowRight' || e.key === 'ArrowLeft'){
+    e.preventDefault(); epvStop(); showFrame(EPV.i + (e.key === 'ArrowRight' ? 1 : -1) * (e.shiftKey ? 10 : 1));
+  }
+  else if(e.key === 'Escape') closeEp();     // (Esc 는 원래대로 정책 STOP 도 함께)
+});
 
 // ---------------- 자동 반복 ----------------
 async function autoStart(){

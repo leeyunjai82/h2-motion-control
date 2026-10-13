@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.5
+# Version: 1.6
 # Changes:
+#   1.6 - 에피소드 보기 (사용자 2026-10-13): GET .../episodes/{ep}/series (시각·단계·관절 실측/지령·토크·두 손 거리, JSON)
+#         · .../episodes/{ep}/jpeg (저장된 JPEG 를 이어 붙인 그대로, 오프셋은 series.off) — 웹이 한 번 받아 프레임별로 재생
 #   1.5 - 정책 시작 조건 (사용자 2026-10-13): 박스 없으면 시작 안 함 — detect_box 가 박스를 보고 있고 너비가
 #         robot.yaml grab.box_width_range 안. 시작 자세는 Box 버튼 대기 자세 — 잡기 모드 OFF 대신 Box 이어야 시작
 #         (detect_box 는 Box 모드에서만 인식). detect_box Auto Grab 은 꺼져 있어야 함 (정책과 규칙 잡기가 겹치지 않게)
@@ -58,7 +60,7 @@ from pa_runtime import robot_env  # noqa: E402
 
 import uvicorn                    # noqa: E402
 from fastapi import FastAPI, File, HTTPException, UploadFile   # noqa: E402
-from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse   # noqa: E402
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse   # noqa: E402
 from starlette.background import BackgroundTask   # noqa: E402
 
 PORT = 50030
@@ -1089,6 +1091,53 @@ def api_thumb(name: str, ep: str):
     if not os.path.exists(p):
         raise HTTPException(404, "없음")
     return FileResponse(p, media_type="image/jpeg")
+
+
+_ep_cache = {"key": None, "z": None}
+_ep_lk = threading.Lock()
+
+
+def ep_arrays(name, ep):
+    """에피소드 npz → {키: 배열} (보기용, 마지막 하나만 메모리에 둠 — 재생 중 같은 파일을 여러 번 읽지 않게)."""
+    if not re.match(r"^ep_\d{6}$", ep):
+        raise HTTPException(400, "에피소드 id")
+    d = os.path.join(ds_path(name), "episodes", ep)
+    p = os.path.join(d, "episode.npz")
+    if not os.path.exists(p):
+        raise HTTPException(404, "없음")
+    key = (p, os.path.getmtime(p))
+    with _ep_lk:
+        if _ep_cache["key"] != key:
+            with np.load(p, allow_pickle=False) as z:
+                _ep_cache["z"] = {k: z[k] for k in z.files}
+            _ep_cache["key"] = key
+        return _ep_cache["z"], d
+
+
+@app.get("/api/datasets/{name}/episodes/{ep}/series")
+def api_ep_series(name: str, ep: str):
+    """에피소드 보기: 프레임별 시각·잡기 단계·관절 실측/지령(°)·토크(Nm)·두 손 거리(m)·JPEG 오프셋."""
+    z, d = ep_arrays(name, ep)
+    with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+        m = json.load(f)
+    n = min(len(z["t"]), len(z["state"]), len(z["action"]), len(z["stage"]), len(z["ee"]), len(z["jpeg_off"]) - 1)
+    gap = lambda e: np.linalg.norm(e[:n, :3] - e[:n, 3:], axis=1).round(4).tolist()   # noqa: E731
+    return {"id": ep, "n": n, "fps": m.get("fps", FPS), "ok": m.get("ok"), "source": m.get("source"),
+            "duration": m.get("duration"), "created": m.get("created"), "image": m.get("image"),
+            "joint_names": m.get("joint_names") or rt.JOINT_NAMES, "stage_names": m.get("stage_names") or [],
+            "t": z["t"][:n].round(3).tolist(), "stage": z["stage"][:n].astype(int).tolist(),
+            "state_deg": np.degrees(z["state"][:n]).T.round(2).tolist(),
+            "action_deg": np.degrees(z["action"][:n]).T.round(2).tolist(),
+            "tau": z["tau"][:n].T.round(2).tolist() if "tau" in z else None,
+            "gap": gap(z["ee"]), "gap_cmd": gap(z["ee_cmd"]) if "ee_cmd" in z else None,
+            "off": z["jpeg_off"][:n + 1].astype(int).tolist()}
+
+
+@app.get("/api/datasets/{name}/episodes/{ep}/jpeg")
+def api_ep_jpeg(name: str, ep: str):
+    """에피소드의 JPEG 를 이어 붙인 바이트 그대로 — 프레임 i = [off[i], off[i+1]) (series.off)."""
+    z, _ = ep_arrays(name, ep)
+    return Response(z["jpeg"].tobytes(), media_type="application/octet-stream", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/datasets/{name}/zip")
