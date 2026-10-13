@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.26
+# Version: 1.27
 # Changes:
+#   1.27 - Box 대기 자세(ready)에서 손목 RPY 를 미리 돌리지 않음 (⑪ Home 복귀와 같은 RPY 0) — ④ 위쪽 접근부터 적용.
+#          + 대기 자세 y 0.25 → 0.28 (grab.ready_xyz). 대기 때 손이 D435i 화면에 보임 (사용자 2026-10-13)
 #   1.26 - 박스 너비가 grab.box_width_range (0.12–0.50 m) 밖이면 잡지 않음 — 너비를 잘못 인식했을 때 두 손이 맞닿거나
 #          박스 윗면 위로 내려오는 것 방지 (사용자 2026-10-13). 너비 = L/R 점 사이 수평 거리 + 2 × 2 cm (L/R 은 변에서 2 cm 안쪽)
 #   1.25 - 잡은 뒤 가운데로 (grab.center_after_grab): ⑥'' 끌어당기기 때 양손 가운데를 y 0 으로 같이 옮김 →
@@ -437,10 +439,11 @@ class GrabController:
 
     # ---- 대기 자세 (모드 선택 시) ----
     def ready(self):
-        """잡을 준비 — 팔을 작업 대기 자세(HOME)로 들어 올림."""
+        """잡을 준비 — 팔을 작업 대기 자세(HOME)로 들어 올림.
+        손목은 기본(RPY 0) — ⑪ Home 복귀와 같은 자세. 손목 RPY(wrist_params)는 ④ 위쪽 접근부터 적용
+        (대기 때 미리 돌리면 손끝이 안쪽을 향해 카메라 화면에 들어옴 — 사용자 2026-10-13)."""
         print("[READY] 대기 자세로")
-        l_rot, r_rot = self._wrist_quats()
-        self._move(self.HOME_LEFT, self.HOME_RIGHT, 2.0, "READY 대기자세", l_rot, r_rot)
+        self._move(self.HOME_LEFT, self.HOME_RIGHT, 2.0, "READY 대기자세")
 
     def park(self):
         """대기 해제 — 팔을 기동 시점 자세로 되돌린다.
