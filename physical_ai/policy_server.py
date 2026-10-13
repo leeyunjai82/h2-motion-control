@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# Version: 1.1
+# Version: 1.2
 # Changes:
+#   1.2 - 기록 끝 경합 수정: stop() 이 진행 중인 틱(한 프레임을 여러 배열에 차례로 추가)과 겹치면 마지막 프레임이 일부 배열에만
+#         들어간 채 저장돼 학습에서 '배열 길이가 맞지 않음' (실기 2026-10-13, 33 개 중 ep_000003). 틱과 stop() 을 같은 잠금으로
+#         묶고, 쓰기 전에 모든 프레임 배열을 가장 짧은 길이로 맞춤
 #   1.1 - 에피소드에 팔 14 축 토크 tau (rt/lowstate tau_est, Nm) 저장 + meta.json tau_abs_max (축별 |tau| 최대) —
 #         나중 ACT 추론 때 '시연보다 세게 조이면 정지' 기준용 (사용자 2026-10-13). 이전 에피소드에는 tau 없음
 """
@@ -277,11 +280,15 @@ def list_datasets():
     return out
 
 
+FRAME_KEYS = ("t", "state", "action", "tau", "ee", "stage", "weight", "jpeg", "img_t")   # 프레임마다 하나씩 쌓는 배열
+
+
 class Recorder:
     """30 Hz 기록. start() → 매 틱 (이미지·실측·지령·손 위치·단계) → stop() 이 파일로 씀 (별도 스레드)."""
 
     def __init__(self):
         self.lk = threading.Lock()
+        self.tick_lk = threading.Lock()   # 틱 한 번(한 프레임을 여러 배열에 추가)과 stop() 이 겹치지 않게
         self.ep = None          # 기록 중 에피소드 (dict)
         self.last = None        # 마지막 저장 결과 (UI 표시)
         # 첫 호출이 느린 것들(JPEG 코덱·FK) 미리 — 안 하면 첫 에피소드 첫 틱이 0.3 s 늦음
@@ -350,10 +357,12 @@ class Recorder:
             t_next += period
             ep = self.ep
             if ep is not None and ep["capturing"]:
-                try:
-                    self._tick(ep)
-                except Exception as e:   # noqa: BLE001
-                    ep["abort"] = f"기록 오류: {e}"
+                with self.tick_lk:
+                    if self.ep is ep:          # stop() 이 먼저 닫았으면 이 틱은 버림
+                        try:
+                            self._tick(ep)
+                        except Exception as e:   # noqa: BLE001
+                            ep["abort"] = f"기록 오류: {e}"
                 # 들기까지만: 들기 단계를 지나면 기록 멈춤 (에피소드는 잡기가 끝날 때 닫음)
                 if ep["until"] == "lift" and STAGE_NAMES and LIFT_STAGE in STAGE_NAMES:
                     li = STAGE_NAMES.index(LIFT_STAGE)
@@ -364,7 +373,7 @@ class Recorder:
                         ep["capturing"], ep["past_lift"] = False, True
                 if time.time() - ep["t0"] > MAX_EP_SEC:
                     ep["abort"] = f"{MAX_EP_SEC:.0f}초 넘음"
-                if ep["abort"]:
+                if ep["abort"] and self.ep is ep:
                     self.stop(ok=False, why=ep["abort"])
             dt = t_next - time.perf_counter()
             if dt > 0:
@@ -373,7 +382,7 @@ class Recorder:
                 t_next = time.perf_counter()
 
     def stop(self, ok=True, why=""):
-        with self.lk:
+        with self.tick_lk, self.lk:     # 진행 중인 틱이 끝난 뒤 닫음 → 모든 배열 길이 같음
             ep, self.ep = self.ep, None
         if ep is None:
             return None
@@ -392,6 +401,10 @@ class Recorder:
         d = os.path.join(ep["path"], "episodes", ep["id"])
         tmp = d + ".tmp"
         os.makedirs(tmp, exist_ok=True)
+        n = min(len(ep[k]) for k in FRAME_KEYS)       # 혹시라도 길이가 다르면 짧은 쪽에 맞춤 (앞 n 프레임은 같은 틱들)
+        for k in FRAME_KEYS:
+            ep[k] = ep[k][:n]
+        res = dict(res, n=n)
         jp = ep["jpeg"]
         off = np.zeros(len(jp) + 1, dtype=np.int64)
         off[1:] = np.cumsum([len(b) for b in jp])

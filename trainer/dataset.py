@@ -41,9 +41,18 @@ def load_episodes(root, only_ok=True):
             e = {"id": n, "meta": meta, "state": z["state"].astype(np.float32), "action": z["action"].astype(np.float32),
                  "ee": z["ee"].astype(np.float32), "jpeg": z["jpeg"], "off": z["jpeg_off"].astype(np.int64),
                  "stage": z["stage"]}
-        e["n"] = len(e["state"])
-        if e["n"] < 2 or len(e["off"]) != e["n"] + 1 or e["action"].shape != e["state"].shape:
-            raise ValueError(f"{n}: 배열 길이가 맞지 않음")
+        lens = (len(e["state"]), len(e["action"]), len(e["ee"]), len(e["stage"]), len(e["off"]) - 1)
+        e["n"] = min(lens)
+        if len(set(lens)) != 1:
+            # 로봇 PC policy_server 1.1 이하: 기록 끝에서 마지막 프레임이 일부 배열에만 들어간 채 저장될 수 있었음 (1.2 에서 고침).
+            #   앞 n 프레임은 같은 틱들이라 짧은 쪽에 맞춰 씀
+            print(f"[dataset] {n}: 배열 길이 다름 (state, action, ee, stage, jpeg) = {lens} → 앞 {e['n']} 프레임만 씀", flush=True)
+            for k in ("state", "action", "ee", "stage"):
+                e[k] = e[k][:e["n"]]
+            e["off"] = e["off"][:e["n"] + 1]
+        if e["n"] < 2 or e["action"].shape != e["state"].shape:
+            print(f"[dataset] {n}: 프레임 {e['n']} 개 — 건너뜀", flush=True)
+            continue
         eps.append(e)
     if not eps:
         raise ValueError("쓸 에피소드 없음 (성공 에피소드 0)")
