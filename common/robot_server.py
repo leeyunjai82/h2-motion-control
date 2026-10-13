@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.25
+# Version: 1.26
 # Changes:
+#   1.26 - 박스 너비가 grab.box_width_range (0.12–0.50 m) 밖이면 잡지 않음 — 너비를 잘못 인식했을 때 두 손이 맞닿거나
+#          박스 윗면 위로 내려오는 것 방지 (사용자 2026-10-13). 너비 = L/R 점 사이 수평 거리 + 2 × 2 cm (L/R 은 변에서 2 cm 안쪽)
 #   1.25 - 잡은 뒤 가운데로 (grab.center_after_grab): ⑥'' 끌어당기기 때 양손 가운데를 y 0 으로 같이 옮김 →
 #          대칭 정렬·들기·Place 모두 로봇 정면. Place 는 원래 x · y 0 (앞에 선 사람 앞) 에 내려놓음 (사용자 2026-10-12).
 #          10-07 align_to_hands 때 x 와 함께 빠졌던 y 가운데 정렬을 y 만 되살림 (x 는 잡은 손 기준 그대로)
@@ -172,6 +174,8 @@ GRAB_SQUEEZE = float(robot_env.CFG["grab"].get("squeeze", 0.0))   # 잡을 때 �
 TTS_VOICE = int((robot_env.CFG.get("tts") or {}).get("voice", 6))   # TTS 서버 음성 번호 (멘트는 영어)
 BOX_YAW_FOLLOW = bool(robot_env.CFG["grab"].get("box_yaw_follow", True))     # 비스듬한 박스: 손목 yaw 를 박스 회전만큼 더함
 MAX_BOX_YAW_DEG = float(robot_env.CFG["grab"].get("max_box_yaw_deg", 25.0))  # 이보다 더 돌아 있으면 잡지 않음 [deg]
+BOX_W_RANGE = [float(v) for v in robot_env.CFG["grab"].get("box_width_range", [0.12, 0.50])]   # 이 너비 밖이면 잡지 않음 [m]
+LR_INSET_M = 0.02   # 인식 L/R 점이 좌우 변에서 박스 안쪽으로 들어간 거리 (box_estimator INSET_M) — 너비 = L/R 간격 + 2 × 이 값
 HANDOVER_OPEN = float(robot_env.CFG["grab"].get("handover_open", 0.15))      # 건네기 놓을 때 각 손을 바깥으로 [m]
 PLACE_OPEN = float(robot_env.CFG["grab"].get("place_open", 0.15))            # 제자리 내려놓은 뒤 각 손을 바깥으로 [m]
 WAIST_BASE_PITCH = float(robot_env.CFG["grab"]["waist_base_pitch_deg"])   # Home(pose=zero) 허리 pitch (H2 허리는 arm_sdk 로 안 움직임)
@@ -514,6 +518,11 @@ class GrabController:
         box_yaw = float(np.degrees(np.arctan2(Rx - Lx, Ly - Ry)))
         if abs(box_yaw) > MAX_BOX_YAW_DEG:
             print(f"[GRAB-BOX] ❌ 박스가 {box_yaw:+.1f}° 돌아 있음 (한계 ±{MAX_BOX_YAW_DEG:.0f}°) — 잡지 않음. 박스를 반듯하게 놓아 주세요")
+            return
+        box_w = float(np.hypot(Rx - Lx, Ly - Ry)) + 2 * LR_INSET_M
+        if not (BOX_W_RANGE[0] <= box_w <= BOX_W_RANGE[1]):
+            print(f"[GRAB-BOX] ❌ 박스 너비 {box_w*100:.1f} cm — 잡는 범위 {BOX_W_RANGE[0]*100:.0f}–{BOX_W_RANGE[1]*100:.0f} cm 밖 "
+                  f"(grab.box_width_range). 잡지 않음 — 인식이 맞는지 확인해 주세요")
             return
         yaw_add = box_yaw if BOX_YAW_FOLLOW else 0.0
         l_rot, r_rot = self._wrist_quats()               # 기본 자세 — ⑥' 대칭 정렬부터 (박스를 반듯하게 편 뒤)
