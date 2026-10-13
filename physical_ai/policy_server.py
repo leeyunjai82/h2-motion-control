@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.0
+# Version: 1.1
+# Changes:
+#   1.1 - 에피소드에 팔 14 축 토크 tau (rt/lowstate tau_est, Nm) 저장 + meta.json tau_abs_max (축별 |tau| 최대) —
+#         나중 ACT 추론 때 '시연보다 세게 조이면 정지' 기준용 (사용자 2026-10-13). 이전 에피소드에는 tau 없음
 """
 policy_server.py — 피지컬 AI (ACT 모방학습) 로봇 PC 웹 서버 (포트 50030)
 
@@ -8,7 +11,7 @@ policy_server.py — 피지컬 AI (ACT 모방학습) 로봇 PC 웹 서버 (포�
 
 하는 일
   1) 수집   robot_server 의 잡기(스크립트 시연)가 도는 동안 30 Hz 로 에피소드 기록
-            D435i RGB(rs_stream /video_feed) + 팔 14축 실측(rt/lowstate) + 지령(rt/arm_sdk) + 손 위치(FK) + 잡기 단계
+            D435i RGB(rs_stream /video_feed) + 팔 14축 실측·토크(rt/lowstate) + 지령(rt/arm_sdk) + 손 위치(FK) + 잡기 단계
             · 잡기 연동: robot_server /grab_status busy 가 켜지면 시작, 꺼지면 끝 (/grab_history ok 로 성공 판정)
             · 자동 반복: /set_mode box → 박스 보이면 /grab_manual → 끝나면 쉬는 동안 사람이 박스를 옮김 → 반복
             · 수동: 시작/정지 버튼 (잡기와 무관하게 그 시간 동안 기록)
@@ -303,7 +306,7 @@ class Recorder:
             self.ep = {"id": next_ep_id(p), "dataset": SET["dataset"], "path": p, "source": source,
                        "t0": time.time(), "w": w, "h": h, "until": SET["record"]["until"],
                        "capturing": True, "lift_seen": False, "past_lift": False, "gap": 0.0,
-                       "t": [], "state": [], "action": [], "ee": [], "stage": [], "weight": [],
+                       "t": [], "state": [], "action": [], "tau": [], "ee": [], "stage": [], "weight": [],
                        "jpeg": [], "img_t": [], "extra": dict(extra or {}), "last_cam": -1, "abort": ""}
             log(f"기록 시작 {self.ep['dataset']}/{self.ep['id']} ({source})")
             return self.ep["id"]
@@ -333,6 +336,7 @@ class Recorder:
         ep["t"].append(now - ep["t0"])
         ep["state"].append(snap["q"])
         ep["action"].append(snap["cmd_q"])
+        ep["tau"].append(snap["tau"])
         ep["ee"].append(fk.hands(snap["q"]))
         ep["stage"].append(si)
         ep["weight"].append(snap["weight"])
@@ -391,10 +395,12 @@ class Recorder:
         jp = ep["jpeg"]
         off = np.zeros(len(jp) + 1, dtype=np.int64)
         off[1:] = np.cumsum([len(b) for b in jp])
+        tau = np.asarray(ep["tau"], dtype=np.float32)
         np.savez(os.path.join(tmp, "episode.npz"),
                  t=np.asarray(ep["t"], dtype=np.float64),
                  state=np.asarray(ep["state"], dtype=np.float32),
                  action=np.asarray(ep["action"], dtype=np.float32),
+                 tau=tau,
                  ee=np.asarray(ep["ee"], dtype=np.float32),
                  stage=np.asarray(ep["stage"], dtype=np.int8),
                  weight=np.asarray(ep["weight"], dtype=np.float32),
@@ -408,6 +414,7 @@ class Recorder:
                 "why": res["why"], "source": ep["source"], "until": ep["until"],
                 "image": {"w": ep["w"], "h": ep["h"]}, "joint_names": rt.JOINT_NAMES, "stage_names": STAGE_NAMES,
                 "skipped_sec": round(ep["gap"], 2),
+                "tau_abs_max": np.abs(tau).max(axis=0).round(2).tolist() if len(tau) else None,
                 "robot": robot_env.ROBOT, "sim": SIM, "camera_url": CAMERA_URL,
                 "camera_pitch_deg": robot_env.CAMERA_PITCH_DEG, **ep["extra"]}
         with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:

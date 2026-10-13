@@ -31,7 +31,7 @@
 | **잡기 연동 기록** | 켜 두면 제어 UI 의 Grab Now·자동 잡기가 돌 때마다 1 에피소드. 매번 **Box 버튼으로 대기 자세를 만든 뒤** 잡기 (잡기 끝 ⑪ Home 은 손목 회전이 없는 자세라 그대로 이어서 잡으면 시작 자세가 달라짐) |
 | **수동 기록** | 시작/정지 사이를 그대로 기록 (잡기와 무관) |
 
-- 30 Hz · D435i RGB (rs_stream `/video_feed`) + 팔 14 축 실측(`rt/lowstate`) + 지령(`rt/arm_sdk`) + 손 위치(FK) + 잡기 단계.
+- 30 Hz · D435i RGB (rs_stream `/video_feed`) + 팔 14 축 실측·토크(`rt/lowstate`) + 지령(`rt/arm_sdk`) + 손 위치(FK) + 잡기 단계.
 - 성공(robot_server `/grab_history` 의 ok = 복귀까지 감)만 저장. '실패한 잡기도 저장' 으로 바꿀 수 있음.
 - **잡은 뒤는 place(정면에 내려놓기) 권장** — 사람 없이 반복되고, 건네기(center)는 '받기 대기' 2 초 고정 정지가 있어
   정책이 그 자리에서 멈춰 버리기 쉬움.
@@ -82,13 +82,15 @@ episodes/ep_000001/episode.npz   (np.savez, pickle 없음)
     t        (N,)    float64  에피소드 시작부터 s
     state    (N,14)  float32  팔 실측 q [rad]  — robot.yaml joints.arm 순서 (arm_server 14 축과 같음)
     action   (N,14)  float32  팔 지령 q [rad]  — rt/arm_sdk motor_cmd.q
+    tau      (N,14)  float32  팔 토크 [Nm]  — rt/lowstate motor_state.tau_est (2026-10-13 부터, 그 전 에피소드에는 없음)
     ee       (N,6)   float32  손끝 위치 L xyz, R xyz [m] — IK 좌표 (pelvis 기준), 실측 q 로 FK
     stage    (N,)    int8     robot_server GRAB_STAGES 순번 (-1 = 없음)
     weight   (N,)    float32  arm_sdk weight
     img_t    (N,)    float64  그 프레임 카메라 수신 시각 (에피소드 기준 s)
     jpeg     (M,)    uint8    JPEG 를 이어 붙인 것
     jpeg_off (N+1,)  int64    프레임 i = jpeg[jpeg_off[i]:jpeg_off[i+1]]
-episodes/ep_000001/meta.json     n, duration, ok, source(auto/grab/manual), image{w,h}, joint_names, stage_names, sim_box …
+episodes/ep_000001/meta.json     n, duration, ok, source(auto/grab/manual), image{w,h}, joint_names, stage_names,
+                                 tau_abs_max (축별 |tau| 최대 Nm), sim_box …
 episodes/ep_000001/thumb.jpg     첫 프레임
 ```
 
