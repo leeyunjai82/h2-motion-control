@@ -508,10 +508,13 @@ function parseOrig(el){
 const basename=s=>s.split(/[/\\]/).pop().toLowerCase();
 const sid=n=>n.replace(/\W/g,'_');
 
-// ============ Logo: RedHat / intel / Circulus ============
-const REDHAT_COLOR   = '#EE0000';
-const INTEL_COLOR    = '#0068B5';
+// ============ Logo: pitron / Circulus / intel ============
+//   URDF 에 logo_link 가 있을 때만 그 메시 자리에 글자판으로 그림 (G1 가슴 logo_link.STL — H2 URDF 에는 없음)
+//   2026-10-16 사용자: RedHat → pitron, 한 줄 "pitron Circulus intel"
+//     (G1 logo_link bbox y 0.149 × z 0.029 m = 5.1 : 1 띠 — 한 줄 121 px / 예전 두 줄 108 px, canvas 높이 256)
+const PITRON_COLOR   = '#00B7EB';   // 회사 메인 색 — 제어 웹·런처·모션 에디터의 pitron 글자와 같음
 const CIRCULUS_COLOR = '#00AEEF';
+const INTEL_COLOR    = '#0068B5';
 
 function makeLogoTextMesh(logoGeo){
   let width=0.10, height=0.025, cx=0.005, cy=0, cz=0;
@@ -538,30 +541,26 @@ function makeLogoTextMesh(logoGeo){
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // Two-line layout:
-  //   Line 1: "RedHat intel"
-  //   Line 2: "Circulus"
-  const line1=[
-    {text:'RedHat', color:REDHAT_COLOR},
-    {text:' ',      color:'#fff'},
-    {text:'intel',  color:INTEL_COLOR},
-  ];
-  const line2=[
+  // One line: "pitron Circulus intel"
+  const line=[
+    {text:'pitron',   color:PITRON_COLOR},
+    {text:' ',        color:'#fff'},
     {text:'Circulus', color:CIRCULUS_COLOR},
+    {text:' ',        color:'#fff'},
+    {text:'intel',    color:INTEL_COLOR},
   ];
 
-  // Each line ~ 42% of canvas height
-  let fontSize=Math.round(canvas.height*0.42);
+  // Up to 62% of canvas height, shrunk to fit 92% of width
+  let fontSize=Math.round(canvas.height*0.62);
   const setFont=()=>{ctx.font=`900 ${fontSize}px "Segoe UI", Arial, sans-serif`;};
   setFont();
   const measure=(parts)=>parts.reduce((w,p)=>w+ctx.measureText(p.text).width,0);
   const maxW=canvas.width*0.92;
-  let w1=measure(line1), w2=measure(line2);
-  let widest=Math.max(w1,w2);
-  if(widest>maxW){
-    fontSize=Math.max(18,Math.floor(fontSize*maxW/widest));
+  let w=measure(line);
+  if(w>maxW){
+    fontSize=Math.max(18,Math.floor(fontSize*maxW/w));
     setFont();
-    w1=measure(line1); w2=measure(line2);
+    w=measure(line);
   }
 
   ctx.textBaseline='middle';ctx.textAlign='left';
@@ -576,8 +575,7 @@ function makeLogoTextMesh(logoGeo){
       x+=ctx.measureText(p.text).width;
     }
   }
-  drawLine(line1, w1, canvas.height*0.30);
-  drawLine(line2, w2, canvas.height*0.72);
+  drawLine(line, w, canvas.height*0.5);
 
   const tex=new THREE.CanvasTexture(canvas);
   tex.anisotropy=8;tex.needsUpdate=true;
