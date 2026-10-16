@@ -141,9 +141,12 @@ OpenVINO 로 로봇에서 돌립니다. 기존 잡기·제어 기능은 그대�
   (`fuser /dev/video*` 로 확인). 숙임각 실측·저장: `sudo ROBOT=h2 python utils/check_rsimu.py --save` (start_robot.sh 끈 상태, 703 서기)
   → `robots/h2/calib_local.yaml` (이 PC 전용, git 에 안 올라감) 이 robot.yaml 값을 덮어씀. 거치대를 다시 조일 때마다 다시 잴 것.
   지금 쓰는 값은 제어 화면 위 막대 System 칩 → Camera 줄. 위치 확인: `utils/cam_marker_check.py`.
+  깊이 확인: `python utils/check_depth.py` (가운데 거리·유효율, `--web` → :50015, `--save`) — rs_stream 끈 상태에서.
 - **머리 쌍안 카메라**: `utils/check_head_cam.py` (수신 확인·깊이 클릭), 인식은 `common/head_track.py` (`robot.yaml head_track`).
   로봇을 다시 켜면 앱 설정이 기본(video_hub 켜짐 · Stereo patch 꺼짐)으로 돌아감 → `start_robot.sh` 가 `utils/head_cam_on.py` 로 매번 자동 준비
   (video_hub 끔 · stereo_patch_pc1 켬 · 수신 IP = 이 PC · 재시작, `robot.yaml head_track.robot_setup`). 서비스 목록: `utils/robot_services.py`.
+  다른 경로 확인용 (h2-motion-control.red 에서 옮김): `utils/probe_h2_camera.py` (USB 로 직접 보이는 보드에서 장치·포맷 식별),
+  `utils/check_depth_teleimager.py` (teleimager ZMQ 영상으로 깊이를 PC 에서 직접 계산 — 비교용, `--web` → :50016).
 
 ## 디렉터리
 
@@ -172,7 +175,7 @@ h2-motion-control/
 │   └── assets/vendor/      # three.min.js
 ├── robots/h2/              # URDF, meshes/, motions/, IK 모델 캐시, robot.yaml, FACTS.md, cad/
 ├── third_party/            # unitree_sdk2_python-814556d (activate_tv.sh 가 받음)
-└── utils/                  # init_fsm, 카메라 보정, IMU·식별 확인, grab_reach, arm_sdk_test, env_snapshot(가상환경 기록), robot_services 등
+└── utils/                  # init_fsm, 카메라 보정·깊이 확인, IMU·식별 확인, grab_reach, arm_sdk_test, env_snapshot(가상환경 기록), robot_services 등
 ```
 
 ## 설정 — `robots/h2/robot.yaml`
