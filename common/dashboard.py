@@ -508,9 +508,9 @@ function parseOrig(el){
 const basename=s=>s.split(/[/\\]/).pop().toLowerCase();
 const sid=n=>n.replace(/\W/g,'_');
 
-// ============ Logo: pitron / Circulus / intel ============
+// ============ Logo: pitron / circulus / intel ============
 //   URDF 에 logo_link 가 있을 때만 그 메시 자리에 글자판으로 그림 (G1 가슴 logo_link.STL — H2 URDF 에는 없음)
-//   2026-10-16 사용자: RedHat → pitron, 한 줄 "pitron Circulus intel"
+//   2026-10-16 사용자: RedHat → pitron, 한 줄 "pitron circulus intel" (다 소문자)
 //     (G1 logo_link bbox y 0.149 × z 0.029 m = 5.1 : 1 띠 — 한 줄 121 px / 예전 두 줄 108 px, canvas 높이 256)
 const PITRON_COLOR   = '#00B7EB';   // 회사 메인 색 — 제어 웹·런처·모션 에디터의 pitron 글자와 같음
 const CIRCULUS_COLOR = '#00AEEF';
@@ -541,11 +541,11 @@ function makeLogoTextMesh(logoGeo){
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // One line: "pitron Circulus intel"
+  // One line: "pitron circulus intel" (all lowercase)
   const line=[
     {text:'pitron',   color:PITRON_COLOR},
     {text:' ',        color:'#fff'},
-    {text:'Circulus', color:CIRCULUS_COLOR},
+    {text:'circulus', color:CIRCULUS_COLOR},
     {text:' ',        color:'#fff'},
     {text:'intel',    color:INTEL_COLOR},
   ];
