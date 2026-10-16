@@ -197,6 +197,11 @@ async def joint_states():
         headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
     )
 
+@app.get('/api/logo')
+def get_logo():
+    """robot.yaml dashboard.logo — 3D 로봇 가슴 로고판 설정 (없으면 {})."""
+    return (robot_env.CFG.get('dashboard') or {}).get('logo') or {}
+
 @app.get('/api/status')
 def status():
     return {'connected': bool(ROBOT_AVAILABLE and ctrl and ctrl.connected)}
@@ -508,68 +513,47 @@ function parseOrig(el){
 const basename=s=>s.split(/[/\\]/).pop().toLowerCase();
 const sid=n=>n.replace(/\W/g,'_');
 
-// ============ Logo: pion / circulus / intel ============
-//   URDF 에 logo_link 가 있을 때만 그 메시 자리에 글자판으로 그림 (G1 가슴 logo_link.STL — H2 URDF 에는 없음)
-//   2026-10-16 사용자 시안: 세 줄 가운데 정렬, 다 소문자 — pion(흰) / circulus(하늘) / intel(파랑)
-//     pion = G1 때 제어 웹 이름 (robot_web.html 0.3 'Pion' → 2.11 H2 → 2.13 pitron)
-//     색은 시안 스크린샷에서 뽑은 값 (글자 안쪽 화소 최빈값)
-//   G1 logo_link bbox y 0.149 × z 0.029 m → 글자판 ×1.5 = 0.224 × 0.044 m (canvas 1309×256)
-const PION_COLOR     = '#FFFFFF';
-const CIRCULUS_COLOR = '#60ADE8';
-const INTEL_COLOR    = '#3A68AF';
+// ============ Logo: 가슴 로고판 (robot.yaml dashboard.logo → GET /api/logo) ============
+//   cfg = {link, center:[x,y,z] m, size:[w,h] m, tilt_deg, bg, lines:[[글자, 색], ...]} — 그 link 에 세운 판 하나에 줄마다 가운데 정렬.
+//   bg(둥근 사각형) 가 있어야 밝은 몸통(URDF white 0.7) 위에서도 흰 글자가 보임 (2026-10-16 사용자 시안: pion / circulus / intel).
+//   장식이라 allMeshes 에 넣지 않음 — 열지도·클릭 선택이 material.color 를 바꾸면 판 전체가 물듦.
+function makeLogoPlate(cfg){
+  const [width,height]=cfg.size;
+  const lines=(cfg.lines||[]).map(([text,color])=>({text:String(text),color}));
 
-function makeLogoTextMesh(logoGeo){
-  let width=0.10, height=0.025, cx=0.005, cy=0, cz=0;
-
-  if(logoGeo){
-    logoGeo.computeBoundingBox();
-    const bb=logoGeo.boundingBox;
-    width  = (bb.max.y - bb.min.y);
-    height = (bb.max.z - bb.min.z);
-    cx     = bb.max.x + 0.0008;
-    cy     = (bb.min.y + bb.max.y) * 0.5;
-    cz     = (bb.min.z + bb.max.z) * 0.5;
-  }
-
-  // Scale logo plane (text gets bigger by the same factor)
-  const SCALE = 1.5;
-  width  *= SCALE;
-  height *= SCALE;
-
-  const aspect=Math.max(0.3, width/Math.max(height,0.001));
   const canvas=document.createElement('canvas');
-  canvas.height=256;
-  canvas.width =Math.min(2048, Math.max(256, Math.round(256*aspect)));
+  canvas.height=512;
+  canvas.width =Math.min(2048, Math.max(256, Math.round(512*width/Math.max(height,0.001))));
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // Three centered lines: "pion" / "circulus" / "intel" (all lowercase)
-  const lines=[
-    {text:'pion',     color:PION_COLOR},
-    {text:'circulus', color:CIRCULUS_COLOR},
-    {text:'intel',    color:INTEL_COLOR},
-  ];
-  const LINE_PITCH=0.95;   // line spacing / font size (tight, as in the mockup)
+  // 배경: 둥근 사각형 (반지름 = 높이의 12 %)
+  if(cfg.bg){
+    const W=canvas.width,H=canvas.height,r=H*0.12;
+    ctx.fillStyle=cfg.bg;
+    ctx.beginPath();
+    ctx.moveTo(r,0);ctx.arcTo(W,0,W,H,r);ctx.arcTo(W,H,0,H,r);ctx.arcTo(0,H,0,0,r);ctx.arcTo(0,0,W,0,r);
+    ctx.closePath();ctx.fill();
+  }
 
-  // Fill 96% of canvas height, shrunk to fit 92% of width
-  let fontSize=Math.floor(canvas.height*0.96/(lines.length*LINE_PITCH));
+  // 글자: 여백 9 % 안을 줄 수만큼 채우고(줄 간격 0.95 × 글자 크기), 가장 긴 줄이 너비를 넘으면 줄임
+  const PAD=0.09, LINE_PITCH=0.95;
+  let fontSize=Math.floor(canvas.height*(1-2*PAD)/(Math.max(lines.length,1)*LINE_PITCH));
   const setFont=()=>{ctx.font=`700 ${fontSize}px "Segoe UI", Arial, sans-serif`;};
   setFont();
-  const maxW=canvas.width*0.92;
-  const widest=Math.max(...lines.map(l=>ctx.measureText(l.text).width));
+  const maxW=canvas.width*(1-2*PAD);
+  const widest=Math.max(1,...lines.map(l=>ctx.measureText(l.text).width));
   if(widest>maxW){
     fontSize=Math.max(12,Math.floor(fontSize*maxW/widest));
     setFont();
   }
-
   ctx.textBaseline='middle';ctx.textAlign='center';
-  ctx.strokeStyle='#000';ctx.lineWidth=Math.max(2,fontSize*0.04);ctx.lineJoin='round';
-
+  if(!cfg.bg){ctx.strokeStyle='#000';ctx.lineWidth=Math.max(2,fontSize*0.06);ctx.lineJoin='round';}
   const pitch=fontSize*LINE_PITCH;
   const y0=canvas.height/2-pitch*(lines.length-1)/2;
   lines.forEach((l,k)=>{
     const y=y0+k*pitch;
-    ctx.strokeText(l.text,canvas.width/2,y);
+    if(!cfg.bg)ctx.strokeText(l.text,canvas.width/2,y);
     ctx.fillStyle=l.color;
     ctx.fillText(l.text,canvas.width/2,y);
   });
@@ -579,10 +563,13 @@ function makeLogoTextMesh(logoGeo){
   const mat=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false,side:THREE.DoubleSide});
   const plane=new THREE.Mesh(new THREE.PlaneGeometry(width,height),mat);
 
+  // PlaneGeometry(XY, +z 를 봄) → link 의 +x(앞)를 보고 위가 +z, 그다음 위쪽을 뒤로 tilt_deg
   plane.rotation.x=Math.PI/2;
   plane.rotation.y=Math.PI/2;
-  plane.position.set(cx,cy,cz);
+  plane.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-(cfg.tilt_deg||0)*Math.PI/180));
+  plane.position.set(...cfg.center);
   plane.renderOrder=10;
+  plane.userData={linkName:cfg.link,logo:true};
   return plane;
 }
 
@@ -655,8 +642,10 @@ async function loadRobot(){
     for(const l of Object.values(links))
       for(const v of l.visuals){const b=basename(v.fn);if(serverFiles.has(b))needed.add(b);}
 
-    const logoFn=links['logo_link']?.visuals?.[0]?.fn;
-    const logoBase=logoFn?basename(logoFn):null;
+    // 가슴 로고판 설정 (robot.yaml dashboard.logo) — 없거나 못 읽으면 로고 없이
+    let logoCfg={};
+    try{const r=await fetch('/api/logo');if(r.ok)logoCfg=await r.json();}catch(e){}
+    if(!(logoCfg&&logoCfg.link&&Array.isArray(logoCfg.center)&&Array.isArray(logoCfg.size)))logoCfg={};
 
     const geos={};const total=needed.size;let loaded=0;
     await Promise.all([...needed].map(async b=>{
@@ -675,23 +664,17 @@ async function loadRobot(){
       const link=links[lname];if(!link)return null;
       const grp=new THREE.Group();grp.name='link:'+lname;
 
-      if(lname==='logo_link'){
-        const logoGeo=logoBase?geos[logoBase]:null;
-        const txt=makeLogoTextMesh(logoGeo);
-        txt.userData={linkName:lname};
-        allMeshes.push(txt);grp.add(txt);
-      } else {
-        for(const v of link.visuals){
-          const b=basename(v.fn),geo=geos[b];if(!geo)continue;
-          let color=(materials[v.matName]!==undefined)?materials[v.matName]:0xb0b0b0;
-          if(/hand|finger|thumb|palm/i.test(lname)) color=0x1a1a1a;
-          const isDark=color<0x555555;
-          const mat=new THREE.MeshPhongMaterial({color,specular:isDark?0x222222:0x666666,shininess:isDark?55:25});
-          const mesh=new THREE.Mesh(geo,mat);mesh.userData={linkName:lname};
-          mesh.position.set(...v.origin.xyz);mesh.setRotationFromEuler(new THREE.Euler(...v.origin.rpy,'XYZ'));mesh.scale.set(...v.sc);
-          allMeshes.push(mesh);grp.add(mesh);
-        }
+      for(const v of link.visuals){
+        const b=basename(v.fn),geo=geos[b];if(!geo)continue;
+        let color=(materials[v.matName]!==undefined)?materials[v.matName]:0xb0b0b0;
+        if(/hand|finger|thumb|palm/i.test(lname)) color=0x1a1a1a;
+        const isDark=color<0x555555;
+        const mat=new THREE.MeshPhongMaterial({color,specular:isDark?0x222222:0x666666,shininess:isDark?55:25});
+        const mesh=new THREE.Mesh(geo,mat);mesh.userData={linkName:lname};
+        mesh.position.set(...v.origin.xyz);mesh.setRotationFromEuler(new THREE.Euler(...v.origin.rpy,'XYZ'));mesh.scale.set(...v.sc);
+        allMeshes.push(mesh);grp.add(mesh);
       }
+      if(logoCfg.link===lname)grp.add(makeLogoPlate(logoCfg));
 
       const ax=new THREE.AxesHelper(.08);ax.visible=false;allAxes.push(ax);grp.add(ax);
       for(const jt of Object.values(joints).filter(j=>j.parent===lname)){
