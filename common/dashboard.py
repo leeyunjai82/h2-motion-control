@@ -508,13 +508,15 @@ function parseOrig(el){
 const basename=s=>s.split(/[/\\]/).pop().toLowerCase();
 const sid=n=>n.replace(/\W/g,'_');
 
-// ============ Logo: pitron / circulus / intel ============
+// ============ Logo: pion / circulus / intel ============
 //   URDF 에 logo_link 가 있을 때만 그 메시 자리에 글자판으로 그림 (G1 가슴 logo_link.STL — H2 URDF 에는 없음)
-//   2026-10-16 사용자: RedHat → pitron, 한 줄 "pitron circulus intel" (다 소문자)
-//     (G1 logo_link bbox y 0.149 × z 0.029 m = 5.1 : 1 띠 — 한 줄 121 px / 예전 두 줄 108 px, canvas 높이 256)
-const PITRON_COLOR   = '#00B7EB';   // 회사 메인 색 — 제어 웹·런처·모션 에디터의 pitron 글자와 같음
-const CIRCULUS_COLOR = '#00AEEF';
-const INTEL_COLOR    = '#0068B5';
+//   2026-10-16 사용자 시안: 세 줄 가운데 정렬, 다 소문자 — pion(흰) / circulus(하늘) / intel(파랑)
+//     pion = G1 때 제어 웹 이름 (robot_web.html 0.3 'Pion' → 2.11 H2 → 2.13 pitron)
+//     색은 시안 스크린샷에서 뽑은 값 (글자 안쪽 화소 최빈값)
+//   G1 logo_link bbox y 0.149 × z 0.029 m → 글자판 ×1.5 = 0.224 × 0.044 m (canvas 1309×256)
+const PION_COLOR     = '#FFFFFF';
+const CIRCULUS_COLOR = '#60ADE8';
+const INTEL_COLOR    = '#3A68AF';
 
 function makeLogoTextMesh(logoGeo){
   let width=0.10, height=0.025, cx=0.005, cy=0, cz=0;
@@ -541,41 +543,36 @@ function makeLogoTextMesh(logoGeo){
   const ctx=canvas.getContext('2d');
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  // One line: "pitron circulus intel" (all lowercase)
-  const line=[
-    {text:'pitron',   color:PITRON_COLOR},
-    {text:' ',        color:'#fff'},
+  // Three centered lines: "pion" / "circulus" / "intel" (all lowercase)
+  const lines=[
+    {text:'pion',     color:PION_COLOR},
     {text:'circulus', color:CIRCULUS_COLOR},
-    {text:' ',        color:'#fff'},
     {text:'intel',    color:INTEL_COLOR},
   ];
+  const LINE_PITCH=0.95;   // line spacing / font size (tight, as in the mockup)
 
-  // Up to 62% of canvas height, shrunk to fit 92% of width
-  let fontSize=Math.round(canvas.height*0.62);
-  const setFont=()=>{ctx.font=`900 ${fontSize}px "Segoe UI", Arial, sans-serif`;};
+  // Fill 96% of canvas height, shrunk to fit 92% of width
+  let fontSize=Math.floor(canvas.height*0.96/(lines.length*LINE_PITCH));
+  const setFont=()=>{ctx.font=`700 ${fontSize}px "Segoe UI", Arial, sans-serif`;};
   setFont();
-  const measure=(parts)=>parts.reduce((w,p)=>w+ctx.measureText(p.text).width,0);
   const maxW=canvas.width*0.92;
-  let w=measure(line);
-  if(w>maxW){
-    fontSize=Math.max(18,Math.floor(fontSize*maxW/w));
+  const widest=Math.max(...lines.map(l=>ctx.measureText(l.text).width));
+  if(widest>maxW){
+    fontSize=Math.max(12,Math.floor(fontSize*maxW/widest));
     setFont();
-    w=measure(line);
   }
 
-  ctx.textBaseline='middle';ctx.textAlign='left';
+  ctx.textBaseline='middle';ctx.textAlign='center';
   ctx.strokeStyle='#000';ctx.lineWidth=Math.max(2,fontSize*0.04);ctx.lineJoin='round';
 
-  function drawLine(parts,totalW,yPos){
-    let x=(canvas.width-totalW)/2;
-    for(const p of parts){
-      ctx.strokeText(p.text,x,yPos);
-      ctx.fillStyle=p.color;
-      ctx.fillText(p.text,x,yPos);
-      x+=ctx.measureText(p.text).width;
-    }
-  }
-  drawLine(line, w, canvas.height*0.5);
+  const pitch=fontSize*LINE_PITCH;
+  const y0=canvas.height/2-pitch*(lines.length-1)/2;
+  lines.forEach((l,k)=>{
+    const y=y0+k*pitch;
+    ctx.strokeText(l.text,canvas.width/2,y);
+    ctx.fillStyle=l.color;
+    ctx.fillText(l.text,canvas.width/2,y);
+  });
 
   const tex=new THREE.CanvasTexture(canvas);
   tex.anisotropy=8;tex.needsUpdate=true;
