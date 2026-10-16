@@ -145,7 +145,7 @@ OpenVINO 로 로봇에서 돌립니다. 기존 잡기·제어 기능은 그대�
 - **머리 쌍안 카메라**: `utils/check_head_cam.py` (수신 확인·깊이 클릭), 인식은 `common/head_track.py` (`robot.yaml head_track`).
   로봇을 다시 켜면 앱 설정이 기본(video_hub 켜짐 · Stereo patch 꺼짐)으로 돌아감 → `start_robot.sh` 가 `utils/head_cam_on.py` 로 매번 자동 준비
   (video_hub 끔 · stereo_patch_pc1 켬 · 수신 IP = 이 PC · 재시작, `robot.yaml head_track.robot_setup`). 서비스 목록: `utils/robot_services.py`.
-  다른 경로 확인용 (h2-motion-control.red 에서 옮김): `utils/probe_h2_camera.py` (USB 로 직접 보이는 보드에서 장치·포맷 식별),
+  다른 경로 확인용 (삭제한 h2-motion-control.red 에서 옮김): `utils/probe_h2_camera.py` (USB 로 직접 보이는 보드에서 장치·포맷 식별),
   `utils/check_depth_teleimager.py` (teleimager ZMQ 영상으로 깊이를 PC 에서 직접 계산 — 비교용, `--web` → :50016).
 
 ## 디렉터리

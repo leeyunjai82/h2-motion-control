@@ -19,7 +19,7 @@ sdk:
   loco_module: unitree_sdk2py.h2.loco.h2_loco_client
   # tv 환경 SDK(requirements 고정 f559291, G1)에는 unitree_sdk2py.h2 가 없다 → third_party/ 에 따로 받아 H2 에서만 쓴다.
   #   activate_tv.sh 가 처음 한 번 자동으로 받고, common/robot_env.py 가 sys.path 앞에 넣는다. (cyclonedds 0.10.2 동일)
-  # 814556d (master): h2-motion-control.red 의 65691c8 대비 unitree_sdk2py 변경은 h2_loco_client.py 의
+  # 814556d (master): H2R(h2-motion-control.red, 2026-10-16 삭제 — robots/h2/FACTS.md 자료 표) 의 65691c8 대비 unitree_sdk2py 변경은 h2_loco_client.py 의
   #   EnableArmSDK / DisableArmSDK 가 결과 코드를 반환하는 것뿐 (65691c8 은 None → 공식 예제가 실패로 판단, 2026-10-07)
   # EnableArmSDK(7109) 를 송신 시작 전에 호출, 종료 시 weight 0 후 DisableArmSDK (SDK 814556d 공식 예제 절차)
   #   실기 2026-10-07: 호출 없이는 FSM 4/601 모두 팔이 안 움직임 (GetArmSdkStatus 는 True 로 나왔는데도).
@@ -34,7 +34,7 @@ identity:
 
 # rt/arm_sdk 로 보내는 LowCmd 헤더
 #   xr_teleoperate 817fb00 H2_ArmController: msg.mode_pr = 0, msg.mode_machine = lowstate.mode_machine
-#   (이 repo / h2-motion-control.red 는 0 을 보냈음 — 실기에서 FSM 601·4 모두 팔이 안 움직임, 2026-10-07)
+#   (이 repo / H2R 는 0 을 보냈음 — 실기에서 FSM 601·4 모두 팔이 안 움직임, 2026-10-07)
 lowcmd:
   mode_machine: lowstate
 
@@ -42,7 +42,7 @@ joints:
   motor_slots: 35             # unitree_hg LowState_ 고정 길이 (SDK, xr_teleoperate)
   # URDF 관절 이름 → 모터 슬롯
   #   팔 15–28              : ✓ 실기 확인 2026-10-07 (utils/arm_sdk_test.py 슬롯별 ±8°, 14개 모두 이름대로 움직임 — 사용자 육안)
-  #   헤드·weight            : SDK / xr_teleoperate / h2-motion-control.red 일치
+  #   헤드·weight            : SDK / xr_teleoperate / H2R 일치
   #   허리 순서               : 12 roll(모터 A) / 13 pitch(모터 B) / 14 yaw — 공식 문서 「关节电机顺序」(2026-07-30 판) 확인 2026-10-10
   #                            (xr_teleoperate 817fb00 · SDK low-level 예제도 같음. SDK arm_sdk 예제·C++ 예제의 12 yaw 순서는 틀림)
   #                            arm_sdk 로 허리가 안 움직이고 아래 waist_hold_initial 로 명령도 안 보냄 — 읽기(check_rsimu 의 13)만 사용
@@ -96,7 +96,7 @@ joints:
   weak: [5, 11, 15, 16, 17, 18, 22, 23, 24, 25]  # xr_teleoperate H2 _Is_weak_motor: 발목 pitch 5/11 + 어깨 3축·팔꿈치 (이전 4/10 은 G1 목록)
 
 gains:                        # xr_teleoperate 817fb00 H2_ArmController (팔 = kp_low/kd_low, 손목 = kp_wrist/kd_wrist)
-  # 이전 h2-motion-control.red 값 80/3 · 40/1.5 · 300/3 → 실기 2026-10-07 어깨 +8° 명령에 4.6–5.5° 만 따라옴
+  # 이전 H2R 값 80/3 · 40/1.5 · 300/3 → 실기 2026-10-07 어깨 +8° 명령에 4.6–5.5° 만 따라옴
   kp_high: 300.0
   kd_high: 5.0
   kp_low: 140.0
@@ -280,7 +280,7 @@ grab:
 tts:                          # 잡기 멘트 (영어) — TTS 서버 http://127.0.0.1:59530/v1/tts?lang=en (이 저장소 밖, 사용자 쪽에서 띄움)
   voice: 6                    # 음성 번호 (기존 값, 실기에서 나옴)
 
-fsm:                          # unitree_sdk2py h2_loco_client.py + h2-motion-control.red init_fsm.py (실기)
+fsm:                          # unitree_sdk2py h2_loco_client.py + H2R init_fsm.py (실기)
   # 실기 GetAvailableFsmIds(7008) 이름: 4 FixStand, 601 HybridWalk, 703 PhaseWalk (2026-10-07)
   # arm_sdk 지원 = {4, 703} (SDK 814556d 예제). 601 은 실기에서 팔 안 움직임
   names: {0: "Zero Torque", 1: "Damp", 2: "Squat", 3: "Sit", 4: "FixStand", 601: "HybridWalk", 701: "WalkNew", 703: "PhaseWalk"}

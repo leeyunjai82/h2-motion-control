@@ -31,7 +31,7 @@ H2 지원(4단계)을 위해 **출처로 확인한 값**과 **확인이 필요�
 | SDK-low | 위 SDK `example/h2/low_level/h2_ankle_swing_example.py` (관절 순서 수정 `65691c8`, 2026-07-21) |
 | XR | `unitreerobotics/xr_teleoperate` master `817fb00` (2026-09-07) `teleop/robot_control/robot_arm.py` |
 | ROS | `unitreerobotics/unitree_ros` `5994d4f` (2026-09-30) `robots/h2_description/H2.urdf` |
-| H2R | `leeyunjai82/h2-motion-control.red` `8e7996d` — **실기에서 simulator 동작 확인** (사용자 보고, 2026-10) |
+| H2R | `leeyunjai82/h2-motion-control.red` `8e7996d` — **실기에서 simulator 동작 확인** (사용자 보고, 2026-10). **저장소는 2026-10-16 삭제** (사용자) — 이 문서에 옮겨 적은 값이 남은 기록. 카메라 확인 도구 3개는 `utils/` 로 옮김 (`check_depth.py` · `probe_h2_camera.py` · `check_depth_teleimager.py`) |
 | STEP | Unitree 공식 H2 단순화 모델 `H2_简化模型_260601.STEP` (oss-global-cdn.unitree.com/static/7585d210dc9b47b6907b70f46f8c24ac.zip, 2026-06-01, 190 MB — repo 미포함). URDF `torso_link` 메시에 정합: STEP→torso x = 0.6932 − y_s, y = x_s − 0.0011, z = z_s − 0.4729 [m] (중앙 오차 1.2 mm) |
 | DOC-joint | 공식 문서 H2 SDK 开发指南 「关节电机顺序」 (`H2_developer/joint_motor_sequence`, 2026-07-30 갱신) — 슬롯 0–30 이름·한계, 허리 12/13 = 모터 A/B (병렬) |
 | DOC-low | 공식 문서 H2 SDK 开发指南 「底层服务接口」 (`H2_developer/basic_services_interface`, 2026-03-18 갱신) — `rt/lowstate` / `rt/lowcmd` 구조체 |
@@ -54,7 +54,7 @@ H2 지원(4단계)을 위해 **출처로 확인한 값**과 **확인이 필요�
 | LocoClient | `unitree_sdk2py.h2.loco.h2_loco_client.LocoClient` | SDK. **현재 requirements 고정 커밋 `f559291` 에는 없음 → SDK 업그레이드 필요** |
 | FSM ID | 0 ZeroTorque, 1 Damp, 2 Squat, 3 Sit, 4 StandUp, **601 Start** | SDK `h2_loco_client.py` (`Start()` 가 500 → 601 로 바뀐 커밋 `6dec8b2`, 2026-07-02) |
 | 기립 순서 | 1 → (5초) → 4 → (10초) → **703** (이 repo, 2026-10-07 변경). H2R 는 → 601 | 601 에서는 arm_sdk 가 안 먹음 (실기) |
-| ~~FSM 601 에서 arm_sdk 동작 (EnableArmSDK 없이)~~ | **실기 2026-10-07 재확인: 동작 안 함** (h2-motion-control.red simulator.py 그대로 실행해도 안 움직임) | 사용자 실기 |
+| ~~FSM 601 에서 arm_sdk 동작 (EnableArmSDK 없이)~~ | **실기 2026-10-07 재확인: 동작 안 함** (H2R simulator.py 그대로 실행해도 안 움직임) | 사용자 실기 |
 | FSM 조회 API | `GetFsmId` 7001, `GetAvailableFsmIds` 7008 (ID+이름), `GetArmSdkStatus` 7007 | SDK `h2_loco_api.py`. 실기 응답 여부는 확인 필요 |
 | URDF | `robots/h2/H2.urdf` = ROS `H2.urdf` (H2R 의 URDF 와 바이트 동일) | ROS, H2R |
 | 메시 | ROS `5994d4f` (H2R 대비 `head_pitch_link.stl`, `head_yaw_link.stl` 만 갱신 — 시각용) | ROS |
@@ -96,7 +96,7 @@ H2 지원(4단계)을 위해 **출처로 확인한 값**과 **확인이 필요�
 
 → 카메라 거치대: `robots/h2/cad/camera_bracket/` (3부품, 설계값 camera x 0.130 · z 0.350 · pitch 45°, 장착 후 보정)
 
-## 공식 자료끼리 충돌 → h2-motion-control.red 실기 기준으로 결정 (2026-10)
+## 공식 자료끼리 충돌 → H2R 실기 기준으로 결정 (2026-10)
 
 **2026-10-10 공식 문서 「关节电机顺序」(DOC-joint, 2026-07-30 판) 로 확정 — 지금 채택값과 손목·허리·발목 모두 일치.**
 틀린 쪽: SDK-arm 예제 허리, SDK-low 예제 손목, SDK C++ `example/h2/low_level/h2_ankle_swing_example.cpp` 허리 (Yaw/Roll/Pitch, G1 순서).
@@ -108,7 +108,7 @@ H2 지원(4단계)을 위해 **출처로 확인한 값**과 **확인이 필요�
 | 발목 4/5 (우리 기능 무관) | Pitch/Roll | Roll/Pitch | Roll/Pitch | Roll/Pitch | **Roll/Pitch** ✓ |
 | arm_sdk 허용 FSM | {4, 703} + `EnableArmSDK()` 필요 | — | (검사 없음) | 601 에서 동작 (실기) | (문서에 없음) |
 
-**실기 확인 방법** (H2R simulator, 관절 모드): 관절 하나만 조금 움직이고 실제로 어느 축이 도는지 확인.
+**실기 확인 방법** (지금은 이 repo `./start_editor.sh real` 모션 에디터 Joint 모드, 이전엔 H2R simulator): 관절 하나만 조금 움직이고 실제로 어느 축이 도는지 확인.
 - 허리 12 → 몸통이 좌우로 도는가(yaw) / 옆으로 기우는가(roll) / 앞뒤로 숙는가(pitch)
 - 손목 19 → 손등 축 비틀림(roll) / 손바닥 면 꺾임(pitch) / 좌우 꺾임(yaw)
 - 주의: 관절 모드는 순서가 틀려도 "어느 모터인가는" 움직여 정상처럼 보입니다. **IK 는 URDF 체인 순서(roll→pitch→yaw)로 19/20/21 에 넣으므로 순서가 다르면 손 자세가 틀어집니다.**
