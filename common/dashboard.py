@@ -515,7 +515,7 @@ const sid=n=>n.replace(/\W/g,'_');
 
 // ============ Logo: 가슴 로고판 (robot.yaml dashboard.logo → GET /api/logo) ============
 //   cfg = {link, center:[x,y,z] m, size:[w,h] m, tilt_deg, bg, lines:[[글자, 색], ...]} — 그 link 에 세운 판 하나에 줄마다 가운데 정렬.
-//   bg(둥근 사각형) 가 있어야 밝은 몸통(URDF white 0.7) 위에서도 흰 글자가 보임 (2026-10-16 사용자 시안: pion / circulus / intel).
+//   bg(둥근 사각형) 가 있어야 밝은 몸통(URDF white 0.7) 위에서도 흰 글자가 보임 (2026-10-16 사용자 시안: pitron / circulus / intel).
 //   장식이라 allMeshes 에 넣지 않음 — 열지도·클릭 선택이 material.color 를 바꾸면 판 전체가 물듦.
 function makeLogoPlate(cfg){
   const [width,height]=cfg.size;
