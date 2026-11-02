@@ -197,14 +197,16 @@ ping 192.168.123.161
 
 ---
 
-## 10. 손 컨트롤러 시리얼 (`/dev/ttyACM0`, 손을 달았을 때만)
+## 10. USB 시리얼 장치 (그리퍼 485–USB 보드 등, 달았을 때만)
 
 ```bash
 sudo usermod -aG dialout $USER     # 다시 로그인 후 적용
-ls -l /dev/ttyACM0
+ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
 ```
 
-- Ubuntu 의 `ModemManager` 가 새로 꽂힌 ttyACM 장치를 모뎀으로 검사하며 잠시 점유할 수 있습니다. 손 연결이 간헐적으로 실패하면: `sudo systemctl disable --now ModemManager` (모뎀을 안 쓰는 PC 에서만).
+- mandro 손은 2026-11-02 부터 안 씁니다 (코드 삭제 — 이 저장소는 시리얼 포트를 열지 않음).
+- Dex1-1 그리퍼는 연동 검토 중 (`robots/h2/FACTS.md` Dex1-1 절). 공식 `dex1_1_service` 가 `/dev/ttyUSB*` · `/dev/ttyCH343USB*` · `/dev/ttyACM*` 를 모두 열어 모터를 찾으므로, 그리퍼를 쓸 때는 다른 프로그램이 이 포트를 열면 안 됩니다.
+- Ubuntu 의 `ModemManager` 가 새로 꽂힌 ttyACM 장치를 모뎀으로 검사하며 잠시 점유할 수 있습니다. 연결이 간헐적으로 실패하면: `sudo systemctl disable --now ModemManager` (모뎀을 안 쓰는 PC 에서만).
 
 ---
 
@@ -290,6 +292,6 @@ python utils/check_robot_id.py
 | IK 가 수십 ms | BLAS 스레드 고정 (11단계) |
 | RealSense 인식 안 됨 / 권한 오류 | USB 3.0 포트, 3단계 udev 규칙 파일 설치 후 재연결 |
 | RealSense 가 `2.1` (USB2) 로 잡힘 | **케이블 교체** (USB2 전용 케이블이면 2.1 — 운영 PC 에서 케이블 교체로 3.2 확인), 카메라 C 커넥터 끝까지, 허브 없이 파란(SS) 포트 |
-| 손 `/dev/ttyACM0` 열기 실패 | `dialout` 그룹, ModemManager (10단계) |
+| USB 시리얼(`/dev/ttyUSB*` · `ttyACM*`) 열기 실패 | `dialout` 그룹, ModemManager (10단계) |
 | `pickle.load` 시 `class version ...` | 다른 pinocchio 버전의 캐시 → `robots/h2/` 의 `robot.yaml ik_cache` 파일 삭제 후 재생성 |
 | 서버가 남아 있음 | `./start_robot.sh` 가 시작 시 TERM → 대기 → KILL 로 정리. 수동: `pgrep -af "python.*(rs_stream|arm_server|robot_server)"` 확인 후 `kill` |

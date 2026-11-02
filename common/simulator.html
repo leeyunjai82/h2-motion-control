@@ -4,12 +4,14 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>pitron motion editor</title>
-<!-- Version: 7.3 — 이름 pitron motion editor, 메인 색 #00b7eb (회사 메인 컬러 — 제어 웹·런처·대시보드와 같음)
+<!-- Version: 7.4 — mandro 손 제거 (사용자 2026-11-02 — 손은 Dex1-1 그리퍼로 바꿀 예정): 가운데 손 패널·위 '손:' 칩·
+                  타임라인 손 모션/손 선택 삭제. 예전 모션 파일의 hand_motion 은 타임라인에 '손 동작 무시' 로 표시, 재생 때 서버가 무시
+     Version: 7.3 — 이름 pitron motion editor, 메인 색 #00b7eb (회사 메인 컬러 — 제어 웹·런처·대시보드와 같음)
      Version: 7.2 — H2 전용: 보행 없음 (robot.yaml features.locomotion false) → 이동 패드·키보드 이동·타임라인 이동 명령 제거.
                   예전 모션 파일의 locomotion 프레임은 타임라인에 SKIP 으로 표시, 재생 시 서버가 경고 후 건너뜀
      Version: 7.1 — 이동 패드 재배치(회전 2개를 전진 양옆 같은 줄에, 한글 라벨+단축키), 좁은 폭 슬라이더 잘림 수정
      Version: 7.0 — simulator.html(관절 v5.2) + simulator_ik.html(IK v6.3) 통합
-  - 좌측 패널 Joint/IK 모드 토글, 손·타임라인 공용
+  - 좌측 패널 Joint/IK 모드 토글, 타임라인 공용
   - 타임라인에 관절/IK 프레임 혼재 가능 (백엔드 /set_motion 이 프레임별 판별)
   - EMERGENCY STOP = 동결(freeze), 홈 복귀는 별도 버튼(/go_home) -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,15 +21,15 @@
 :root {
   --bg-primary:#0D1117; --bg-secondary:#161B22; --bg-tertiary:#21262D;
   --border-primary:#30363D; --text-primary:#C9D1D9; --text-secondary:#8B949E;
-  --accent-primary:#00b7eb; --accent-danger:#F85149; --accent-hand:#F778BA;   /* 메인 = 회사 메인 컬러 */
+  --accent-primary:#00b7eb; --accent-danger:#F85149;   /* 메인 = 회사 메인 컬러 */
   --accent-ik:#3FB950; --accent-rot:#D2A8FF;
   --font-sans:'Noto Sans KR',sans-serif; --font-mono:'Roboto Mono',monospace;
 }
 *,*::before,*::after{box-sizing:border-box}
 html{font-size:13.5px}
 body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-primary);margin:0;overflow:hidden}
-.app-container{display:grid;grid-template-columns:1.8fr 1fr 1.5fr;grid-template-rows:auto 1fr;
-  grid-template-areas:"header header header" "arm-panel controls-panel editor-panel";
+.app-container{display:grid;grid-template-columns:1.8fr 1.5fr;grid-template-rows:auto 1fr;
+  grid-template-areas:"header header" "arm-panel editor-panel";
   height:100vh;padding:1rem;gap:1rem}
 .app-header{grid-area:header;display:flex;justify-content:space-between;align-items:center;
   padding-bottom:.8rem;border-bottom:1px solid var(--border-primary);box-shadow:0 1px 0 rgba(0,183,235,.45)}
@@ -36,9 +38,6 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
 .app-title .brand{font-weight:700;color:var(--accent-primary)}
 .app-title .brand b{color:var(--text-primary)}
 .header-status{display:flex;gap:.8rem;align-items:center}
-.hand-status{font-size:.8rem;color:var(--text-secondary);padding:.3rem .6rem;
-  background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:.4rem}
-.hand-status.connected{color:var(--accent-hand);border-color:var(--accent-hand)}
 #home-button{background:var(--bg-secondary);color:var(--accent-primary);border:1px solid var(--accent-primary);
   padding:.5rem 1rem;border-radius:.4rem;cursor:pointer;font-weight:500;font-size:.85rem}
 #home-button:hover{background:var(--accent-primary);color:var(--bg-primary)}
@@ -56,7 +55,6 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
 .panel{background:var(--bg-secondary);border:1px solid var(--border-primary);border-radius:.6rem;
   display:flex;flex-direction:column;min-height:0;padding:1.2rem;overflow-y:auto}
 #arm-panel{grid-area:arm-panel}
-#controls-panel{grid-area:controls-panel}
 #motion-editor-panel{grid-area:editor-panel}
 .panel-title{margin:0 0 1rem;font-size:1rem;font-weight:500}
 
@@ -87,19 +85,6 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
   color:var(--text-primary);border-radius:.3rem;padding:.2rem .3rem;font-family:var(--font-mono);font-size:.72rem}
 .rot-controls{margin-top:.5rem;padding-top:.4rem;border-top:1px dashed var(--border-primary)}
 .rot-label{font-size:.72rem;color:var(--accent-rot);margin-bottom:.3rem}
-
-/* ---- 손 ---- */
-.section-title{font-size:.95rem;font-weight:500;margin:0 0 .6rem;text-align:center}
-.hand-selector{display:flex;gap:.4rem;margin-bottom:.6rem}
-.hand-selector button{flex:1;padding:.4rem;background:var(--bg-tertiary);border:1px solid var(--border-primary);
-  color:var(--text-secondary);border-radius:.4rem;cursor:pointer;font-size:.8rem}
-.hand-selector button.active{color:var(--accent-hand);border-color:var(--accent-hand)}
-.hand-motions-grid{display:grid;grid-template-columns:1fr 1fr;gap:.4rem;margin-bottom:.6rem}
-.hand-motion-btn{padding:.45rem .3rem;background:var(--bg-tertiary);border:1px solid var(--border-primary);
-  color:var(--text-primary);border-radius:.4rem;cursor:pointer;font-size:.75rem}
-.hand-motion-btn.active{border-color:var(--accent-hand);color:var(--accent-hand)}
-#hand-release-btn{width:100%;padding:.5rem;background:var(--bg-tertiary);border:1px solid var(--accent-hand);
-  color:var(--accent-hand);border-radius:.4rem;cursor:pointer;font-size:.8rem}
 
 /* ---- 타임라인 ---- */
 .settings-grid{display:grid;grid-template-columns:1fr 1fr;gap:.6rem .8rem;margin-bottom:.8rem}
@@ -133,14 +118,13 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
 <script src="/i18n.js"></script>
 <div class="app-container">
   <header class="app-header">
-    <h1 class="app-title"><b class="brand">pitron<b>·motion editor</b></b> <span>v7.3</span> <a href="/check" style="font-size:13px;margin-left:10px;color:#7fd8f5">모터 번호 확인 →</a></h1>
+    <h1 class="app-title"><b class="brand">pitron<b>·motion editor</b></b> <span>v7.4</span> <a href="/check" style="font-size:13px;margin-left:10px;color:#7fd8f5">모터 번호 확인 →</a></h1>
     <div class="mode-toggle">
       <button id="mode-joint" class="active">Joint · 관절</button>
       <button id="mode-ik">IK · 좌표</button>
     </div>
     <div class="header-status">
       <span id="lang-slot"></span>
-      <div id="hand-status" class="hand-status">손: 확인 중...</div>
       <button id="home-button">⌂ 홈 자세</button>
       <button id="reset-all-button">EMERGENCY STOP</button>
     </div>
@@ -198,34 +182,12 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
     </div>
   </div>
 
-  <!-- 중앙: 손 (공용) — 보행 없음 (H2) -->
-  <div id="controls-panel" class="panel">
-    <div class="hand-controls-container">
-      <h4 class="section-title" style="color:var(--accent-hand)">손 제어</h4>
-      <div class="hand-selector">
-        <button id="hand-select-left">왼손</button>
-        <button id="hand-select-both" class="active">양손</button>
-        <button id="hand-select-right">오른손</button>
-      </div>
-      <div id="hand-motions-grid" class="hand-motions-grid">
-        <div style="grid-column:1/-1;text-align:center;color:var(--text-secondary);font-size:.8rem;padding:1rem 0">서버 연결 대기 중...</div>
-      </div>
-      <button id="hand-release-btn">✋ 손 펴기 (unfold)</button>
-    </div>
-  </div>
-
   <!-- 우측: 타임라인 (공용, 관절/IK 프레임 혼재) -->
   <div id="motion-editor-panel" class="panel">
     <h3 class="panel-title">타임라인 에디터</h3>
     <div class="settings-grid">
       <div><label for="travel-time-input">프레임 시간 (초)</label>
         <input type="number" id="travel-time-input" value="1.0" min="0.1" step="0.1"></div>
-      <div><label for="hand-motion-select">손 모션</label>
-        <select id="hand-motion-select"><option value="none">없음</option></select></div>
-      <div><label for="hand-target-select">손 선택</label>
-        <select id="hand-target-select">
-          <option value="both">양손</option><option value="left">왼손</option><option value="right">오른손</option>
-        </select></div>
       <div><label>현재 자세 저장</label>
         <div class="checkbox-item"><input type="checkbox" id="save-pose-checkbox" checked>
           <label for="save-pose-checkbox" id="save-pose-label">포함 (현재 모드 기준)</label></div></div>
@@ -256,16 +218,13 @@ document.addEventListener('DOMContentLoaded', () => {
     MOTOR: `${API_BASE}/set_motor`,
     IK: `${API_BASE}/set_ik`,
     MOTION: `${API_BASE}/set_motion`, STOP: `${API_BASE}/stop_motion`,
-    HOME: `${API_BASE}/go_home`,
-    HAND: `${API_BASE}/set_hand`, HAND_MOTIONS: `${API_BASE}/hand_motions`
+    HOME: `${API_BASE}/go_home`
   };
 
   // ==================== 공용 상태 ====================
   let editorMode = 'joint';          // 'joint' | 'ik'
   let motionFrames = [];
   let isPlaying = false;
-  let selectedHand = 'both';
-  let activeHandMotion = null;
 
   async function apiCall(url, data) {
     try {
@@ -274,10 +233,6 @@ document.addEventListener('DOMContentLoaded', () => {
         body: JSON.stringify(data) });
       return res.ok ? await res.json() : null;
     } catch (e) { return null; }
-  }
-  async function apiGet(url) {
-    try { const res = await fetch(url); return res.ok ? await res.json() : null; }
-    catch (e) { return null; }
   }
 
   // ==================== 모드 토글 ====================
@@ -426,59 +381,11 @@ document.addEventListener('DOMContentLoaded', () => {
     await apiCall(API.HOME, {});
   }
 
-  // ==================== 손 제어 (공용) ====================
-  async function initHandControls() {
-    const info = await apiGet(API.HAND_MOTIONS);
-    const statusEl = document.getElementById('hand-status');
-    if (info?.left_connected || info?.right_connected) {
-      statusEl.textContent = '손: 연결됨'; statusEl.classList.add('connected');
-    } else { statusEl.textContent = '손: 미연결'; }
-    const motionList = (info?.motions && info.motions.length > 0) ? info.motions
-      : ['unfold_a','fold_a','fold_ha','point','handshake','ok','thumbup','victory','rock','promise','grab'];
-    const grid = document.getElementById('hand-motions-grid');
-    grid.innerHTML = motionList.map(m =>
-      `<button class="hand-motion-btn" data-motion="${m}">${m.replace(/_/g,' ')}</button>`).join('');
-    grid.addEventListener('click', async e => {
-      const btn = e.target.closest('.hand-motion-btn');
-      if (!btn) return;
-      const motion = btn.dataset.motion;
-      if (activeHandMotion === motion) {
-        btn.classList.remove('active'); activeHandMotion = null;
-        await apiCall(API.HAND, { hand: selectedHand, motion: 'unfold_a', release: false });
-      } else {
-        grid.querySelectorAll('.hand-motion-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active'); activeHandMotion = motion;
-        await apiCall(API.HAND, { hand: selectedHand, motion, release: false });
-      }
-    });
-    document.getElementById('hand-release-btn').addEventListener('click', async () => {
-      grid.querySelectorAll('.hand-motion-btn').forEach(b => b.classList.remove('active'));
-      activeHandMotion = null;
-      await apiCall(API.HAND, { hand: selectedHand, motion: 'unfold_a', release: false });
-    });
-    const sel = document.getElementById('hand-motion-select');
-    sel.innerHTML = '<option value="none">없음</option>';
-    motionList.forEach(m => {
-      const o = document.createElement('option');
-      o.value = m; o.textContent = m.replace(/_/g,' ');
-      sel.appendChild(o);
-    });
-  }
-  ['left','both','right'].forEach(h => {
-    document.getElementById(`hand-select-${h}`).addEventListener('click', function () {
-      selectedHand = h;
-      document.querySelectorAll('.hand-selector button').forEach(b => b.classList.remove('active'));
-      this.classList.add('active');
-    });
-  });
-
   // ==================== 타임라인 (공용, 프레임 혼재) ====================
   function addFrame() {
     const duration = parseFloat(document.getElementById('travel-time-input').value) || 1.0;
-    const hand = document.getElementById('hand-motion-select').value;
-    const handTarget = document.getElementById('hand-target-select').value;
     const savePose = document.getElementById('save-pose-checkbox').checked;
-    if (!savePose && hand === 'none') return;
+    if (!savePose) return;
     const frame = { duration };
     if (savePose) {
       if (editorMode === 'joint') {
@@ -490,7 +397,6 @@ document.addEventListener('DOMContentLoaded', () => {
         frame.left_rpy = rpy.left; frame.right_rpy = rpy.right;
       }
     }
-    if (hand !== 'none') frame.hand_motion = { hand: handTarget, motion: hand };
     motionFrames.push(frame);
     renderTimeline();
   }
@@ -511,7 +417,7 @@ document.addEventListener('DOMContentLoaded', () => {
       parts.push([hasArm && '팔', hasWaist && '허리(무시)'].filter(Boolean).join('+') || '자세');
     }
     if (f.locomotion) parts.push('⚠ 걷기 프레임 — 재생 시 건너뜀 (보행 없음)');
-    if (f.hand_motion) parts.push(`${f.hand_motion.hand}:${f.hand_motion.motion}`);
+    if (f.hand_motion) parts.push('⚠ 손 동작 무시 (mandro 손 안 씀) — 프레임 시간만큼 대기');
     return parts.join(' · ') || '-';
   }
 
@@ -550,9 +456,6 @@ document.addEventListener('DOMContentLoaded', () => {
       setRPYValues(f.left_rpy || [0,0,0], f.right_rpy || [0,0,0]);
       await apiCall(API.IK, { left_xyz: f.left_xyz, right_xyz: f.right_xyz,
         left_rpy: f.left_rpy || [0,0,0], right_rpy: f.right_rpy || [0,0,0], duration: 1.0 });
-    }
-    if (f?.hand_motion) {
-      await apiCall(API.HAND, { hand: f.hand_motion.hand, motion: f.hand_motion.motion, release: false });
     }
   }
 
@@ -593,6 +496,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // 예전(G1) 모션 파일의 걷기 프레임 — 보행 없는 로봇이라 재생 시 서버가 건너뜀 (데이터는 그대로 둠)
         const nWalk = motionFrames.filter(f => f && f.locomotion).length;
         if (nWalk) alert(`걷기 프레임 ${nWalk}개 — 보행이 없는 로봇이라 재생 시 건너뜁니다`);
+        // 예전 mandro 손 동작 — 손을 안 써서 재생 시 서버가 무시 (프레임 시간만큼은 기다림, 데이터는 그대로 둠)
+        const nHand = motionFrames.filter(f => f && f.hand_motion).length;
+        if (nHand) alert(`손 동작 ${nHand}개 — mandro 손을 안 써서 재생 시 무시합니다 (팔 동작·프레임 시간은 그대로)`);
       };
       reader.readAsText(file);
     };
@@ -612,7 +518,6 @@ document.addEventListener('DOMContentLoaded', () => {
   // ==================== 초기화 ====================
   initJointControls();
   initIKControls();
-  initHandControls();
   toggleSafeMode();
   setMode('joint');
 });

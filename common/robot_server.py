@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-# Version: 1.27
+# Version: 1.28
 # Changes:
+#   1.28 - mandro 손 제거 (사용자 2026-11-02 — 손은 Dex1-1 그리퍼로 바꿀 예정): 시작 때 /dev/ttyACM0 를 열지 않음
+#          (Dex1-1 서비스 dex1_1_service 가 /dev/ttyACM* 를 훑어 모터를 찾으므로 같은 포트를 잡으면 안 됨).
+#          예전 모션 파일의 hand_motion 은 받기만 하고 무시 (경고, 프레임 시간만큼 대기). /status hand_ready 삭제
 #   1.27 - Box 대기 자세(ready)에서 손목 RPY 를 미리 돌리지 않음 (⑪ Home 복귀와 같은 RPY 0) — ④ 위쪽 접근부터 적용.
 #          + 대기 자세 y 0.25 → 0.28 (grab.ready_xyz). 대기 때 손이 D435i 화면에 보임 (사용자 2026-10-13)
 #   1.26 - 박스 너비가 grab.box_width_range (0.12–0.50 m) 밖이면 잡지 않음 — 너비를 잘못 인식했을 때 두 손이 맞닿거나
@@ -79,7 +82,7 @@ import numpy as np
 from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import uvicorn
 import pinocchio as pin
@@ -610,12 +613,6 @@ class GrabController:
 
 
 try:
-    from ctrl.mandro3 import HandController, motions as hand_motions
-    HAND_AVAILABLE = True
-except ImportError:
-    HAND_AVAILABLE = False
-
-try:
     from ctrl.text_to_speech import TextToSpeech
     TTS_AVAILABLE = True
 except ImportError:
@@ -627,7 +624,6 @@ except ImportError:
 # 전역 상태
 # ==========================================
 arm:  Optional[ArmHttpClient]        = None   # arm_server(50022) 클라이언트
-hand: Optional[object]               = None
 tts:  Optional[object]               = None
 grab: Optional[GrabController]       = None
 
@@ -694,14 +690,11 @@ class MotorTarget(BaseModel):
 class PoseData(BaseModel):
     targets: List[MotorTarget]
 
-class HandMotionData(BaseModel):
-    hand: str
-    motion: str
-
+# hand_motion: 예전 mandro 손 동작 — 2026-11-02 부터 손 안 씀. 받기만 하고 무시 (경고, 프레임 시간만큼 대기)
 class MotionFrame(BaseModel):
     duration: float
     pose: Optional[PoseData] = None
-    hand_motion: Optional[HandMotionData] = None
+    hand_motion: Optional[Any] = None
 
 class IKMotionFrame(BaseModel):
     duration: float
@@ -709,7 +702,7 @@ class IKMotionFrame(BaseModel):
     right_xyz: Optional[List[float]] = None
     left_rpy: Optional[List[float]] = None
     right_rpy: Optional[List[float]] = None
-    hand_motion: Optional[HandMotionData] = None
+    hand_motion: Optional[Any] = None
 
 # 잡기 요청 (인식 파일 → robot_server)
 class GrabRequest(BaseModel):
@@ -739,10 +732,6 @@ def move_hands_with_rotation(left_xyz, right_xyz, left_rpy, right_rpy, duration,
     left_rot  = rpy_to_quaternion(*left_rpy)  if left_rpy  and any(v != 0 for v in left_rpy)  else None
     right_rot = rpy_to_quaternion(*right_rpy) if right_rpy and any(v != 0 for v in right_rpy) else None
     arm.move_hands(left_xyz, right_xyz, left_rot, right_rot, duration, frequency)
-
-def execute_hand_motion_sync(h: str, motion: str):
-    if hand:
-        hand.send_motion(motion, selector=h)
 
 
 
@@ -822,20 +811,13 @@ def arm_warnings():
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global arm, hand, tts, grab, ACTIVE_MODE, BOOT_ARM_DEG
+    global arm, tts, grab, ACTIVE_MODE, BOOT_ARM_DEG
 
     print("[robot_server] 시작")
     HW.start()                     # CPU·GPU·NPU 사용률 (제어 화면 위 칩, GET /hw)
     robot_env.dds_init()
 
     arm = _connect_arm()          # 실패하면 None — _arm_watch 가 3초마다 다시 시도
-
-    if HAND_AVAILABLE:
-        try:
-            hand = HandController('/dev/ttyACM0')
-            print("✅ 손 초기화")
-        except Exception as e:
-            print(f"⚠️ 손 실패: {e}")
 
     if TTS_AVAILABLE:
         try:
@@ -913,10 +895,8 @@ async def _execute_frames(frames: List[MotionFrame]):
         for i, frame in enumerate(frames):
             if STOP_FLAG: break
             print(f"[Runner] 프레임 {i+1}/{len(frames)}")
-            hand_future = None
-            if frame.hand_motion and hand:
-                hand_future = loop.run_in_executor(None, execute_hand_motion_sync,
-                                                    frame.hand_motion.hand, frame.hand_motion.motion)
+            if frame.hand_motion is not None:
+                print(f"[Runner] ⚠️ 손 동작 {frame.hand_motion!r} 무시 (mandro 손 안 씀)")
             if frame.pose and frame.pose.targets and arm:
                 # HTTP 스냅샷 (ctrl_lock 은 호환용 더미)
                 with arm.arm_ctrl.ctrl_lock:
@@ -938,8 +918,7 @@ async def _execute_frames(frames: List[MotionFrame]):
                         float(waist_targets[0]),float(waist_targets[1]),float(waist_targets[2]),frame.duration))
                 await asyncio.gather(*tasks)
             else:
-                await asyncio.sleep(frame.duration)   # 손만 / 대기 (보행 프레임은 H2 에서 무시)
-            if hand_future: await hand_future
+                await asyncio.sleep(frame.duration)   # 대기 (손 동작·보행 프레임은 H2 에서 무시)
     finally:
         is_running = False
 
@@ -951,18 +930,15 @@ async def _execute_ik_frames(frames: List[IKMotionFrame]):
         for i, frame in enumerate(frames):
             if STOP_FLAG: break
             print(f"[IK Runner] 프레임 {i+1}/{len(frames)}")
-            hand_future = None
-            if frame.hand_motion and hand:
-                hand_future = loop.run_in_executor(None, execute_hand_motion_sync,
-                                                    frame.hand_motion.hand, frame.hand_motion.motion)
+            if frame.hand_motion is not None:
+                print(f"[IK Runner] ⚠️ 손 동작 {frame.hand_motion!r} 무시 (mandro 손 안 씀)")
             if frame.left_xyz and frame.right_xyz and arm:
                 lr = frame.left_rpy or [0.0,0.0,0.0]
                 rr = frame.right_rpy or [0.0,0.0,0.0]
                 await loop.run_in_executor(None, move_hands_with_rotation,
                     frame.left_xyz, frame.right_xyz, lr, rr, frame.duration, 100)
             else:
-                await asyncio.sleep(frame.duration)   # 손만 / 대기 (보행 프레임은 H2 에서 무시)
-            if hand_future: await hand_future
+                await asyncio.sleep(frame.duration)   # 대기 (손 동작·보행 프레임은 H2 에서 무시)
     finally:
         is_running = False
 
@@ -1136,7 +1112,6 @@ async def grab_manual():
 @app.get("/status")
 async def status():
     return {"is_running": is_running, "arm_ready": arm is not None,
-            "hand_ready": hand is not None,
             "tts_ready": tts is not None, "active_mode": ACTIVE_MODE,
             "grab_busy": grab_busy, **_stage_info()}
 

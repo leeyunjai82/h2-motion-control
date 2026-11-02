@@ -170,7 +170,7 @@ h2-motion-control/
 │   ├── simulator.py        # 모션 에디터 (simulator.html, joint_check.py)
 │   ├── dashboard.py        # 3D URDF 뷰어
 │   ├── rs_stream.py        # D435i 서버
-│   ├── ctrl/               # 팔 래퍼, IK, detect_box, 머리 카메라 수신, OpenVINO 검출, 사용률(hw_usage), 손, TTS
+│   ├── ctrl/               # 팔 래퍼, IK, detect_box, 머리 카메라 수신, OpenVINO 검출, 사용률(hw_usage), TTS
 │   ├── models/             # 박스 seg 모델, OMZ 얼굴·사람·나이성별·행동(0006), polar11s(자세)·yolo11s(COCO) 예비
 │   └── assets/vendor/      # three.min.js
 ├── robots/h2/              # URDF, meshes/, motions/, IK 모델 캐시, robot.yaml, FACTS.md, cad/

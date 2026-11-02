@@ -1,6 +1,7 @@
 """
 simulator.py — pitron motion editor (H2, 관절 + IK)
-Version: 7.2
+Version: 7.4  — mandro 손 제거 (사용자 2026-11-02 — 손은 Dex1-1 그리퍼로 바꿀 예정):
+               /hand_motions · /set_hand 삭제. 예전 모션 파일의 hand_motion 은 받기만 하고 무시 (경고, 프레임 시간만큼 대기)
 
 simulator.py(관절 편집기 v5.3) + simulator_ik.py(IK 편집기 v6.3) 통합.
 
@@ -12,24 +13,23 @@ simulator.py(관절 편집기 v5.3) + simulator_ik.py(IK 편집기 v6.3) 통합.
   - 보행 없음 (H2: robot.yaml features.locomotion false) — 이 편집기는 걷기 명령
     (LocoClient Move/StopMove 등)을 보내지 않는다. 이동 패드·/set_loco_motion·
     모션의 이동 프레임 생성은 v7.2 에서 제거.
-  - 손: HandController (단일 동글) 직접
 
 UI:
   /   통합 simulator.html (좌측 패널 Joint/IK 모드 토글, 타임라인 공용)
 
 엔드포인트 = 두 편집기의 합집합:
-  공통: /hand_motions /set_hand /set_motion /stop_motion /go_home
+  공통: /set_motion /stop_motion /go_home
   관절: /set_motor /set_all_motors /joint_info   (팔 15–28 만 — H2 허리는 703 에서 arm_sdk 로 안 움직여 편집 안 함)
   IK  : /set_ik /ik_position
   확인: /check (joint_check — 모터 번호 확인)
   /set_motion 은 프레임에 pose(관절)와 left_xyz/right_xyz(IK)가 섞여 있어도
   프레임별로 자동 판별해 실행한다.
   예전(G1) 모션 파일의 locomotion(걷기) 프레임은 실행하지 않고 경고를 출력한 뒤
-  건너뛴다 (같은 프레임의 팔/손 동작은 실행, 걷기만 있는 프레임은 대기 없이 통과).
+  건너뛴다 (같은 프레임의 팔 동작은 실행, 걷기만 있는 프레임은 대기 없이 통과).
 
 안전 변경:
   - /stop_motion(긴급 정지)은 이동하지 않는다 — 보간 중단 +
-    현재 자세 동결(freeze) + 손 펴기. (구버전은 관절 0도/홈으로 '이동'했는데,
+    현재 자세 동결(freeze). (구버전은 관절 0도/홈으로 '이동'했는데,
     0도는 앞으로 나란히라 정지 중 팔이 크게 움직였음)
   - 기동 시 자동 홈 이동/허리 리셋 없음 (arm_server 가 자세를 이미 유지 중)
   - 자세 복귀가 필요하면 POST /go_home (IK 홈 자세로 이동)
@@ -52,23 +52,10 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(current_dir)
 import robot_env   # ROBOT 미지정/미지원이면 여기서 종료
 
-USE_HAND_CONTROL = True
-
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 from ctrl.arm_controller_wrapper import (JOINT_INFO, JOINT_NAMES,
                                          GLOBAL_TO_INTERNAL)
 from ctrl.arm_http import ArmHttpClient
-
-hand_controller = None
-available_hand_motions = []
-if USE_HAND_CONTROL:
-    try:
-        from ctrl.mandro3 import HandController, motions
-        available_hand_motions = list(motions.keys())
-        print(f"✅ 손 제어 라이브러리 로드. 모션 {len(available_hand_motions)}개")
-    except ImportError as e:
-        print(f"⚠️ 손 제어 라이브러리 없음: {e}")
-        USE_HAND_CONTROL = False
 
 
 # ==========================================
@@ -82,11 +69,6 @@ class MotorCommand(BaseModel):
 class AllMotorsCommand(BaseModel):
     target_degrees: List[float]     # 14개 (팔만)
     duration: float = 1.0
-
-class HandCommand(BaseModel):
-    hand: str                        # left | right | both
-    motion: str
-    release: bool = False
 
 class IKMoveCommand(BaseModel):
     left_xyz:  List[float]
@@ -102,15 +84,12 @@ class MotorTarget(BaseModel):
 class PoseData(BaseModel):
     targets: List[MotorTarget]
 
-class HandMotionData(BaseModel):
-    hand: str
-    motion: str
-
 class MotionFrame(BaseModel):
     """관절(pose)과 IK(left_xyz/right_xyz) 프레임 공용 — 프레임별 자동 판별.
 
     locomotion: 예전(G1) 모션 파일 호환용으로 받기만 한다 (형식 무관 — 422 로 막지 않음).
                 H2 는 보행이 없으므로 실행하지 않고 경고 후 건너뛴다.
+    hand_motion: 예전 mandro 손 동작 — 2026-11-02 부터 손 안 씀. 받기만 하고 무시 (경고, 프레임 시간만큼 대기).
     """
     duration: float
     pose: Optional[PoseData] = None
@@ -119,7 +98,7 @@ class MotionFrame(BaseModel):
     left_rpy:  Optional[List[float]] = None
     right_rpy: Optional[List[float]] = None
     locomotion: Optional[Any] = None
-    hand_motion: Optional[HandMotionData] = None
+    hand_motion: Optional[Any] = None
 
 
 # ==========================================
@@ -136,26 +115,6 @@ IK_HOME_RIGHT = [0.1, -0.2, 0.2]
 
 
 # ==========================================
-# 손 제어
-# ==========================================
-def execute_hand_motion_sync(hand: str, motion: str, release: bool = False):
-    if not USE_HAND_CONTROL or not hand_controller:
-        return
-    try:
-        if release:
-            hand_controller.send_release(selector=hand)
-        else:
-            hand_controller.send_motion(motion, selector=hand)
-    except Exception as e:
-        print(f"[Hand] 에러: {e}")
-
-
-async def execute_hand_motion(hand: str, motion: str, release: bool = False):
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, execute_hand_motion_sync, hand, motion, release)
-
-
-# ==========================================
 # 긴급 정지 — 이동 없이 그 자리 동결
 # ==========================================
 async def emergency_stop():
@@ -167,11 +126,6 @@ async def emergency_stop():
             await loop.run_in_executor(None, arm.freeze)
         except Exception as e:
             print(f"[정지] arm 동결 실패: {e}")
-    if USE_HAND_CONTROL and hand_controller:
-        try:
-            hand_controller.send_motion('unfold_a', selector='both')
-        except Exception as e:
-            print(f"[Hand 정지] 에러: {e}")
     print("!!! 긴급 정지 완료 !!!")
 
 
@@ -198,9 +152,9 @@ def _move_ik(left_xyz, right_xyz, left_rpy, right_rpy, duration):
 # ==========================================
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global hand_controller, arm
-    print("--- pitron motion editor (v7.3) ---")
-    print("  팔/허리: arm_server(50022) 경유 · 보행 없음 · 손: 단일 동글")
+    global arm
+    print("--- pitron motion editor (v7.4) ---")
+    print("  팔: arm_server(50022) 경유 · 보행 없음 · 손 없음")
 
     robot_env.dds_init()   # /check (joint_check) 의 rt/lowstate 구독용
 
@@ -211,49 +165,19 @@ async def lifespan(app: FastAPI):
         print("   → 먼저 실행: python arm_server.py")
         arm = None
 
-    if USE_HAND_CONTROL:
-        try:
-            hand_controller = HandController('/dev/ttyACM0')
-            print("✅ 손 컨트롤러 연결 (/dev/ttyACM0)")
-        except Exception as e:
-            print(f"⚠️ 손 컨트롤러 실패: {e}")
-
     print(f"[시스템] 준비 완료  http://localhost:8000/   모터 번호 확인: http://localhost:8000/check  "
           f"({'가상 ROBOT_SIM' if robot_env.SIM else '실기'})")
     yield
     print("--- 서버 종료 (자세 유지 — arm_server 관리) ---")
 
 
-app = FastAPI(title="pitron motion editor", version="7.3", lifespan=lifespan)
+app = FastAPI(title="pitron motion editor", version="7.4", lifespan=lifespan)
 
 # 모터 번호 확인 화면 (/check) — 가상/실기 모두
 from joint_check import router as joint_check_router
 app.include_router(joint_check_router)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_credentials=True,
                    allow_methods=["*"], allow_headers=["*"])
-
-
-# ==========================================
-# 손 API
-# ==========================================
-@app.get("/hand_motions")
-async def get_hand_motions():
-    connected = hand_controller is not None
-    return {"enabled": USE_HAND_CONTROL, "left_connected": connected,
-            "right_connected": connected, "single_dongle": True,
-            "motions": available_hand_motions}
-
-
-@app.post("/set_hand")
-async def set_hand(command: HandCommand):
-    if not USE_HAND_CONTROL:
-        return {"status": "disabled"}
-    if not hand_controller:
-        return {"status": "error", "message": "Hand controller not connected"}
-    if command.motion not in available_hand_motions:
-        return {"status": "error", "message": f"Unknown motion: {command.motion}"}
-    await execute_hand_motion(command.hand, command.motion, command.release)
-    return {"status": "success"}
 
 
 # ==========================================
@@ -374,15 +298,12 @@ async def set_motion(motion_sequence: List[MotionFrame]):
                       f"{frame.locomotion!r} — 보행 없는 로봇이라 건너뜀")
                 continue
             print(f"[모션] ⚠️ 프레임 {i+1}/{len(motion_sequence)}: 걷기(locomotion) "
-                  f"{frame.locomotion!r} 무시 — 팔/손 동작만 실행")
+                  f"{frame.locomotion!r} 무시 — 팔 동작만 실행")
 
         print(f"[모션] 프레임 {i+1}/{len(motion_sequence)} ({frame.duration}초)")
 
-        hand_future = None
-        if frame.hand_motion and USE_HAND_CONTROL and hand_controller:
-            hand_future = loop.run_in_executor(
-                None, execute_hand_motion_sync,
-                frame.hand_motion.hand, frame.hand_motion.motion, False)
+        if frame.hand_motion is not None:
+            print(f"[모션] ⚠️ 프레임 {i+1}/{len(motion_sequence)}: 손 동작 {frame.hand_motion!r} 무시 (mandro 손 안 씀)")
 
         did_arm = False
         # --- IK 프레임 ---
@@ -413,9 +334,6 @@ async def set_motion(motion_sequence: List[MotionFrame]):
 
         if not did_arm:
             await asyncio.sleep(frame.duration)
-
-        if hand_future:
-            await hand_future
 
     if STOP_REQUESTED:
         await emergency_stop()

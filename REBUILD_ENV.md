@@ -164,7 +164,7 @@ IK 속도 확인은 INSTALL 13단계 (6) — 수 ms 면 정상, 수십 ms 면 �
 | RealSense udev 규칙 | INSTALL 3 |
 | sudoers `/etc/sudoers.d/h2-motion` (`…/envs/tv/bin/python`) | INSTALL 8 |
 | 네트워크 `192.168.123.0/24` | INSTALL 9 |
-| 손 시리얼 (`dialout`) | INSTALL 10 |
+| USB 시리얼 (`dialout`, 그리퍼 485–USB 보드 등) | INSTALL 10 |
 | GStreamer (머리 카메라 RGB 디코딩) | `sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav` |
 | 방화벽 (머리 카메라 RGB UDP 5004/5006) | ufw 를 켰으면 `sudo ufw allow from 192.168.123.0/24` |
 | Intel GPU / NPU 드라이버 (OpenVINO GPU·NPU) | 패키지 이름·버전 확인 필요 — 예전 PC 의 `system.txt` (커널, `intel-*` / `libze*` apt 목록, NPU 펌웨어)와 맞추고 `python utils/get_dev.py` 로 GPU·NPU 가 보이는지 확인 |
