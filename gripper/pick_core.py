@@ -30,12 +30,18 @@ P = CFG.get("pick") or {}
 _need = ("mm_per_rad", "open_margin_mm", "squeeze_mm", "contact_min_mm", "pad_len_half_mm", "pad_h_half_mm", "tip_beyond_mm",
          "body_back_mm", "body_h_half_mm", "min_overlap_mm", "tip_clear_mm",
          "transit_clear_mm", "approach_m", "lift_m", "hold_s", "rpy_deg", "v_lin", "v_slow", "v_joint",
-         "server_max_vel", "track_abort_deg")
+         "server_max_vel", "track_abort_deg", "tcp_bias_m")
 _miss = [k for k in _need if k not in P]
 if _miss:
     sys.exit(f"[pick] gripper.yaml pick: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
 if not (0 < float(P["server_max_vel"]) <= 3.0) or not (0 < float(P["v_joint"]) <= float(P["server_max_vel"])):
     sys.exit("[pick] gripper.yaml pick: 0 < v_joint ≤ server_max_vel ≤ 3.0 이어야 함")
+
+_tb = P["tcp_bias_m"]
+if not (isinstance(_tb, dict) and all(isinstance(_tb.get(s), list) and len(_tb[s]) == 3 and
+                                      all(isinstance(v, (int, float)) and abs(v) <= 0.05 for v in _tb[s]) for s in ("left", "right"))):
+    sys.exit("[pick] gripper.yaml pick.tcp_bias_m: left/right 각각 [x, y, z] (각 |값| ≤ 0.05 m)")
+TCP_BIAS = {s: np.array(_tb[s], dtype=float) for s in ("left", "right")}   # 실제 − 계산 (pelvis)
 
 ARM_SERVER = "http://localhost:50022"
 J = robot_env.JOINTS
@@ -267,6 +273,8 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
     pre_p = grasp_p + np.array([0.0, 0.0, P["approach_m"]])      # 위에서 수직으로 내려감
     lift_p = grasp_p + np.array([0.0, 0.0, P["lift_m"]])
     place_p = grasp_p + np.array([0.0, 0.0, 0.003])
+    bias = TCP_BIAS[side]                                        # 보내는 목표 = 원하는 자리 − 치우침
+    cmd = lambda p: np.asarray(p, dtype=float) - bias
     T = lambda p, Rm=R: pin.SE3(Rm, np.asarray(p, dtype=float))
     out = {"ok": False, "side": side, "top": top.round(4).tolist(), "width_mm": width_mm, "height_mm": height_mm, "rpy_deg": list(map(float, rpy_deg)),
            "floor_z": round(floor_z, 4), "overlap_mm": round(overlap * 1000, 1), "grasp": grasp_p.round(4).tolist(), "pre": pre_p.round(4).tolist(),
@@ -274,6 +282,8 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
            "q_close": round(q_for_gap(close_mm), 3), "reasons": reasons, "notes": notes}
     if reasons:
         return out
+    if bias.any():
+        notes.append(f"{'왼' if side == 'left' else '오른'}손 치우침 보정 {np.round(bias * 1000).astype(int).tolist()} mm (gripper.yaml tcp_bias_m)")
     if np.linalg.norm(pre_p - READY_TCP[side]) > MAX_FROM_READY:
         reasons.append(f"준비 자세에서 {np.linalg.norm(pre_p - READY_TCP[side]) * 100:.0f} cm — {MAX_FROM_READY * 100:.0f} cm 이내로 박스를 가까이")
         return out
@@ -283,14 +293,14 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
         reasons.append(f"{'왼' if side == 'left' else '오른'}팔이 준비 자세가 아님 — 먼저 [준비 자세로]")
         return out
     q_ready = q0
-    steps = [("접근 위치로", T(pre_p), P["v_lin"], "transit"),
-             ("내려가기", T(grasp_p), P["v_slow"], "grasp"),
+    steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
+             ("내려가기", T(cmd(grasp_p)), P["v_slow"], "grasp"),
              ("@close", None, None, None),
-             ("들기", T(lift_p), P["v_slow"], "grasp"),
+             ("들기", T(cmd(lift_p)), P["v_slow"], "grasp"),
              ("@hold", None, None, None),
-             ("내려놓기", T(place_p), P["v_slow"], "grasp"),
+             ("내려놓기", T(cmd(place_p)), P["v_slow"], "grasp"),
              ("@open", None, None, None),
-             ("빼기", T(pre_p), P["v_slow"], "grasp"),
+             ("빼기", T(cmd(pre_p)), P["v_slow"], "grasp"),
              ("준비 자세로 복귀", T(READY_TCP[side], I3), P["v_lin"], "transit")]
     q = q_ready
     seq = [("@open", None)]

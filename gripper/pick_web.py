@@ -461,7 +461,7 @@ class Runner:
         if q is not None:
             qm = self.mdl.to_model(q)
             for s, col in (("left", (0, 220, 0)), ("right", (220, 0, 220))):
-                px = pelvis_to_pixel(self.mdl.tcp(qm, s).translation, K)
+                px = pelvis_to_pixel(self.mdl.tcp(qm, s).translation + pc.TCP_BIAS[s], K)   # 치우침 보정한 실제 추정
                 if px:
                     cv2.circle(img, px, 5, col, -1)
         return img
@@ -573,7 +573,7 @@ def make_app(r: Runner):
         st["arm"] = r.arm_msg
         if r.arm_q is not None:
             qm = r.mdl.to_model(r.arm_q)
-            st["tcp"] = {s: np.round(r.mdl.tcp(qm, s).translation, 3).tolist() for s in pc.SIDES}
+            st["tcp"] = {s: np.round(r.mdl.tcp(qm, s).translation + pc.TCP_BIAS[s], 3).tolist() for s in pc.SIDES}
         return st
 
     return app
