@@ -47,17 +47,18 @@ source "$ROOT/activate_tv.sh" || exit 1
 LOG_DIR="$ROOT/logs"; mkdir -p "$LOG_DIR"; DAY="$(date '+%Y%m%d')"
 TAG="$([ $SIM -eq 1 ] && echo vsim_ || echo "")"
 
+alive() { ps -p "$1" >/dev/null 2>&1; }   # kill -0 은 sudo 로 띄운 (root) 프로세스에 권한이 없어 '없음'으로 잘못 나옴
 PIDS=(); NAMES=()          # 띄운 순서 — 끌 때는 거꾸로
 KEEP=""                    # sudo 인증 유지 (실행 동안 만료되면 끌 때 비밀번호를 다시 물음)
 cleanup() {
   trap '' INT TERM EXIT
   echo ""; echo "[stop] 종료 중..."
   for (( i=${#PIDS[@]}-1; i>=0; i-- )); do
-    pid="${PIDS[$i]}"; kill -0 "$pid" 2>/dev/null || continue
+    pid="${PIDS[$i]}"; alive "$pid" || continue
     echo "[stop] ${NAMES[$i]}"
     if [ "${NAMES[$i]}" = "dex1_service" ]; then sudo -n kill -TERM "$pid" 2>/dev/null || sudo kill -TERM "$pid"; else kill -TERM "$pid" 2>/dev/null || true; fi
-    for k in $(seq 1 8); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
-    if kill -0 "$pid" 2>/dev/null; then
+    for k in $(seq 1 8); do alive "$pid" || break; sleep 1; done
+    if alive "$pid"; then
       echo "[stop] ${NAMES[$i]} 강제 종료"
       if [ "${NAMES[$i]}" = "dex1_service" ]; then sudo kill -9 "$pid" 2>/dev/null || true; else kill -9 "$pid" 2>/dev/null || true; fi
     fi
@@ -89,7 +90,7 @@ if [ $SIM -eq 0 ]; then
   for i in $(seq 1 15); do
     n=$(grep -c "Gripper Server started" "$LOG_DIR/dex1_service_$DAY.log" 2>/dev/null || true)
     [ "${n:-0}" -gt "$DEX1_SEEN" ] && { ok=1; break; }
-    kill -0 "${PIDS[-1]}" 2>/dev/null || break
+    alive "${PIDS[-1]}" || break
     sleep 1
   done
   [ $ok -eq 1 ] || { echo "❌ 그리퍼 서비스가 안 뜸 — 로그: $LOG_DIR/dex1_service_$DAY.log" >&2; exit 1; }
@@ -138,7 +139,7 @@ DEAD=()
 while true; do
   for i in "${!PIDS[@]}"; do
     [[ " ${DEAD[*]-} " == *" $i "* ]] && continue
-    if ! kill -0 "${PIDS[$i]}" 2>/dev/null; then
+    if ! alive "${PIDS[$i]}"; then
       DEAD+=("$i")
       echo ""
       echo "  ⚠⚠ $(date '+%H:%M:%S') ${NAMES[$i]} 가 종료됨 — 로그: $LOG_DIR/${TAG}${NAMES[$i]}_$DAY.log"
