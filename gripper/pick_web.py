@@ -6,8 +6,8 @@ pick_web.py — 그리퍼 한 팔로 작은 박스 잡기 웹 (http://<미니 PC
         [실행] → (단계별이면) [다음 단계] 를 누를 때마다 한 단계씩. [정지] 는 언제나 — 팔은 그 자리, 그리퍼는 그 상태 유지.
   잡기 순서 (준비 자세에서 시작): 그리퍼 벌림 → 접근 위치 (잡는 자리 바로 위 10 cm) → 내려가기 → 닫기
              (박스에 막혔는지 확인, 아니면 놓침 → 벌리고 멈춤) → 들기 8 cm → 2 초 → 내려놓기 → 벌림 → 빼기 → 준비 자세
-  [준비 자세로] / [기본 자세로]: 선택한 팔만 관절 보간. 기본 자세에서는 그리퍼가 아래를 봐서 이 이동 중 그리퍼가
-             몸 앞 낮은 곳(pelvis 아래 10 cm 넘게)을 지나감 → 확인 창에 나오는 가장 낮은 점을 보고 테이블이 멀 때만
+  [준비 자세로] / [기본 자세로]: 선택한 팔만 관절 보간. 준비 자세 = 그리퍼가 카메라 화면 밖 (gripper.yaml ready_tcp_m),
+             이 이동 중 그리퍼는 몸 앞 0.25 m 밖으로 안 나감 (계산) — 확인 창에 가장 앞 · 가장 낮은 점
   화면 점: 노란 = 클릭, 하늘 = 계획한 잡는 자리, 초록/분홍 = 지금 왼/오른 집게 가운데 (관절각 FK → 카메라로 투영)
 
 준비 (박스 쪽 robot_server · rs_stream 은 띄우지 않음 — 이 웹이 카메라를 직접 엶)
@@ -330,7 +330,7 @@ class Runner:
                     self.stage = name
                 if kind == "arm":
                     ok, msg = pc.run_seg(self.mdl, sg, self.stop_evt)
-                    self.say(f"{name}: {msg}")
+                    self.say(f"{name}: {msg}" + (self._arrival(side, sg) if ok else ""))
                     if not ok:
                         result = "stopped"
                         break
@@ -377,6 +377,21 @@ class Runner:
         self.say({"done": "잡기 순서 끝", "missed": "놓침 — 그리퍼를 벌림. [복귀] 를 누르세요",
                   "stopped": "멈춤 (팔은 그 자리, 그리퍼는 그 상태 유지)", "error": "오류로 멈춤"}[result])
         self._jsonl({"result": result})
+
+    def _arrival(self, side, sg):
+        """도착 0.4 초 뒤: 보낸 관절(경로 끝) 의 집게 가운데 vs 실측 관절의 집게 가운데 [mm] — 팔 추종 오차."""
+        try:
+            time.sleep(0.4)
+            pose = pc.call("/pose", timeout=1.0)
+            qm = self.mdl.to_model(np.radians(np.asarray(pose["arm_deg"], dtype=float)))
+            want = self.mdl.tcp(sg.qs[-1], side).translation
+            got = self.mdl.tcp(qm, side).translation
+            e = (got - want) * 1000
+            jd = float(np.degrees(np.max(np.abs(qm[self.mdl.idx[side]] - sg.qs[-1][self.mdl.idx[side]]))))
+            self._jsonl({"arrival": sg.name, "side": side, "err_mm": np.round(e, 1).tolist(), "joint_max_deg": round(jd, 2)})
+            return f" — 도착 오차 (실측 − 보냄) 앞뒤 {e[0]:+.0f} · 좌우 {e[1]:+.0f} · 높이 {e[2]:+.0f} mm, 관절 최대 {jd:.1f}°"
+        except Exception as ex:  # noqa: BLE001
+            return f" — 도착 오차 못 읽음 ({type(ex).__name__})"
 
     def home(self):
         if self.busy():

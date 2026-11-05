@@ -5,8 +5,8 @@ pick_core.py — 그리퍼 한 팔 잡기: 모델 · IK · 경로 계획 · arm_
     집게 가운데(TCP) 프레임 = 손목 yaw 관절 + gripper.yaml tcp_offset (계산값)
   · 팔 이동은 모두 arm_server /stream (관절 목표 스트리밍): 계획 단계에서 관절 경로를 미리 다 풀어 두고
     (직선 구간은 2 mm · 0.5° 마다 IK, 관절이 튀면 계획 실패), 실행은 그 경로를 50 Hz 로 보냄.
-  · 잡기는 준비 자세에서 시작해서 준비 자세로 끝남. 기본 자세 ↔ 준비 자세는 따로 (관절 보간) — 이 구간은 그리퍼가
-    몸 앞 낮은 곳을 지나가므로 (기본 자세에서 그리퍼가 아래를 봄) 테이블이 가까우면 부딪힐 수 있음 → 확인 후 실행
+  · 잡기는 준비 자세(카메라 화면 밖, gripper.yaml ready_tcp_m)에서 시작해서 준비 자세로 끝남.
+    기본 자세 ↔ 준비 자세는 따로 (관절 보간) — 확인 창에 그리퍼가 가장 앞으로 나가는 거리 · 가장 낮은 점을 보여 줌
     arm_server 가 관절마다 server_max_vel 을 넘는 변화를 자름. 송신이 끊기면 서버가 마지막 목표에서 멈춤.
   · 박스 쪽 코드(robot_server · arm_server 의 /hands)는 쓰지 않음
 """
@@ -30,7 +30,7 @@ P = CFG.get("pick") or {}
 _need = ("mm_per_rad", "open_margin_mm", "squeeze_mm", "contact_min_mm", "pad_len_half_mm", "pad_h_half_mm", "tip_beyond_mm",
          "body_back_mm", "body_h_half_mm", "min_overlap_mm", "tip_clear_mm",
          "transit_clear_mm", "approach_m", "lift_m", "hold_s", "rpy_deg", "v_lin", "v_slow", "v_joint",
-         "server_max_vel", "track_abort_deg", "tcp_bias_m")
+         "server_max_vel", "track_abort_deg", "tcp_bias_m", "ready_tcp_m", "ready_rpy_deg")
 _miss = [k for k in _need if k not in P]
 if _miss:
     sys.exit(f"[pick] gripper.yaml pick: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
@@ -53,9 +53,11 @@ TCP_OFF = np.array(CFG["tcp_offset"], dtype=float)
 Q_LO, Q_HI = float(CFG["q_range"][0]), float(CFG["q_range"][1])
 MM_PER_RAD = float(P["mm_per_rad"])
 
-# 준비 자세 = 손 기준점 (0.30, ±0.20, 0.20) + 손이 앞 (utils/hand_to_marker.py 와 같음 — 2026-11-05 실기로 양팔 확인)
-READY_HAND = {"left": np.array([0.30, 0.20, 0.20]), "right": np.array([0.30, -0.20, 0.20])}
-READY_TCP = {s: READY_HAND[s] + (TCP_OFF - EE_OFF) for s in SIDES}
+# 준비 자세 (gripper.yaml pick.ready_tcp_m · ready_rpy_deg — 왼손 기준, 오른손은 y 반대) — 카메라 화면 밖
+_rt = [float(v) for v in P["ready_tcp_m"]]
+READY_TCP = {"left": np.array([_rt[0], abs(_rt[1]), _rt[2]]), "right": np.array([_rt[0], -abs(_rt[1]), _rt[2]])}
+_rr = [math.radians(float(v)) for v in P["ready_rpy_deg"]]
+READY_R = pin.rpy.rpyToMatrix(*_rr)
 AT_READY_POS, AT_READY_ROT = 0.03, math.radians(10)
 
 # 클릭 점 (박스 윗면 가운데) 허용 범위 (pelvis) — 깊이가 엉뚱하면 거부
@@ -142,7 +144,7 @@ class Model:
 def at_ready(mdl, qm, side):
     T = mdl.tcp(qm, side)
     return (np.linalg.norm(T.translation - READY_TCP[side]) < AT_READY_POS and
-            np.linalg.norm(pin.log3(T.rotation)) < AT_READY_ROT)
+            np.linalg.norm(pin.log3(READY_R @ T.rotation.T)) < AT_READY_ROT)
 
 
 def default_q_ctrl():
@@ -157,7 +159,7 @@ def plan_pose(mdl, q_now_ctrl, side, which):
     if which == "ready":
         if at_ready(mdl, q0, side):
             return None, "이미 준비 자세"
-        q1, ep, er = mdl.ik(q0, side, READY_TCP[side], I3, iters=600)
+        q1, ep, er = mdl.ik(q0, side, READY_TCP[side], READY_R, iters=600)
         if ep > IK_POS_TOL or er > IK_ROT_TOL:
             return None, f"준비 자세 IK 실패 ({ep * 1000:.1f} mm)"
         name = "준비 자세로"
@@ -194,8 +196,13 @@ class Seg:
 
 
 def seg_time(qs, length_m, v_lin, v_joint):
-    jt = float(np.max(np.sum(np.abs(np.diff(np.asarray(qs), axis=0)), axis=0))) if len(qs) > 1 else 0.0
-    t = 1.5 * max(length_m / v_lin if v_lin else 0.0, jt / v_joint)
+    """smoothstep 으로 샘플을 고르게 지나갈 때 (진행률 s 의 최고 속도 1.5 / T) 직선 속도와 '가장 빨리 움직이는 구간'의
+    관절 속도가 상한을 넘지 않는 시간. (평균으로 정하면 손목이 몰려 움직이는 구간에서 서버가 속도를 자름)"""
+    if len(qs) < 2:
+        return MIN_SEG_S
+    n = len(qs) - 1
+    dq_ds = float(np.max(np.abs(np.diff(np.asarray(qs), axis=0)))) * n      # 샘플 사이 최대 관절 변화 / 진행률
+    t = 1.5 * max(length_m / v_lin if v_lin else 0.0, dq_ds / v_joint)
     return max(MIN_SEG_S, t)
 
 
@@ -301,7 +308,7 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
              ("내려놓기", T(cmd(place_p)), P["v_slow"], "grasp"),
              ("@open", None, None, None),
              ("빼기", T(cmd(pre_p)), P["v_slow"], "grasp"),
-             ("준비 자세로 복귀", T(READY_TCP[side], I3), P["v_lin"], "transit")]
+             ("준비 자세로 복귀", T(READY_TCP[side], READY_R), P["v_lin"], "transit")]
     q = q_ready
     seq = [("@open", None)]
     for name, Tt, v, kind in steps:
@@ -346,7 +353,7 @@ def plan_home(mdl, q_now_ctrl, side, floor_z):
             return None, why
         seq.append(("arm", sg))
         q = sg.qs[-1]
-    sg, why = cart_seg(mdl, "준비 자세로", side, q, pin.SE3(I3, READY_TCP[side]), P["v_lin"])
+    sg, why = cart_seg(mdl, "준비 자세로", side, q, pin.SE3(READY_R, READY_TCP[side]), P["v_lin"])
     if sg is None:
         return None, why
     seq.append(("arm", sg))
