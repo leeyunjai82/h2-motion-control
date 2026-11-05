@@ -432,8 +432,8 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
-        sg, info = pc.plan_pose(self.mdl, q_now, side, which)
-        if sg is None:
+        segs, info = pc.plan_pose(self.mdl, q_now, side, which)
+        if segs is None:
             raise HTTPException(409, info)
         if not confirm:
             return info
@@ -442,12 +442,16 @@ class Runner:
             self.plan = None             # 자세가 바뀌므로 이전 계획은 버림
 
         def _go():
+            ok2 = True
+            for sg in segs:
+                with self.lk:
+                    self.phase, self.stage = "running", sg.name
+                ok2, m2 = pc.run_seg(self.mdl, sg, self.stop_evt)
+                self.say(f"{side} {sg.name}: {m2}")
+                if not ok2:
+                    break
             with self.lk:
-                self.phase, self.stage = "running", sg.name
-            ok2, m2 = pc.run_seg(self.mdl, sg, self.stop_evt)
-            self.say(f"{side} {sg.name}: {m2}")
-            with self.lk:
-                self.phase, self.stage = ("done" if ok2 else "stopped"), (sg.name + (" 끝" if ok2 else " 중 멈춤"))
+                self.phase, self.stage = ("done" if ok2 else "stopped"), (segs[-1].name + " 끝" if ok2 else "자세 이동 중 멈춤")
         self.th = threading.Thread(target=_go, daemon=True)
         self.th.start()
         return info
@@ -652,7 +656,7 @@ $('home').onclick=async()=>{if(!confirm('복귀: 위로 → 준비 자세. 진�
 async function poseGo(which){try{const i=await post('/api/pose',{side:side(),which,confirm:false});
  const low=i.low_front_z===null?'없음':`${(i.low_front_z*100).toFixed(0)} cm (pelvis 기준)`;
  if(!confirm(`${side()==='left'?'왼':'오른'}팔 ${which==='ready'?'준비 자세':'기본 자세'}로 (${i.sec} 초, 관절 보간)\n`+
-   `몸 앞 25 cm 넘는 곳에서 그리퍼 가장 낮은 점: ${low}\n가장 앞: ${(i.max_x*100).toFixed(0)} cm\n`+
+   `몸 앞 25 cm 넘는 곳에서 그리퍼 가장 낮은 점: ${low}\n가장 앞: ${(i.max_x*100).toFixed(0)} cm${i.via?' (경유 자세를 거침)':''}\n`+
    `테이블·박스가 이 경로에 없고, 비상정지를 손에 쥐었습니까?`))return;
  await post('/api/pose',{side:side(),which,confirm:true});}catch(e){alert(e.message);}}
 $('pready').onclick=()=>poseGo('ready'); $('pdef').onclick=()=>poseGo('default');

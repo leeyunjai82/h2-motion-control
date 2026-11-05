@@ -30,7 +30,7 @@ P = CFG.get("pick") or {}
 _need = ("mm_per_rad", "open_margin_mm", "squeeze_mm", "contact_min_mm", "pad_len_half_mm", "pad_h_half_mm", "tip_beyond_mm",
          "body_back_mm", "body_h_half_mm", "min_overlap_mm", "tip_clear_mm",
          "transit_clear_mm", "approach_m", "lift_m", "hold_s", "rpy_deg", "v_lin", "v_slow", "v_joint",
-         "server_max_vel", "track_abort_deg", "tcp_bias_m", "ready_tcp_m", "ready_rpy_deg")
+         "server_max_vel", "track_abort_deg", "tcp_bias_m", "ready_tcp_m", "ready_rpy_deg", "via_tcp_m", "via_rpy_deg")
 _miss = [k for k in _need if k not in P]
 if _miss:
     sys.exit(f"[pick] gripper.yaml pick: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
@@ -58,6 +58,10 @@ _rt = [float(v) for v in P["ready_tcp_m"]]
 READY_TCP = {"left": np.array([_rt[0], abs(_rt[1]), _rt[2]]), "right": np.array([_rt[0], -abs(_rt[1]), _rt[2]])}
 _rr = [math.radians(float(v)) for v in P["ready_rpy_deg"]]
 READY_R = pin.rpy.rpyToMatrix(*_rr)
+_vt = [float(v) for v in P["via_tcp_m"]]
+VIA_TCP = {"left": np.array([_vt[0], abs(_vt[1]), _vt[2]]), "right": np.array([_vt[0], -abs(_vt[1]), _vt[2]])}
+VIA_R = pin.rpy.rpyToMatrix(*[math.radians(float(v)) for v in P["via_rpy_deg"]])
+FRONT_X, FRONT_LOW = 0.25, 0.12   # 기본 ↔ 준비 이동: 몸 앞 FRONT_X 넘는 곳에서 그리퍼가 FRONT_LOW 아래로 가면 경유 자세를 거침
 AT_READY_POS, AT_READY_ROT = 0.03, math.radians(10)
 
 # 클릭 점 (박스 윗면 가운데) 허용 범위 (pelvis) — 깊이가 엉뚱하면 거부
@@ -153,8 +157,23 @@ def default_q_ctrl():
     return np.radians(np.asarray(robot_env.CFG["default_arm_deg"], dtype=float))
 
 
+def _sweep(mdl, side, segs):
+    """관절 보간 구간들 → (몸 앞 FRONT_X 넘는 곳의 그리퍼 가장 낮은 z 또는 None, 가장 앞 x)."""
+    low, mx = None, -9.0
+    for sg in segs:
+        for q in sg.qs:
+            T = mdl.tcp(q, side)
+            e = ENVELOPE @ T.rotation.T + T.translation
+            mx = max(mx, float(e[:, 0].max()))
+            if e[:, 0].max() > FRONT_X:
+                lz = float(e[:, 2].min())
+                low = lz if low is None else min(low, lz)
+    return low, mx
+
+
 def plan_pose(mdl, q_now_ctrl, side, which):
-    """그 팔만 준비 자세 / 기본 자세로 (관절 보간, 다른 팔 그대로). → (Seg, 정보 dict) 또는 (None, 이유)."""
+    """그 팔만 준비 자세 / 기본 자세로 (관절 보간, 다른 팔 그대로). 바로 가면 그리퍼가 몸 앞 낮은 곳을 지나는 경우
+    경유 자세(gripper.yaml via_tcp_m)를 거침. → (구간 목록, 정보 dict) 또는 (None, 이유)."""
     q0 = mdl.to_model(q_now_ctrl)
     if which == "ready":
         if at_ready(mdl, q0, side):
@@ -170,17 +189,19 @@ def plan_pose(mdl, q_now_ctrl, side, which):
         q1 = q0.copy()
         q1[mdl.idx[side]] = mdl.to_model(dq)[mdl.idx[side]]
         name = "기본 자세로"
-    sg = joint_seg(name, q0, q1, n=80)
-    pts = []
-    for q in sg.qs:
-        T = mdl.tcp(q, side)
-        e = ENVELOPE @ T.rotation.T + T.translation
-        pts.append((float(e[:, 0].max()), float(e[:, 2].min())))
-    pts = np.array(pts)
-    front = pts[pts[:, 0] > 0.25]
-    info = {"sec": round(sg.sec, 1), "low_front_z": None if not len(front) else round(float(front[:, 1].min()), 3),
-            "max_x": round(float(pts[:, 0].max()), 3)}
-    return sg, info
+    segs = [joint_seg(name, q0, q1, n=80)]
+    low, mx = _sweep(mdl, side, segs)
+    via = False
+    if low is not None and low < FRONT_LOW:
+        qv, ep, er = mdl.ik(q0 if which == "ready" else q1, side, VIA_TCP[side], VIA_R, iters=600)
+        if ep > IK_POS_TOL or er > IK_ROT_TOL:
+            return None, f"경유 자세 IK 실패 ({ep * 1000:.1f} mm) — 바로 가면 그리퍼가 몸 앞 z {low:.2f} 까지 내려감"
+        segs = [joint_seg(f"{name} (경유 자세까지)", q0, qv, n=80), joint_seg(f"{name} (경유 자세에서)", qv, q1, n=80)]
+        low, mx = _sweep(mdl, side, segs)
+        via = True
+    info = {"sec": round(sum(sg.sec for sg in segs), 1), "low_front_z": None if low is None else round(low, 3),
+            "max_x": round(mx, 3), "via": via}
+    return segs, info
 
 
 def rpy_matrix(rpy_deg):
