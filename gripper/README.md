@@ -14,10 +14,8 @@
 ## 잡기 웹
 
 ```bash
-ROBOT_CHECK=1 ./start_fsm.sh stand            # 거치대 + FSM 703
-ROBOT_CHECK=1 ./start_editor.sh real          # arm_server (hold · weight 1)
-cd ~/project/dex1_1_service/bin && sudo ./dex1_1_gripper_server -n enp45s0    # 다른 터미널
-source activate_tv.sh && python gripper/pick_web.py enp45s0                   # 다른 터미널, ROBOT_CHECK 없이
+ROBOT_CHECK=1 ./start_fsm.sh stand     # 거치대 + FSM 703 (한 번)
+./start_gripper.sh                     # 한 창: 그리퍼 서비스(sudo 비밀번호 한 번) → arm_server → 잡기 웹. Ctrl+C 로 셋 다 끔
 # 브라우저: http://<미니 PC>:50030/
 ```
 
@@ -29,7 +27,7 @@ source activate_tv.sh && python gripper/pick_web.py enp45s0                   # 
 4. [정지] = 그 자리에서 멈춤 (그리퍼는 그 상태 유지) → [복귀] = 위로 → 준비 자세
 5. 끝나면 [기본 자세로] (같은 경로 반대 — 테이블 확인)
 
-로봇 없이 화면 · 계획만: `python gripper/pick_web.py --sim --sim-top-z 0.14` (arm_server 는 `./start_editor.sh virtual` 로).
+로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
 
 ### 계산으로 정한 것 (실물 확인 전)
 

@@ -12,10 +12,9 @@ pick_web.py — 그리퍼 한 팔로 작은 박스 잡기 웹 (http://<미니 PC
 
 준비 (박스 쪽 robot_server · rs_stream 은 띄우지 않음 — 이 웹이 카메라를 직접 엶)
   1) 로봇 거치대 + FSM 703:          ROBOT_CHECK=1 ./start_fsm.sh stand
-  2) arm_server (hold · weight 1):   ROBOT_CHECK=1 ./start_editor.sh real
-  3) 그리퍼 서비스:                   cd ~/project/dex1_1_service/bin && sudo ./dex1_1_gripper_server -n enp45s0
-  4) 이 웹 (ROBOT_CHECK 없이):         source activate_tv.sh && python gripper/pick_web.py enp45s0
-     로봇 없이 화면·계획만:            python gripper/pick_web.py --sim   (가짜 카메라 · 가짜 그리퍼, 팔은 arm_server 가 있으면 씀)
+  2) 한 창에서 모두:                  ./start_gripper.sh   (그리퍼 서비스 → arm_server → 이 웹, Ctrl+C 로 다 끔)
+     로봇 없이:                       ./start_gripper.sh --sim
+  이 웹만 따로: source activate_tv.sh && python gripper/pick_web.py enp45s0   (그리퍼 서비스 · arm_server 는 떠 있어야 함)
 
   끝낼 때: 박스를 잡고 있으면 먼저 내려놓기. 이 웹을 끄면 그리퍼 송신이 멈춰 힘이 풀림.
 """
