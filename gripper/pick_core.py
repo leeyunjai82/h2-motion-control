@@ -237,37 +237,38 @@ def cart_seg(mdl, name, side, q_from, T_to, v_lin):
 STEP_KO = {"@open": "그리퍼 벌림", "@close": "그리퍼 닫기", "@hold": "들고 있기"}
 
 
-def plan_pick(mdl, q_now_ctrl, side, top, size_mm, rpy_deg):
-    """박스 윗면 가운데 top (pelvis, m) · 크기 → 계획 dict. 실패면 {'ok': False, 'reasons': [...]}."""
+def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
+    """박스 윗면 가운데 top (pelvis, m) · 잡는 폭(집게 방향 = 로봇 좌우) · 높이 → 계획 dict. 실패면 {'ok': False, 'reasons': [...]}."""
     reasons, notes = [], []
     top = np.asarray(top, dtype=float)
-    size = float(size_mm) / 1000.0
+    width_mm, height_mm = float(width_mm), float(height_mm)
+    height = height_mm / 1000.0
     R = rpy_matrix(rpy_deg)
     if not (CLICK_X[0] <= top[0] <= CLICK_X[1]) or abs(top[1]) > CLICK_Y_MAX or not (CLICK_Z[0] <= top[2] <= CLICK_Z[1]):
         reasons.append(f"클릭 점 {np.round(top, 3).tolist()} 이 작업 범위 밖 (x {CLICK_X}, |y| ≤ {CLICK_Y_MAX}, z {CLICK_Z}) — 깊이 확인")
     if (side == "right" and top[1] > MIDLINE_CROSS) or (side == "left" and top[1] < -MIDLINE_CROSS):
         reasons.append(f"{'오른' if side == 'right' else '왼'}팔로 몸 반대쪽 {abs(top[1]) * 100:.0f} cm — 팔끼리·몸통 충돌 위험, 다른 손을 고르세요")
-    floor_z = top[2] - size
+    floor_z = top[2] - height
     low_off = float(np.min((ENVELOPE @ R.T)[:, 2]))            # 그리퍼 가장 낮은 점 − TCP 높이 (이 자세에서)
     pad_v = (abs(R[2, 0]) * P["pad_len_half_mm"] + abs(R[2, 2]) * P["pad_h_half_mm"]) / 1000.0   # 패드 위아래 반폭
-    z_c = top[2] - size / 2                                      # 박스 가운데 높이
+    z_c = top[2] - height / 2                                    # 박스 가운데 높이
     z_min = floor_z + P["tip_clear_mm"] / 1000.0 - low_off       # 그리퍼가 바닥에 안 닿는 가장 낮은 TCP
     z_g = max(z_c, z_min)
     overlap = min(top[2], z_g + pad_v) - max(floor_z, z_g - pad_v)
     if overlap * 1000 < P["min_overlap_mm"]:
         reasons.append(f"이 자세(RPY {list(rpy_deg)})로는 그리퍼 몸통이 바닥에 닿아 박스를 {max(0.0, overlap) * 1000:.0f} mm 만 쥠"
-                       f" (최소 {P['min_overlap_mm']} mm) — pitch 를 키우거나 더 큰 박스")
-    open_mm = min(size_mm + P["open_margin_mm"], gap_mm(Q_HI))
-    side_room = (open_mm - size_mm) / 2
+                       f" (최소 {P['min_overlap_mm']} mm) — pitch 를 키우거나 더 높은 박스 (높이 {height_mm:.0f} mm)")
+    open_mm = min(width_mm + P["open_margin_mm"], gap_mm(Q_HI))
+    side_room = (open_mm - width_mm) / 2
     if side_room < 8:
-        reasons.append(f"박스 {size_mm:.0f} mm — 벌림 최대 {gap_mm(Q_HI):.0f} mm 에서 한쪽 여유 {side_room:.1f} mm (8 mm 이상 필요)")
-    close_mm = max(size_mm - P["squeeze_mm"], gap_mm(Q_LO))
+        reasons.append(f"폭 {width_mm:.0f} mm — 벌림 최대 {gap_mm(Q_HI):.0f} mm 에서 한쪽 여유 {side_room:.1f} mm (8 mm 이상 필요)")
+    close_mm = max(width_mm - P["squeeze_mm"], gap_mm(Q_LO))
     grasp_p = np.array([top[0], top[1], z_g])
     pre_p = grasp_p + np.array([0.0, 0.0, P["approach_m"]])      # 위에서 수직으로 내려감
     lift_p = grasp_p + np.array([0.0, 0.0, P["lift_m"]])
     place_p = grasp_p + np.array([0.0, 0.0, 0.003])
     T = lambda p, Rm=R: pin.SE3(Rm, np.asarray(p, dtype=float))
-    out = {"ok": False, "side": side, "top": top.round(4).tolist(), "size_mm": size_mm, "rpy_deg": list(map(float, rpy_deg)),
+    out = {"ok": False, "side": side, "top": top.round(4).tolist(), "width_mm": width_mm, "height_mm": height_mm, "rpy_deg": list(map(float, rpy_deg)),
            "floor_z": round(floor_z, 4), "overlap_mm": round(overlap * 1000, 1), "grasp": grasp_p.round(4).tolist(), "pre": pre_p.round(4).tolist(),
            "open_mm": round(open_mm, 1), "close_mm": round(close_mm, 1), "q_open": round(q_for_gap(open_mm), 3),
            "q_close": round(q_for_gap(close_mm), 3), "reasons": reasons, "notes": notes}

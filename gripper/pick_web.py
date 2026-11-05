@@ -233,7 +233,7 @@ class Runner:
         return self.th is not None and self.th.is_alive()
 
     # ----- 계획 -----
-    def make_plan(self, u, v, side, size_mm, rpy):
+    def make_plan(self, u, v, side, width_mm, height_mm, rpy):
         if self.busy():
             raise HTTPException(409, "실행 중 — 정지 후 다시")
         ok, msg, q_now = pc.arm_ready_check()
@@ -242,21 +242,21 @@ class Runner:
         top = self.cam.point(u, v)
         if top is None:
             raise HTTPException(400, "그 자리 깊이 없음 — 박스 윗면 가운데를 다시 클릭")
-        plan = pc.plan_pick(self.mdl, q_now, side, top, size_mm, rpy)
+        plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy)
         with self.lk:
             self.plan_id += 1
             self.plan = plan
             self.click = (u, v)
             self.phase = "planned" if plan["ok"] else "idle"
         self._jsonl({"plan": self.summary(plan), "click_px": [u, v]})
-        self.say(f"계획 #{self.plan_id} {side} {size_mm:.0f} mm RPY {rpy}: " + ("OK" if plan["ok"] else "불가 — " + "; ".join(plan["reasons"])))
+        self.say(f"계획 #{self.plan_id} {side} 폭 {width_mm:.0f} · 높이 {height_mm:.0f} mm RPY {rpy}: " + ("OK" if plan["ok"] else "불가 — " + "; ".join(plan["reasons"])))
         return self.summary(plan)
 
     @staticmethod
     def summary(plan):
         if plan is None:
             return None
-        keys = ("ok", "side", "top", "size_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+        keys = ("ok", "side", "top", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready")
         return {k: plan.get(k) for k in keys if k in plan}
 
@@ -343,7 +343,7 @@ class Runner:
                     self.say(f"{name}: q {q:.2f} (≈ {pc.gap_mm(q):.0f} mm)")
                 elif kind == "@close":
                     if self.sim and isinstance(self.grip, FakeGripper):
-                        self.grip.block_mm = plan["size_mm"] - 1.0
+                        self.grip.block_mm = plan["width_mm"] - 1.0
                     q, err = self._grip_to(side, plan["q_close"])
                     if err:
                         self.say(f"{name}: {err}")
@@ -472,7 +472,8 @@ class PlanReq(BaseModel):
     u: float
     v: float
     side: str
-    size_mm: float
+    width_mm: float
+    height_mm: float
     rpy_deg: List[float]
 
 
@@ -519,9 +520,9 @@ def make_app(r: Runner):
 
     @app.post("/api/plan")
     def api_plan(q: PlanReq):
-        if q.side not in pc.SIDES or len(q.rpy_deg) != 3 or not (20 <= q.size_mm <= 75):
-            raise HTTPException(400, "side left/right, rpy 3 개, 박스 20–75 mm")
-        plan = r.make_plan(q.u, q.v, q.side, q.size_mm, q.rpy_deg)
+        if q.side not in pc.SIDES or len(q.rpy_deg) != 3 or not (10 <= q.width_mm <= 75) or not (15 <= q.height_mm <= 150):
+            raise HTTPException(400, "side left/right, rpy 3 개, 폭 10–75 mm, 높이 15–150 mm")
+        plan = r.make_plan(q.u, q.v, q.side, q.width_mm, q.height_mm, q.rpy_deg)
         return {"plan_id": r.plan_id, "plan": plan}
 
     @app.post("/api/run")
@@ -597,7 +598,7 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 <button id="stop">■ 정지</button>
 <fieldset><legend>박스 · 손 · 자세</legend>
 <label><input type="radio" name="side" value="left">왼손</label><label><input type="radio" name="side" value="right" checked>오른손</label><br>
-박스 크기 <input id="size" type="number" value="50" min="20" max="75"> mm<br>
+잡는 폭 <input id="size" type="number" value="50" min="10" max="75"> mm (로봇 좌우 방향) · 높이 <input id="height" type="number" value="50" min="15" max="150"> mm<br>
 RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><input id="y" type="number" step="5"> deg
 <div style="font-size:12px">0,0,0 = 손이 앞 · 집게 좌우, pitch + = 앞으로 숙임 (손목 pitch ±33° 라 90 은 거의 안 닿음). 박스 윗면 가운데를 클릭하면 계획 (접근은 위에서 수직)</div>
 </fieldset>
@@ -619,10 +620,10 @@ async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-
 $('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
  const u=(e.clientX-rc.left)*__W__/rc.width, v=(e.clientY-rc.top)*__H__/rc.height;
  $('plan').textContent='계획 중…';
- try{const j=await post('/api/plan',{u,v,side:side(),size_mm:+$('size').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]});
+ try{const j=await post('/api/plan',{u,v,side:side(),width_mm:+$('size').value,height_mm:+$('height').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]});
   planId=j.plan_id; const p=j.plan; planOk=p.ok; showPlan(p);}catch(err){planOk=false;$('plan').innerHTML='<span class="bad">'+err.message+'</span>';}};
 function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
-function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} ${p.size_mm} mm RPY ${p.rpy_deg}\n`;
+function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg}\n`;
  s+=`윗면 가운데 (pelvis) ${f3(p.top)}\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
  s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
  (p.reasons||[]).forEach(x=>s+='<span class="bad">✗ '+x+'</span>\n'); (p.notes||[]).forEach(x=>s+='⚠ '+x+'\n');
