@@ -271,8 +271,10 @@ def cart_seg(mdl, name, side, q_from, T_to, v_lin):
 STEP_KO = {"@open": "그리퍼 벌림", "@close": "그리퍼 닫기", "@hold": "들고 있기"}
 
 
-def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
-    """박스 윗면 가운데 top (pelvis, m) · 잡는 폭(집게 방향 = 로봇 좌우) · 높이 → 계획 dict. 실패면 {'ok': False, 'reasons': [...]}."""
+def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=None, bin_h_mm=None):
+    """박스 윗면 가운데 top (pelvis, m) · 잡는 폭(집게 방향 = 로봇 좌우) · 높이 → 계획 dict. 실패면 {'ok': False, 'reasons': [...]}.
+    bin_pt (통 안쪽을 클릭한 점, xy 만 씀) · bin_h_mm (테이블에서 통 윗면 테두리까지) 를 주면 제자리 대신 통에 넣음:
+    들기(박스 아랫면이 테두리 3 cm 위) → 통 위로 → 박스 아랫면이 테두리 1 cm 위까지 내려 → 벌림 → 위로 → 준비 자세."""
     reasons, notes = [], []
     top = np.asarray(top, dtype=float)
     width_mm, height_mm = float(width_mm), float(height_mm)
@@ -321,7 +323,38 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
         reasons.append(f"{'왼' if side == 'left' else '오른'}팔이 준비 자세가 아님 — 먼저 [준비 자세로]")
         return out
     q_ready = q0
-    steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
+    clear_bin = None
+    if bin_pt is not None:
+        bin_pt = np.asarray(bin_pt, dtype=float)
+        rim_z = floor_z + float(bin_h_mm) / 1000.0
+        d_b = z_g - floor_z                                           # 잡은 자리 TCP ↔ 박스 아랫면
+        carry_z = max(lift_p[2], rim_z + 0.03 + d_b, rim_z + 0.03 - low_off)
+        rel_z = max(rim_z + 0.01 + d_b, rim_z + 0.015 - low_off)
+        bxy = bin_pt[:2]
+        if not (CLICK_X[0] <= bxy[0] <= CLICK_X[1]) or abs(bxy[1]) > CLICK_Y_MAX:
+            reasons.append(f"통 클릭 점 {np.round(bxy, 3).tolist()} 이 작업 범위 밖")
+        if (side == "right" and bxy[1] > MIDLINE_CROSS) or (side == "left" and bxy[1] < -MIDLINE_CROSS):
+            reasons.append(f"통이 {'오른' if side == 'right' else '왼'}팔 반대쪽 {abs(bxy[1]) * 100:.0f} cm — 다른 손을 고르거나 통을 옮기세요")
+        if np.linalg.norm(bxy - top[:2]) < 0.06:
+            reasons.append("통과 박스가 6 cm 안 — 통 가운데를 다시 클릭")
+        if reasons:
+            return out
+        lift_p = np.array([grasp_p[0], grasp_p[1], carry_z])
+        over_p = np.array([bxy[0], bxy[1], carry_z])
+        rel_p = np.array([bxy[0], bxy[1], rel_z])
+        clear_bin = rim_z + 0.012
+        out.update(bin=bin_pt.round(4).tolist(), rim_z=round(rim_z, 4), release=rel_p.round(4).tolist())
+        steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
+                 ("내려가기", T(cmd(grasp_p)), P["v_slow"], "grasp"),
+                 ("@close", None, None, None),
+                 ("들기", T(cmd(lift_p)), P["v_slow"], "grasp"),
+                 ("통 위로", T(cmd(over_p)), P["v_lin"], "bin"),
+                 ("통에 넣는 높이로", T(cmd(rel_p)), P["v_slow"], "bin"),
+                 ("@open", None, None, None),
+                 ("위로", T(cmd(over_p)), P["v_slow"], "bin"),
+                 ("준비 자세로 복귀", T(READY_TCP[side], READY_R), P["v_lin"], "transit")]
+    else:
+      steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
              ("내려가기", T(cmd(grasp_p)), P["v_slow"], "grasp"),
              ("@close", None, None, None),
              ("들기", T(cmd(lift_p)), P["v_slow"], "grasp"),
@@ -340,7 +373,8 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
         if sg is None:
             reasons.append(why)
             return out
-        sg.clear_min = floor_z + (P["tip_clear_mm"] - 2) / 1000.0 if kind == "grasp" else floor_z + P["transit_clear_mm"] / 1000.0
+        sg.clear_min = (floor_z + (P["tip_clear_mm"] - 2) / 1000.0 if kind == "grasp" else
+                        clear_bin if kind == "bin" else floor_z + P["transit_clear_mm"] / 1000.0)
         seq.append(("arm", sg))
         q = sg.qs[-1]
     # 바닥 거리 (모든 샘플 · 그리퍼 겉 점)
@@ -350,12 +384,13 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg):
         cmin = sg.clear_min if sg.clear_min is not None else floor_z + P["transit_clear_mm"] / 1000.0
         low = min(mdl.lowest(qq, side) for qq in sg.qs)
         if low < cmin - 1e-4:
-            reasons.append(f"{sg.name}: 그리퍼가 바닥(박스 아랫면 z {floor_z:.3f})에 {max(0.0, low - floor_z) * 1000:.0f} mm 까지 내려감"
-                           f" (최소 {(cmin - floor_z) * 1000:.0f} mm)")
+            ref, what = ((out["rim_z"], "통 테두리") if sg.clear_min == clear_bin and clear_bin is not None else (floor_z, "바닥(박스 아랫면)"))
+            reasons.append(f"{sg.name}: 그리퍼가 {what} z {ref:.3f} 에 {(low - ref) * 1000:.0f} mm 까지 내려감"
+                           f" (최소 {(cmin - ref) * 1000:.0f} mm)")
     if reasons:
         return out
     out.update(ok=True, seq=seq, q_start=q0, q_ready=q_ready,
-               total_s=round(sum(sg.sec for k, sg in seq if k == "arm") + P["hold_s"] + 3 * 2.0, 1),
+               total_s=round(sum(sg.sec for k, sg in seq if k == "arm") + (0 if bin_pt is not None else P["hold_s"]) + 3 * 2.0, 1),
                steps=[(STEP_KO.get(k, k) if k != "arm" else sg.name, None if k != "arm" else round(sg.sec, 1)) for k, sg in seq])
     if side_room < 12:
         notes.append(f"한쪽 여유 {side_room:.1f} mm — 위치 오차가 크면 집게가 박스에 닿을 수 있음")

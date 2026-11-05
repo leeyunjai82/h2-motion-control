@@ -201,7 +201,7 @@ class Runner:
     def __init__(self, mdl, cam, grip, sim):
         self.mdl, self.cam, self.grip, self.sim = mdl, cam, grip, sim
         self.lk = threading.Lock()
-        self.plan, self.plan_id, self.click = None, 0, None
+        self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
         self.phase, self.stage, self.waiting = "idle", "", False
         self.log = []
         self.stop_evt, self.next_evt = threading.Event(), threading.Event()
@@ -241,7 +241,7 @@ class Runner:
         return self.th is not None and self.th.is_alive()
 
     # ----- 계획 -----
-    def make_plan(self, u, v, side, width_mm, height_mm, rpy):
+    def make_plan(self, u, v, side, width_mm, height_mm, rpy, bin_uv=None, bin_h_mm=None):
         if self.busy():
             raise HTTPException(409, "실행 중 — 정지 후 다시")
         ok, msg, q_now = pc.arm_ready_check()
@@ -251,7 +251,13 @@ class Runner:
         if got is None:
             raise HTTPException(400, "그 자리 깊이 없음 — 박스 윗면 가운데를 다시 클릭")
         top, spread = got
-        plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy)
+        bin_pt = None
+        if bin_uv is not None:
+            gb = self.cam.point(*bin_uv)
+            if gb is None:
+                raise HTTPException(400, "통 자리 깊이 없음 — 통 안쪽 가운데를 다시 클릭")
+            bin_pt = gb[0]
+        plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt=bin_pt, bin_h_mm=bin_h_mm)
         plan["depth_spread_mm"] = round(spread, 1)
         if spread > DEPTH_SPREAD_WARN:
             plan.setdefault("notes", []).append(f"클릭 점 깊이 흔들림 {spread:.0f} mm — 윗면 가장자리이거나 깊이가 불안정 (가운데를 다시 클릭)")
@@ -259,9 +265,11 @@ class Runner:
             self.plan_id += 1
             self.plan = plan
             self.click = (u, v)
+            self.bin_click = bin_uv
             self.phase = "planned" if plan["ok"] else "idle"
-        self._jsonl({"plan": self.summary(plan), "click_px": [u, v]})
-        self.say(f"계획 #{self.plan_id} {side} 폭 {width_mm:.0f} · 높이 {height_mm:.0f} mm RPY {rpy}: " + ("OK" if plan["ok"] else "불가 — " + "; ".join(plan["reasons"])))
+        self._jsonl({"plan": self.summary(plan), "click_px": [u, v], "bin_px": bin_uv})
+        self.say(f"계획 #{self.plan_id} {side} 폭 {width_mm:.0f} · 높이 {height_mm:.0f} mm RPY {rpy}"
+                 + (f" → 통 (높이 {bin_h_mm:.0f} mm)" if bin_uv is not None else " → 제자리") + ": " + ("OK" if plan["ok"] else "불가 — " + "; ".join(plan["reasons"])))
         return self.summary(plan)
 
     @staticmethod
@@ -269,7 +277,7 @@ class Runner:
         if plan is None:
             return None
         keys = ("ok", "side", "top", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
-                "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready")
+                "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
         return {k: plan.get(k) for k in keys if k in plan}
 
     # ----- 실행 -----
@@ -480,11 +488,15 @@ class Runner:
     def overlay(self, img):
         K = self.cam.K
         with self.lk:
-            plan, click = self.plan, self.click
+            plan, click, bclick = self.plan, self.click, self.bin_click
         if click:
             cv2.drawMarker(img, (int(click[0]), int(click[1])), (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
+        if bclick:
+            cv2.drawMarker(img, (int(bclick[0]), int(bclick[1])), (0, 140, 255), cv2.MARKER_TILTED_CROSS, 18, 2)
         if plan and plan.get("grasp"):
-            for key, col in (("grasp", (255, 200, 0)), ("pre", (255, 255, 120))):
+            for key, col in (("grasp", (255, 200, 0)), ("pre", (255, 255, 120)), ("release", (0, 140, 255))):
+                if not plan.get(key):
+                    continue
                 px = pelvis_to_pixel(plan[key], K)
                 if px:
                     cv2.circle(img, px, 6, col, 2)
@@ -506,6 +518,9 @@ class PlanReq(BaseModel):
     width_mm: float
     height_mm: float
     rpy_deg: List[float]
+    bin_u: Optional[float] = None       # 통 안쪽 가운데 클릭 (없으면 제자리 내려놓기)
+    bin_v: Optional[float] = None
+    bin_h_mm: Optional[float] = None    # 테이블 → 통 테두리 높이
 
 
 class RunReq(BaseModel):
@@ -553,7 +568,12 @@ def make_app(r: Runner):
     def api_plan(q: PlanReq):
         if q.side not in pc.SIDES or len(q.rpy_deg) != 3 or not (10 <= q.width_mm <= 75) or not (15 <= q.height_mm <= 150):
             raise HTTPException(400, "side left/right, rpy 3 개, 폭 10–75 mm, 높이 15–150 mm")
-        plan = r.make_plan(q.u, q.v, q.side, q.width_mm, q.height_mm, q.rpy_deg)
+        bin_uv = None
+        if q.bin_u is not None:
+            if q.bin_v is None or q.bin_h_mm is None or not (10 <= q.bin_h_mm <= 250):
+                raise HTTPException(400, "통: 클릭 점 · 높이 10–250 mm")
+            bin_uv = (q.bin_u, q.bin_v)
+        plan = r.make_plan(q.u, q.v, q.side, q.width_mm, q.height_mm, q.rpy_deg, bin_uv, q.bin_h_mm)
         return {"plan_id": r.plan_id, "plan": plan}
 
     @app.post("/api/run")
@@ -630,7 +650,10 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 <fieldset><legend>박스 · 손 · 자세</legend>
 <label><input type="radio" name="side" value="left">왼손</label><label><input type="radio" name="side" value="right" checked>오른손</label><br>
 잡는 폭 <input id="size" type="number" value="50" min="10" max="75"> mm (로봇 좌우 방향) · 높이 <input id="height" type="number" value="50" min="15" max="150"> mm<br>
+놓는 곳 <label><input type="radio" name="dest" value="bin" checked>통</label><label><input type="radio" name="dest" value="same">제자리</label>
+· 통 높이 <input id="binh" type="number" value="80" min="10" max="250"> mm (테이블 → 테두리)<br>
 RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><input id="y" type="number" step="5"> deg
+<div id="clickhint" style="font-size:13px;color:#ff0">① 박스 윗면 가운데를 클릭</div>
 <div style="font-size:12px">0,0,0 = 손이 앞 · 집게 좌우, pitch + = 앞으로 숙임 (손목 pitch ±33° 라 90 은 거의 안 닿음). 박스 윗면 가운데를 클릭하면 계획 (접근은 위에서 수직)</div>
 </fieldset>
 <fieldset><legend>실행</legend>
@@ -648,14 +671,22 @@ const $=id=>document.getElementById(id);
 const side=()=>document.querySelector('input[name=side]:checked').value;
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
  const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.detail||r.status); return j;}
+let boxUV=null;
+const dest=()=>document.querySelector('input[name=dest]:checked').value;
+const hint=()=>{$('clickhint').textContent=boxUV?'② 통 안쪽 가운데를 클릭 (다시 하려면 놓는 곳을 바꿨다 되돌리기)':'① 박스 윗면 가운데를 클릭';};
+document.querySelectorAll('input[name=dest]').forEach(x=>x.onchange=()=>{boxUV=null;hint();});
 $('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
  const u=(e.clientX-rc.left)*__W__/rc.width, v=(e.clientY-rc.top)*__H__/rc.height;
+ let body={u,v,side:side(),width_mm:+$('size').value,height_mm:+$('height').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]};
+ if(dest()==='bin'){ if(!boxUV){boxUV=[u,v];hint();$('plan').textContent='박스 클릭 저장 — 이제 통 안쪽 가운데를 클릭';return;}
+   body.u=boxUV[0];body.v=boxUV[1];body.bin_u=u;body.bin_v=v;body.bin_h_mm=+$('binh').value;boxUV=null;hint();}
  $('plan').textContent='계획 중…';
- try{const j=await post('/api/plan',{u,v,side:side(),width_mm:+$('size').value,height_mm:+$('height').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]});
+ try{const j=await post('/api/plan',body);
   planId=j.plan_id; const p=j.plan; planOk=p.ok; showPlan(p);}catch(err){planOk=false;$('plan').innerHTML='<span class="bad">'+err.message+'</span>';}};
 function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
 function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg}\n`;
  s+=`윗면 가운데 (pelvis) ${f3(p.top)} · 깊이 흔들림 ${p.depth_spread_mm} mm\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
+ if(p.bin) s+=`통 (클릭) ${f3(p.bin)} · 테두리 z ${p.rim_z} · 놓는 자리 ${f3(p.release)}\n`;
  s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
  (p.reasons||[]).forEach(x=>s+='<span class="bad">✗ '+x+'</span>\n'); (p.notes||[]).forEach(x=>s+='⚠ '+x+'\n');
  if(p.steps) s+='순서: '+p.steps.map(x=>x[1]?`${x[0]}(${x[1]}s)`:x[0]).join(' → ')+`\n합계 약 ${p.total_s} 초`;
