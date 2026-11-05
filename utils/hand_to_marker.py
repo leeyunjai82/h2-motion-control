@@ -17,7 +17,7 @@ hand_to_marker.py — 카메라로 잰 마커 위치로 손을 보내 카메라�
    5) 도착 후: 목표 vs 실제(관절각 FK) 오차 출력 → 실물에서 손 기준점과 마커 중심의 차이를 줄자로 재기
    6) Enter → 준비 자세 → 처음 자세로 복귀
 
-  손 기준점 = 손목 yaw 관절에서 손 쪽으로 5 cm (robot.yaml ik.ee_offset, 잡기에서 쓰는 점과 같음)
+  손 기준점 = robot.yaml ik.ee_offset (기본 손 5 cm, end_effector dex1 이면 그리퍼 집게 가운데 gripper.tcp_offset)
 """
 import argparse
 import json

@@ -118,7 +118,7 @@ ik:                           # xr_teleoperate 817fb00 H2_ArmIK 와 같은 축�
                 waist_yaw_joint, waist_roll_joint, waist_pitch_joint,
                 head_pitch_joint, head_yaw_joint]
   ee_joints: [left_wrist_yaw_joint, right_wrist_yaw_joint]
-  ee_offset: [0.05, 0.0, 0.0]
+  ee_offset: [0.05, 0.0, 0.0]  # end_effector: hand (기본 고무손) 기준점 — dex1 이면 robot_env 가 gripper.tcp_offset 으로 바꿈
   cost: {translation: 50, rotation: 0.8, regularization: 0.01, smooth: 0.1}   # 공식 H2_ArmIK (0c1b4a2). G1 기본 50 / 1.0 / 0.02 / 0.1
 
 # 기본 팔 자세 [deg] — 실측 2026-10-07: FSM 703 (4 → 703) 직후, arm_sdk 쓰기 전, 거치대 (utils/check_robot_id.py 슬롯 15–28)
@@ -342,7 +342,12 @@ head_track:
   robot_setup: {enabled: true, stop: [video_hub], start: stereo_patch_pc1, set_ip: true}   # 키 on/off 는 YAML 에서 true/false 로 읽혀 안 씀
 
 
-gripper:                        # Dex1-1 (외장 키트: 485–USB 보드 → 미니 PC, dex1_1_service -n <유선 인터페이스>) — 코드 연동 전
+# 손 끝에 단 것 — hand: 기본 고무손 (구동 없음, 박스 잡기) | dex1: Dex1-1 그리퍼 (아래 gripper)
+#   바꾸면 IK 기준점(ik.ee_offset ↔ gripper.tcp_offset)과 IK 캐시 파일이 같이 바뀜 (hand 는 ik_cache 그대로, dex1 은 이름 뒤 _dex1)
+#   실행할 때만 바꾸기: END_EFFECTOR=dex1 ./start_robot.sh  — 박스 잡기(robot_server Box 모드)는 hand 전용
+end_effector: hand
+
+gripper:                        # Dex1-1 (end_effector: dex1 일 때) — 외장 키트: 485–USB 보드 → 미니 PC, dex1_1_service -n <유선 인터페이스>
   type: dex1
   # 서비스는 모터 ID 0 → rt/dex1/right, ID 1 → rt/dex1/left 로 내보냄 (dex1_1_service main.cpp, 실행 출력 2026-11-05).
   # 이 로봇은 ID 0 그리퍼를 왼손, ID 1 그리퍼를 오른손에 장착 (사용자 2026-11-05) → 토픽 이름과 실제 손이 반대.
@@ -355,7 +360,7 @@ gripper:                        # Dex1-1 (외장 키트: 485–USB 보드 → �
   q_range: [0.0, 5.05]
   # 집게 가운데(TCP) [m, wrist_yaw 관절 기준 x] — 계산 (2026-11-05): 기본 손 뒤 끝 45.1 mm (unitree_ros H2 left_hand_link 메시)
   #   + 사용자 어댑터 18.0 (Ø39 쪽이 기본 손 자리에 끼워짐) + Dex1 뒷면 돌기 4.9 + Dex1 원점 → 집게 패드 가운데 123.0 = 191.0 mm,
-  #   손가락 끝 211.3 mm. 확인: 손목 받침 앞 끝 → 손가락 끝 실측 ≈ 153.6 mm. 그리퍼 연동 때 ik.ee_offset 을 이 값으로 (지금 IK 는 0.05)
+  #   손가락 끝 211.3 mm. 확인: 손목 받침 앞 끝 → 손가락 끝 실측 ≈ 153.6 mm. end_effector: dex1 이면 IK 기준점(ik.ee_offset)이 됨
   tcp_offset: [0.191, 0.0, 0.0]
 
 dashboard:

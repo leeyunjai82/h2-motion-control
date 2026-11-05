@@ -161,6 +161,24 @@ URDF_PATH     = os.path.join(ROBOT_DIR, CFG["urdf"])
 MESH_DIR      = os.path.join(ROBOT_DIR, "meshes")
 MOTIONS_DIR   = os.path.join(ROBOT_DIR, "motions")
 IK_CACHE_PATH = os.path.join(ROBOT_DIR, CFG["ik_cache"])
+
+# ---- 손 끝 (end_effector): hand = 기본 고무손 / dex1 = Dex1-1 그리퍼 ----
+#   END_EFFECTOR 환경변수 > robot.yaml end_effector (기본 hand). dex1 이면 IK 기준점을 gripper.tcp_offset 으로 바꾸고
+#   IK 캐시도 따로 (캐시에 기준점 프레임이 같이 저장되므로 hand 캐시를 쓰면 기준점이 틀림).
+#   CFG["ik"]["ee_offset"] 을 읽는 곳(IK · joint_check · hand_to_marker · sim_server · physical_ai)은 그대로 따라감.
+END_EFFECTOR = (os.environ.get("END_EFFECTOR", "").strip().lower() or str(CFG.get("end_effector") or "hand")).lower()
+if END_EFFECTOR not in ("hand", "dex1"):
+    _fail(f"end_effector='{END_EFFECTOR}' — hand / dex1 만 (robot.yaml end_effector 또는 END_EFFECTOR)")
+GRIPPER = None
+if END_EFFECTOR == "dex1":
+    GRIPPER = dict(CFG.get("gripper") or {})
+    _tcp = GRIPPER.get("tcp_offset")
+    if not (isinstance(_tcp, list) and len(_tcp) == 3 and all(isinstance(v, (int, float)) for v in _tcp)):
+        _fail("end_effector dex1 인데 robot.yaml gripper.tcp_offset [x, y, z] 가 없음")
+    CFG["ik"]["ee_offset"] = [float(v) for v in _tcp]
+    _b, _e = os.path.splitext(IK_CACHE_PATH)
+    IK_CACHE_PATH = f"{_b}_dex1{_e}"
+    print(f"[robot_env] 손 끝 dex1 — IK 기준점 {CFG['ik']['ee_offset']} m, 캐시 {os.path.basename(IK_CACHE_PATH)}", file=sys.stderr)
 VENDOR_DIR    = os.path.join(COMMON_DIR, "assets", "vendor")   # three.min.js (로봇 무관)
 
 # ---- 자주 쓰는 값 ----

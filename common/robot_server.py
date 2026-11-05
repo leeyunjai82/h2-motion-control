@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
-# Version: 1.28
+# Version: 1.29
 # Changes:
+#   1.29 - 박스 잡기(Box 모드)는 기본 고무손(end_effector: hand) 전용 — dex1 그리퍼면 /set_mode box 거부
+#          (잡기 순서·오프셋이 손바닥 기준이고, IK 기준점이 그리퍼 집게 가운데로 바뀌어 위치가 14 cm 어긋남)
 #   1.28 - mandro 손 제거 (사용자 2026-11-02 — 손은 Dex1-1 그리퍼로 바꿀 예정): 시작 때 /dev/ttyACM0 를 열지 않음
 #          (Dex1-1 서비스 dex1_1_service 가 /dev/ttyACM* 를 훑어 모터를 찾으므로 같은 포트를 잡으면 안 됨).
 #          예전 모션 파일의 hand_motion 은 받기만 하고 무시 (경고, 프레임 시간만큼 대기). /status hand_ready 삭제
@@ -1002,6 +1004,8 @@ async def set_mode(mode: str):
     global ACTIVE_MODE
     if mode not in ("none", "box"):
         return JSONResponse({"ok": False, "error": f"invalid: {mode} (none / box)"})
+    if mode == "box" and robot_env.END_EFFECTOR != "hand":
+        return JSONResponse({"ok": False, "error": f"박스 잡기는 기본 손 전용 (end_effector={robot_env.END_EFFECTOR})"})
     prev = ACTIVE_MODE
     ACTIVE_MODE = mode
     print(f"[MODE] {prev} → {mode}")
