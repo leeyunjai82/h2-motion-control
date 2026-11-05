@@ -358,6 +358,10 @@ gripper:                        # Dex1-1 (end_effector: dex1 일 때) — 외장
   # q [rad]: 0 = 닫힘 (보정 기준), 클수록 벌어짐. 실측 2026-11-05 (손으로 끝까지 여닫음, utils/check_dex1.py):
   #   왼손(ID 0) −0.011 ~ 5.248 · 오른손(ID 1) −0.014 ~ 5.166 → 명령 범위 = 0 ~ (작은 쪽 5.166 − 여유 0.1)
   q_range: [0.0, 5.05]
+  kp: 5.0                       # 그리퍼 모터 게인 (xr_teleoperate Dex1 값) — 닫는 힘은 kp × (명령 − 실제)
+  kd: 0.05
+  max_vel: 3.0                  # 명령 q 이동 속도 상한 [rad/s] (0.6 rad ≈ 1 cm → 약 5 cm/s)
+  rate: 200                     # 송신 [Hz] — 끊기면 서비스가 힘을 풂
   # 집게 가운데(TCP) [m, wrist_yaw 관절 기준 x] — 계산 (2026-11-05): 기본 손 뒤 끝 45.1 mm (unitree_ros H2 left_hand_link 메시)
   #   + 사용자 어댑터 18.0 (Ø39 쪽이 기본 손 자리에 끼워짐) + Dex1 뒷면 돌기 4.9 + Dex1 원점 → 집게 패드 가운데 123.0 = 191.0 mm,
   #   손가락 끝 211.3 mm. 확인: 손목 받침 앞 끝 → 손가락 끝 실측 ≈ 153.6 mm. end_effector: dex1 이면 IK 기준점(ik.ee_offset)이 됨
