@@ -5,7 +5,7 @@ dex1_gripper.py — Dex1-1 그리퍼 2개를 DDS 로 계속 제어 (gripper/ —
   이 모듈은 실제 손(left/right) 기준으로 목표 q 를 받아 rate Hz 로 끊김 없이 보낸다.
   서비스는 명령이 끊기면 BRAKE · kp = kd = 0 (힘 풀림) → 잡은 물체를 놓치지 않게 계속 송신.
 
-  · 손 ↔ 토픽: gripper/gripper.yaml topics (이 로봇은 ID 0 그리퍼가 왼손 → rt/dex1/right)
+  · 손 ↔ 토픽: gripper/gripper.yaml topics (이 로봇은 토픽 이름 = 실제 손: ID 0 오른손 · ID 1 왼손)
   · q [rad]: 0 = 닫힘 (보정 기준), 클수록 벌어짐. 목표는 gripper.q_range 로 자름
   · 처음 상태를 받기 전에는 아무것도 보내지 않고, 받으면 그 자리를 목표로 잡음 (켜자마자 움직이지 않음)
   · 목표로 갈 때 명령 q 를 max_vel [rad/s] 로 조금씩 옮김 (0.6 rad ≈ 1 cm, xr_teleoperate 주석)

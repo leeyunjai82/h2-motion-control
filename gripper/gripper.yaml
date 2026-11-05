@@ -3,14 +3,14 @@
 #   설치 · 보정: INSTALL.md 10단계
 
 # 서비스는 모터 ID 0 → rt/dex1/right, ID 1 → rt/dex1/left 로 내보냄 (dex1_1_service main.cpp, 실행 출력 2026-11-05).
-# 이 로봇은 ID 0 그리퍼를 왼손, ID 1 그리퍼를 오른손에 장착 (사용자 2026-11-05) → 토픽 이름과 실제 손이 반대.
-#   공식 도구(test_dex1_1_gripper_server -l/-r, xr_teleoperate)도 좌우가 반대로 동작함
+# 이 로봇은 토픽 이름에 맞춰 ID 0 그리퍼를 오른손, ID 1 그리퍼를 왼손에 장착 (사용자 2026-11-05)
+#   → 토픽 이름 = 실제 손. 공식 도구(test_dex1_1_gripper_server -l/-r, xr_teleoperate)도 같은 손으로 동작
 topics:                       # 실제 손 → 서비스 토픽 이름 앞부분 (/cmd · /state)
-  left: rt/dex1/right         # 실제 왼손 = 모터 ID 0
-  right: rt/dex1/left         # 실제 오른손 = 모터 ID 1
+  left: rt/dex1/left          # 실제 왼손 = 모터 ID 1
+  right: rt/dex1/right        # 실제 오른손 = 모터 ID 0
 
 # q [rad]: 0 = 닫힘 (보정 기준), 클수록 벌어짐. 실측 2026-11-05 (손으로 끝까지 여닫음, gripper/check_dex1.py):
-#   왼손(ID 0) −0.011 ~ 5.248 · 오른손(ID 1) −0.014 ~ 5.166 → 명령 범위 = 0 ~ (작은 쪽 5.166 − 여유 0.1)
+#   ID 0 (오른손) −0.011 ~ 5.248 · ID 1 (왼손) −0.014 ~ 5.166 → 명령 범위 = 0 ~ (작은 쪽 5.166 − 여유 0.1)
 q_range: [0.0, 5.05]
 
 # 집게 가운데(TCP) [m, wrist_yaw 관절 기준 x] — 계산값 (2026-11-05), 실측 전:

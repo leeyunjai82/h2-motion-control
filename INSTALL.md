@@ -258,8 +258,9 @@ python gripper/check_dex1.py enp45s0 --sec 15          # 읽기만 — 손으로
 python gripper/move_test.py enp45s0 --side left   # 천천히 2.7 → 0.3 rad (left / right / 기본 양손)
 ```
 
-- 서비스는 모터 ID 0 → `rt/dex1/right`, ID 1 → `rt/dex1/left` 로 내보냄. 이 로봇은 **ID 0 을 왼손, ID 1 을 오른손**에 다는 것으로
-  `gripper/gripper.yaml topics` 에 바꿔 둠 → 이 저장소 도구는 실제 손 기준, 공식 도구(`test_dex1_1_gripper_server -l/-r`, xr_teleoperate)는 좌우 반대.
+- 서비스는 모터 ID 0 → `rt/dex1/right`, ID 1 → `rt/dex1/left` 로 내보냄. 이 로봇은 토픽 이름에 맞춰 **ID 0 을 오른손, ID 1 을 왼손**에 닮
+  (`gripper/gripper.yaml topics`) → 이 저장소 도구 · 공식 도구(`test_dex1_1_gripper_server -l/-r`, xr_teleoperate) 모두 같은 손.
+  달기 전에 그리퍼 하나만 전원을 넣고 `gripper/check_dex1.py` 로 어느 쪽 q 가 변하는지 보고 ID 를 확인할 것.
 - 명령이 끊기면 서비스가 BRAKE · kp = kd = 0 (힘 풀림). 잡은 물체를 놓칠 수 있으니 실제 사용 코드는 명령을 끊김 없이 보낼 것.
 - 서비스가 Python 쪽이 붙는 순간 `ddsi_xt_type_init_impl with invalid type object` 뒤 세그멘테이션 오류로 죽은 적이 한 번 있음 (재현 안 됨).
   다시 나오면 `sudo gdb -batch -ex run -ex bt --args ./dex1_1_gripper_server -n enp45s0 2>&1 | tee /tmp/dex1_gdb.log` 로 스택을 남길 것.
