@@ -289,6 +289,8 @@ fsm:                          # unitree_sdk2py h2_loco_client.py + H2R init_fsm.
   damp: 1
   lock: 4
   run: 703                    # start_fsm stand = 1 → 5초 → 4 → 10초 → 703. arm_sdk(EnableArmSDK) 실기 동작 ✓ (601 은 ✗)
+                              #   Unitree 'Sport Services Interface' (2026-11-04 갱신): 703 = ai sport < 2.5.4.11, 701 = ≥ 2.5.4.11
+                              #   (둘 다 상체를 컨트롤러가 안 잡음 = arm_sdk 사용). ⚠️ 펌웨어를 2.5.4.11 이상으로 올리면 run 을 701 로
   sit: 3
   labels:
     lock_button: "FixStand"
