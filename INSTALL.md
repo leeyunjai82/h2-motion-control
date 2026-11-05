@@ -197,16 +197,74 @@ ping 192.168.123.161
 
 ---
 
-## 10. USB 시리얼 장치 (그리퍼 485–USB 보드 등, 달았을 때만)
+## 10. Dex1-1 그리퍼 (`dex1_1_service`, 그리퍼를 달았을 때만)
+
+구성: 그리퍼 —485→ 485–USB 보드 (UART 4 포트) —USB-C→ 미니 PC 의 **`dex1_1_service`** (C++, 시리얼 ↔ DDS) —DDS `rt/dex1/{left,right}/{cmd,state}`→ 이 저장소 (Python).
+그리퍼 전원은 H2 [2] 또는 [11] (24 V, GXT30(2)) 의 +/− 두 핀 (CAN 두 핀은 비움, 꽂기 전에 멀티미터로 +24 V · 극성 확인).
+2026-11-05 이 미니 PC (Ubuntu 24.04.4) 에서 아래 순서로 설치 · 보정 · 움직임 확인.
+
+### 10-1. 설치 (로봇 꺼도 됨)
 
 ```bash
-sudo usermod -aG dialout $USER     # 다시 로그인 후 적용
-ls -l /dev/ttyUSB* /dev/ttyACM* 2>/dev/null
+sudo apt update
+sudo apt install -y git cmake g++ build-essential \
+    libserialport-dev libspdlog-dev libboost-all-dev libyaml-cpp-dev libfmt-dev libeigen3-dev
+sudo usermod -aG dialout $USER                       # 다시 로그인 후 적용
+
+# C++ unitree_sdk2 (→ /usr/local, CycloneDDS libddsc · libddscxx 같이 설치)
+mkdir -p ~/project && cd ~/project
+git clone https://github.com/unitreerobotics/unitree_sdk2.git
+cd unitree_sdk2 && mkdir build && cd build && cmake .. && make -j$(nproc) && sudo make install
+
+# dex1_1_service — 실행 파일은 bin/ 에 생김
+cd ~/project
+git clone https://github.com/unitreerobotics/dex1_1_service.git
+cd dex1_1_service && mkdir build && cd build
+cmake .. -DCMAKE_EXE_LINKER_FLAGS="-L/usr/local/lib -Wl,-rpath,/usr/local/lib"
+make -j$(nproc)
+ldd ../bin/dex1_1_gripper_server | grep -i dds       # /usr/local/lib/libddsc.so.0 · libddscxx.so.0 만 (0debian 없어야 함)
 ```
 
-- mandro 손은 2026-11-02 부터 안 씁니다 (코드 삭제 — 이 저장소는 시리얼 포트를 열지 않음).
-- Dex1-1 그리퍼는 연동 검토 중 (`robots/h2/FACTS.md` Dex1-1 절). 공식 `dex1_1_service` 가 `/dev/ttyUSB*` · `/dev/ttyCH343USB*` · `/dev/ttyACM*` 를 모두 열어 모터를 찾으므로, 그리퍼를 쓸 때는 다른 프로그램이 이 포트를 열면 안 됩니다.
-- Ubuntu 의 `ModemManager` 가 새로 꽂힌 ttyACM 장치를 모뎀으로 검사하며 잠시 점유할 수 있습니다. 연결이 간헐적으로 실패하면: `sudo systemctl disable --now ModemManager` (모뎀을 안 쓰는 PC 에서만).
+- **링커 옵션이 꼭 필요**: 시스템에 Ubuntu 패키지 CycloneDDS (`/lib/x86_64-linux-gnu/libddsc.so.0debian`) 가 있으면 빌드가 그쪽 `ddsc` 를 붙여
+  unitree_sdk2 의 `libddscxx` 와 버전이 섞임 → 서비스가 모터를 찾은 직후 토픽을 만들다 `free(): invalid pointer` 로 죽음.
+- 로봇 쪽 유선 인터페이스 이름: `ip -br addr | grep 192.168.123` (예: `enp45s0`). 서비스 · 보정 · 시험 모두 **`-n <이름>`** 필수 —
+  기본값 `eth0` 이면 `does not match an available interface` 로 바로 멈춤.
+
+### 10-2. 보정 (로봇 켜서 그리퍼 전원)
+
+보정 = 지금 자리를 닫힘 q 0 으로. **전원 한 번에 한 번만** 됨 (`only one successful change is allowed each power-up`).
+
+1. 서비스가 떠 있으면 끔 (`Ctrl+C`) — 같은 시리얼 포트를 씀
+2. 그리퍼 24 V 전원을 뽑고, 전원 없는 상태에서 집게를 **천천히** 끝까지 닫음 (전원이 있으면 모터 쪽 저항이 커서 뻑뻑함 — 세게 비틀지 말 것)
+3. 닫힌 채로 전원을 다시 꽂고 바로:
+   ```bash
+   cd ~/project/dex1_1_service/bin
+   sudo ./dex1_1_gripper_server -c -n enp45s0
+   ```
+   ID 0 · ID 1 차례마다 집게가 맞닿아 있는지 보고 `s` + Enter → 둘 다 `Calibration successful!`. 비어 있는 포트의 `does not reply` 경고는 정상
+4. 끝나면 전원을 한 번 더 껐다 켜고 서비스를 띄움
+
+덜 닫힌 채로 보정하면 그 자리가 0 이 되어, 펴진 상태에서 q 가 음수로 나오거나 벌리라는 명령에 안 움직임 → 위 순서로 다시.
+
+### 10-3. 실행 · 확인
+
+```bash
+cd ~/project/dex1_1_service/bin
+sudo ./dex1_1_gripper_server -n enp45s0              # 'Dex1-1 Gripper Server started.' — 이 창은 그대로
+
+# 다른 터미널
+cd ~/project/h2-motion-control && source activate_tv.sh
+python utils/check_dex1.py enp45s0 --sec 15          # 읽기만 — 손으로 여닫아 q 확인 (닫힘 ≈ 0, 끝까지 벌림 ≈ 5.3)
+python utils/dex1_move_test.py enp45s0 --side left   # 천천히 2.7 → 0.3 rad (left / right / 기본 양손)
+```
+
+- 서비스는 모터 ID 0 → `rt/dex1/right`, ID 1 → `rt/dex1/left` 로 내보냄. 이 로봇은 **ID 0 을 왼손, ID 1 을 오른손**에 다는 것으로
+  `robots/h2/robot.yaml gripper.topics` 에 바꿔 둠 → 이 저장소 도구는 실제 손 기준, 공식 도구(`test_dex1_1_gripper_server -l/-r`, xr_teleoperate)는 좌우 반대.
+- 명령이 끊기면 서비스가 BRAKE · kp = kd = 0 (힘 풀림). 잡은 물체를 놓칠 수 있으니 실제 사용 코드는 명령을 끊김 없이 보낼 것.
+- 서비스가 Python 쪽이 붙는 순간 `ddsi_xt_type_init_impl with invalid type object` 뒤 세그멘테이션 오류로 죽은 적이 한 번 있음 (재현 안 됨).
+  다시 나오면 `sudo gdb -batch -ex run -ex bt --args ./dex1_1_gripper_server -n enp45s0 2>&1 | tee /tmp/dex1_gdb.log` 로 스택을 남길 것.
+- `ModemManager` 가 새로 꽂힌 ttyACM 장치를 잡으면: `sudo systemctl disable --now ModemManager` (모뎀 안 쓰는 PC 에서만).
+- mandro 손은 2026-11-02 부터 안 씀 (코드 삭제) — 이 저장소는 시리얼 포트를 직접 열지 않음.
 
 ---
 
@@ -293,5 +351,9 @@ python utils/check_robot_id.py
 | RealSense 인식 안 됨 / 권한 오류 | USB 3.0 포트, 3단계 udev 규칙 파일 설치 후 재연결 |
 | RealSense 가 `2.1` (USB2) 로 잡힘 | **케이블 교체** (USB2 전용 케이블이면 2.1 — 운영 PC 에서 케이블 교체로 3.2 확인), 카메라 C 커넥터 끝까지, 허브 없이 파란(SS) 포트 |
 | USB 시리얼(`/dev/ttyUSB*` · `ttyACM*`) 열기 실패 | `dialout` 그룹, ModemManager (10단계) |
+| Dex1 서비스 `eth0: does not match an available interface` | `-n <유선 인터페이스>` 붙이기 (10-1) |
+| Dex1 서비스 `free(): invalid pointer` (모터 찾은 직후) | CycloneDDS 두 벌 섞임 — 10-1 링커 옵션으로 다시 빌드, `ldd` 에 `0debian` 없어야 함 |
+| Dex1 보정 `only one successful change is allowed each power-up` | 그리퍼 24 V 전원 껐다 켜고 다시 (10-2) |
+| Dex1 펴진 상태 q 가 음수 · 벌리라는 명령에 안 움직임 | 덜 닫힌 채 보정됨 — 10-2 다시 |
 | `pickle.load` 시 `class version ...` | 다른 pinocchio 버전의 캐시 → `robots/h2/` 의 `robot.yaml ik_cache` 파일 삭제 후 재생성 |
 | 서버가 남아 있음 | `./start_robot.sh` 가 시작 시 TERM → 대기 → KILL 로 정리. 수동: `pgrep -af "python.*(rs_stream|arm_server|robot_server)"` 확인 후 `kill` |
