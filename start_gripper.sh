@@ -133,4 +133,18 @@ echo "    - arm_server  : http://localhost:50022/status"
 echo "    - 로그         : $LOG_DIR/${TAG}{dex1_service,arm_server,pick_web}_$DAY.log"
 echo "    - 종료         : Ctrl+C"
 echo ""
-wait
+# 띄운 것이 죽으면 바로 알림 (다시 띄우지는 않음 — 그리퍼 서비스가 죽으면 그리퍼 힘이 풀림)
+DEAD=()
+while true; do
+  for i in "${!PIDS[@]}"; do
+    [[ " ${DEAD[*]-} " == *" $i "* ]] && continue
+    if ! kill -0 "${PIDS[$i]}" 2>/dev/null; then
+      DEAD+=("$i")
+      echo ""
+      echo "  ⚠⚠ $(date '+%H:%M:%S') ${NAMES[$i]} 가 종료됨 — 로그: $LOG_DIR/${TAG}${NAMES[$i]}_$DAY.log"
+      [ "${NAMES[$i]}" = "dex1_service" ] && echo "     그리퍼 힘이 풀렸을 수 있음. 커널 기록: sudo dmesg | grep -i -E 'dex1|segfault' | tail -5"
+      echo "     팔을 [기본 자세로] 보낸 뒤 Ctrl+C 로 끄고 다시 실행하세요."
+    fi
+  done
+  sleep 1
+done
