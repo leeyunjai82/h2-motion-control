@@ -19,6 +19,7 @@ pick_web.py — 그리퍼 한 팔로 작은 박스 잡기 웹 (http://<미니 PC
   끝낼 때: 박스를 잡고 있으면 먼저 내려놓기. 이 웹을 끄면 그리퍼 송신이 멈춰 힘이 풀림.
 """
 import argparse
+import collections
 import datetime
 import json
 import math
@@ -41,6 +42,8 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 PORT = 50030
+DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
+DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고
 LOG_DIR = os.path.join(os.path.dirname(HERE), "logs")
 CX, CY, CZ, CP = robot_env.CAMERA_X, robot_env.CAMERA_Y, robot_env.CAMERA_Z, robot_env.CAMERA_PITCH
 P2T = np.array(robot_env.CFG["frames"]["pelvis_to_torso"], dtype=float)
@@ -78,6 +81,7 @@ class RealCamera:
         self.K = (self.intr.fx, self.intr.fy, self.intr.ppx, self.intr.ppy)
         self.lk = threading.Lock()
         self.color, self.depth, self.t = None, None, 0.0
+        self.depths = collections.deque(maxlen=DEPTH_FRAMES)   # 최근 깊이 프레임 (클릭 점 중앙값용)
         threading.Thread(target=self._loop, daemon=True).start()
 
     def _loop(self):
@@ -90,6 +94,7 @@ class RealCamera:
                 with self.lk:
                     self.color = np.asanyarray(cf.get_data()).copy()
                     self.depth = np.asanyarray(df.get_data()).copy()
+                    self.depths.append(self.depth)
                     self.t = time.time()
             except Exception as e:  # noqa: BLE001
                 print(f"[cam] 프레임 오류: {e}")
@@ -100,18 +105,21 @@ class RealCamera:
             return None if self.color is None else self.color.copy(), self.t
 
     def point(self, u, v):
-        """픽셀 → pelvis 좌표 (깊이 7×7 중앙값). 깊이 없으면 None."""
+        """픽셀 → (pelvis 좌표, 깊이 흔들림 mm). 깊이 = 클릭 점 주변 DEPTH_WIN × DEPTH_WIN 픽셀 × 최근 DEPTH_FRAMES 프레임의
+        0 아닌 값 중앙값 (한 프레임 7×7 은 검은 박스 윗면 · 가장자리에서 흔들림). 흔들림 = 그 값들의 10–90 % 폭."""
+        h = DEPTH_WIN // 2
+        ui, vi = int(round(u)), int(round(v))
         with self.lk:
-            if self.depth is None:
-                return None
-            dimg = self.depth
-            ui, vi = int(round(u)), int(round(v))
-            w = dimg[max(0, vi - 3):vi + 4, max(0, ui - 3):ui + 4].astype(float)
-        w = w[w > 0]
-        if not len(w):
+            frames = list(self.depths)
+        if not frames:
             return None
+        w = np.concatenate([f[max(0, vi - h):vi + h + 1, max(0, ui - h):ui + h + 1].ravel() for f in frames]).astype(float)
+        w = w[w > 0]
+        if len(w) < 20:
+            return None
+        spread = float(np.percentile(w, 90) - np.percentile(w, 10)) * self.scale * 1000.0
         c = self.rs.rs2_deproject_pixel_to_point(self.intr, [float(u), float(v)], float(np.median(w)) * self.scale)
-        return cam_to_pelvis(c)
+        return cam_to_pelvis(c), spread
 
 
 class FakeCamera:
@@ -139,7 +147,7 @@ class FakeCamera:
         if abs(a[2]) < 1e-6:
             return None
         t = (self.top_z - B_CT[2] - P2T[2]) / a[2]
-        return None if t <= 0 else cam_to_pelvis(t * d)
+        return None if t <= 0 else (cam_to_pelvis(t * d), 0.0)
 
 
 # ---------------- 그리퍼 ----------------
@@ -239,10 +247,14 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
-        top = self.cam.point(u, v)
-        if top is None:
+        got = self.cam.point(u, v)
+        if got is None:
             raise HTTPException(400, "그 자리 깊이 없음 — 박스 윗면 가운데를 다시 클릭")
+        top, spread = got
         plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy)
+        plan["depth_spread_mm"] = round(spread, 1)
+        if spread > DEPTH_SPREAD_WARN:
+            plan.setdefault("notes", []).append(f"클릭 점 깊이 흔들림 {spread:.0f} mm — 윗면 가장자리이거나 깊이가 불안정 (가운데를 다시 클릭)")
         with self.lk:
             self.plan_id += 1
             self.plan = plan
@@ -256,7 +268,7 @@ class Runner:
     def summary(plan):
         if plan is None:
             return None
-        keys = ("ok", "side", "top", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+        keys = ("ok", "side", "top", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready")
         return {k: plan.get(k) for k in keys if k in plan}
 
@@ -643,7 +655,7 @@ $('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
   planId=j.plan_id; const p=j.plan; planOk=p.ok; showPlan(p);}catch(err){planOk=false;$('plan').innerHTML='<span class="bad">'+err.message+'</span>';}};
 function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
 function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg}\n`;
- s+=`윗면 가운데 (pelvis) ${f3(p.top)}\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
+ s+=`윗면 가운데 (pelvis) ${f3(p.top)} · 깊이 흔들림 ${p.depth_spread_mm} mm\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
  s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
  (p.reasons||[]).forEach(x=>s+='<span class="bad">✗ '+x+'</span>\n'); (p.notes||[]).forEach(x=>s+='⚠ '+x+'\n');
  if(p.steps) s+='순서: '+p.steps.map(x=>x[1]?`${x[0]}(${x[1]}s)`:x[0]).join(' → ')+`\n합계 약 ${p.total_s} 초`;
