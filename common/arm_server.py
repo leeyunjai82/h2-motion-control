@@ -19,10 +19,6 @@ HTTP API 를 통해서만 지령한다. arm_sdk 직접 송신 프로세스는 �
                             다른 팔 동작은 409. 0.2 초 지령이 없으면 마지막 목표에서 멈춰 있고(hold),
                             2 초 지령이 없으면 세션을 끝내고 잠금을 푼다.
   - /pose /status         : 실측·타겟·weight 조회
-  - /gripper (GET/POST) · /gripper/hold · /gripper/release
-                          : Dex1-1 그리퍼 (robot.yaml end_effector: dex1 일 때만, ctrl/dex1_gripper.py).
-                            목표 q [rad] 를 받아 dex1_1_service 로 끊김 없이 송신 (끊기면 서비스가 힘을 풂).
-                            /stream/cmd 에 gripper [왼손, 오른손] 을 같이 줄 수 있음. /freeze · /stop_motion 은 그리퍼를 그 자리 유지
   - 동작 엔드포인트는 완료까지 블로킹 응답 (시퀀스 작성 용이).
     동시에 두 동작 요청이 오면 뒤엣것은 409.
 
@@ -55,9 +51,6 @@ from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 from ctrl.arm_controller_wrapper import ArmControllerWrapper
 from ctrl.robot_arm import ARM_LIMITS
 
-if robot_env.GRIPPER is not None:            # end_effector: dex1 — 기본 손이면 그리퍼 코드를 아예 안 씀
-    from ctrl.dex1_gripper import Dex1Gripper
-
 PORT = 50022
 
 # 기본 자세 (robot_server 와 같은 값 — robot.yaml default_arm_deg 한 곳에서 읽음)
@@ -67,7 +60,6 @@ DEFAULT_ARM_DEG = ([float(v) for v in robot_env.CFG["default_arm_deg"]]
 PARK_WAIST_DEG = [0.0, 0.0, 0.0]   # yaw, roll, pitch
 
 arm: Optional[ArmControllerWrapper] = None
-gripper = None                     # Dex1Gripper (end_effector: dex1) 또는 None
 ARM_MODE = "hold"                  # hold | release (기동 시 weight=1)
 _switching = False
 # 팔과 허리는 병렬 지령 가능 (robot_server 모션 러너가 joints+waist 동시 실행).
@@ -124,12 +116,6 @@ class StreamBeginReq(BaseModel):
 class StreamCmdReq(BaseModel):
     token: str
     deg: List[float]               # 14개 (좌7+우7), 팔 목표
-    gripper: Optional[List[float]] = None   # [왼손, 오른손] 그리퍼 목표 q [rad] (end_effector: dex1 일 때만, 없으면 그대로)
-
-class GripperReq(BaseModel):
-    left: Optional[float] = None   # 목표 q [rad] — 0 = 닫힘, 클수록 벌어짐. None = 그대로
-    right: Optional[float] = None
-    max_vel: Optional[float] = None   # rad/s (robot.yaml gripper.max_vel 이하)
 
 class StreamEndReq(BaseModel):
     token: Optional[str] = None    # None = 지금 세션 강제 종료
@@ -177,22 +163,16 @@ async def _run_blocking(locks, fn, *args):
 # ---------------- Lifespan ----------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global arm, gripper
+    global arm
     print("[arm_server] 시작")
     robot_env.dds_init()
     arm = ArmControllerWrapper(motion_mode=True, simulation_mode=False)
     arm.start()
-    if robot_env.GRIPPER is not None:
-        try:
-            gripper = Dex1Gripper(robot_env.GRIPPER).start()
-        except Exception as e:  # noqa: BLE001 — 그리퍼가 안 돼도 팔은 동작
-            print(f"[arm_server] ⚠️ 그리퍼 시작 실패: {e}")
-            gripper = None
     threading.Thread(target=_stream_watchdog, daemon=True).start()
     print(f"[arm_server] 준비 완료 (weight=1, hold)  http://localhost:{PORT}/")
     yield
     # 종료: 자세 유지, 제어권만 천천히 반납
-    print("[arm_server] 종료 — 제어권 반납" + (" (그리퍼는 송신이 끊겨 서비스가 힘을 풂)" if gripper else ""))
+    print("[arm_server] 종료 — 제어권 반납")
     try:
         if arm and arm.arm_ctrl and arm.arm_ctrl.motion_mode:
             w = arm.arm_ctrl.get_weight()
@@ -215,9 +195,7 @@ async def status():
     return {"ready": True, "mode": ARM_MODE, "switching": _switching,
             "weight": arm.arm_ctrl.get_weight(),
             "busy": _arm_lock.locked() or _waist_lock.locked(),
-            "stream": _stream_info(),
-            "end_effector": robot_env.END_EFFECTOR,
-            "gripper": gripper.snapshot() if gripper else None}
+            "stream": _stream_info()}
 
 
 @app.get("/pose")
@@ -386,8 +364,6 @@ async def stop_motion():
     if not arm:
         raise HTTPException(503, "Arm 미초기화")
     _stream_end("stop_motion")
-    if gripper:
-        gripper.hold()           # 그리퍼는 그 자리 유지 (힘 유지 — 잡은 물체를 놓지 않음)
     try:
         arm.stop_motion()
     except Exception as e:
@@ -401,8 +377,6 @@ async def freeze():
     if not arm:
         raise HTTPException(503, "Arm 미초기화")
     _stream_end("freeze")
-    if gripper:
-        gripper.hold()
     try:
         arm.stop_motion()
     except Exception:
@@ -498,11 +472,6 @@ def stream_cmd(req: StreamCmdReq):      # def — 짧은 계산, 스레드풀에
     want = np.radians(np.asarray(req.deg, dtype=float))
     if not np.all(np.isfinite(want)):
         raise HTTPException(400, "deg 에 nan/inf")
-    if req.gripper is not None:
-        if gripper is None:
-            raise HTTPException(400, f"그리퍼 없음 (end_effector={robot_env.END_EFFECTOR})")
-        if len(req.gripper) != 2 or not np.all(np.isfinite(req.gripper)):
-            raise HTTPException(400, "gripper 는 [왼손, 오른손] q 2개 (rad)")
     with _stream_mx:
         if _stream["token"] is None or req.token != _stream["token"]:
             raise HTTPException(409, f"스트림 세션 없음 ({_stream['why_end'] or '시작 안 함'})")
@@ -520,16 +489,9 @@ def stream_cmd(req: StreamCmdReq):      # def — 짧은 계산, 스레드풀에
             print(f"[STREAM] 지령 다시 수신 ({now - _stream['t_last']:.2f}s 만에)")
         _stream.update(q=q, t_last=now, held=False, n=_stream["n"] + 1,
                        n_vel_clip=_stream["n_vel_clip"] + int(vel_clip))
-    if req.gripper is not None:
-        gripper.set(left=float(req.gripper[0]), right=float(req.gripper[1]))
-    out = {"ok": True, "vel_clip": vel_clip,
-           "target_deg": np.degrees(q).round(3).tolist(),
-           "meas_deg": np.degrees(arm.arm_ctrl.get_current_dual_arm_q()).round(3).tolist()}
-    if gripper:
-        g = gripper.snapshot()
-        out["gripper"] = {s: {"q": g[s]["q"], "cmd": g[s]["cmd"], "tau": g[s]["tau"], "ok": g[s]["ok"]}
-                          for s in ("left", "right")}
-    return out
+    return {"ok": True, "vel_clip": vel_clip,
+            "target_deg": np.degrees(q).round(3).tolist(),
+            "meas_deg": np.degrees(arm.arm_ctrl.get_current_dual_arm_q()).round(3).tolist()}
 
 
 @app.post("/stream/end")
@@ -542,56 +504,6 @@ async def stream_end(req: StreamEndReq = StreamEndReq()):
     if req.token is not None and req.token != cur:
         raise HTTPException(409, "다른 스트림 세션")
     return {"ok": True, "ended": _stream_end("end 요청" if req.token else "강제 종료 요청")}
-
-
-# ---------------- 그리퍼 (end_effector: dex1) ----------------
-def _need_gripper():
-    if gripper is None:
-        raise HTTPException(409, f"그리퍼 없음 (end_effector={robot_env.END_EFFECTOR}"
-                                 f"{'' if robot_env.GRIPPER is None else ', 시작 실패 — 로그 확인'})")
-    return gripper
-
-
-@app.get("/gripper")
-async def gripper_state():
-    """손별 q, dq, tau(실측), cmd(지금 보내는 값), goal(목표), age_s, ok(상태를 0.5 s 안에 받음)."""
-    if gripper is None:
-        return {"available": False, "end_effector": robot_env.END_EFFECTOR}
-    return {"available": True, **gripper.snapshot()}
-
-
-@app.post("/gripper")
-async def gripper_set(req: GripperReq):
-    """손별 목표 q [rad] (0 = 닫힘). q_range 로 자르고 max_vel 로 천천히 옮김. 기다리지 않고 바로 응답."""
-    g = _need_gripper()
-    vals = [v for v in (req.left, req.right) if v is not None]
-    if not vals:
-        raise HTTPException(400, "left / right 중 하나는 필요")
-    if not np.all(np.isfinite(vals)):
-        raise HTTPException(400, "q 에 nan/inf")
-    if req.max_vel is not None and not (req.max_vel > 0):
-        raise HTTPException(400, "max_vel 은 0 초과")
-    skipped = g.set(left=req.left, right=req.right, max_vel=req.max_vel)
-    out = {"ok": not skipped, "skipped": skipped, **g.snapshot()}
-    if skipped:
-        out["why"] = f"상태를 아직 못 받은 손: {skipped} (dex1_1_service 확인)"
-    return out
-
-
-@app.post("/gripper/hold")
-async def gripper_hold():
-    """움직이던 그리퍼를 그 자리에서 멈춤 (힘 유지)."""
-    g = _need_gripper()
-    g.hold()
-    return {"ok": True, **g.snapshot()}
-
-
-@app.post("/gripper/release")
-async def gripper_release():
-    """그리퍼 송신 멈춤 → 서비스가 힘을 풂 (잡은 물체를 놓칠 수 있음). /gripper 나 /gripper/hold 로 다시 송신."""
-    g = _need_gripper()
-    g.release()
-    return {"ok": True, **g.snapshot()}
 
 
 if __name__ == "__main__":

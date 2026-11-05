@@ -454,8 +454,7 @@ class Recorder:
                 "skipped_sec": round(ep["gap"], 2),
                 "tau_abs_max": np.abs(tau).max(axis=0).round(2).tolist() if len(tau) else None,
                 "robot": robot_env.ROBOT, "sim": SIM, "camera_url": CAMERA_URL,
-                "camera_pitch_deg": robot_env.CAMERA_PITCH_DEG, "end_effector": robot_env.END_EFFECTOR,
-                "ee_offset": list(robot_env.CFG["ik"]["ee_offset"]), **ep["extra"]}
+                "camera_pitch_deg": robot_env.CAMERA_PITCH_DEG, **ep["extra"]}
         with open(os.path.join(tmp, "meta.json"), "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False, indent=1)
         os.replace(tmp, d)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-dex1_move_test.py — Dex1-1 그리퍼 움직임 시험 (rt/dex1/*/cmd 송신 — 천천히 벌렸다 닫음)
+move_test.py — Dex1-1 그리퍼 움직임 시험 (gripper/) (rt/dex1/*/cmd 송신 — 천천히 벌렸다 닫음)
 
 준비
   미니 PC 에서 dex1_1_service 실행 중:  sudo ./dex1_1_gripper_server -n <유선 인터페이스>
@@ -8,13 +8,13 @@ dex1_move_test.py — Dex1-1 그리퍼 움직임 시험 (rt/dex1/*/cmd 송신 �
 
 사용
   source activate_tv.sh
-  python utils/dex1_move_test.py enp45s0                    # 양손: 현재 → 반쯤(2.7 rad) 벌림 → 닫힘 근처(0.3 rad)
-  python utils/dex1_move_test.py enp45s0 --side left        # 왼손만 (robot.yaml gripper.topics 기준 실제 손)
-  python utils/dex1_move_test.py enp45s0 --open 5.0 --close 0.3 --speed 0.6
+  python gripper/move_test.py enp45s0                    # 양손: 현재 → 반쯤(2.7 rad) 벌림 → 닫힘 근처(0.3 rad)
+  python gripper/move_test.py enp45s0 --side left        # 왼손만 (gripper/gripper.yaml topics 기준 실제 손)
+  python gripper/move_test.py enp45s0 --open 5.0 --close 0.3 --speed 0.6
 
 동작
   · 상태(rt/dex1/*/state)를 3 초 안에 못 받으면 아무것도 보내지 않고 끝냄
-  · 목표 q 는 0 ~ 5.4 rad 로 자름 (xr_teleoperate 범위, 0 = 닫힘 — 보정 기준)
+  · 목표 q 는 gripper.yaml q_range (실측 0 ~ 5.05 rad) 로 자름 (0 = 닫힘 — 보정 기준)
   · speed [rad/s] 로 목표를 조금씩 옮김 (0.6 rad ≈ 1 cm, xr_teleoperate 주석) — 200 Hz 송신
   · 끝나거나 Ctrl+C 면 송신을 멈춤 → 서비스가 시간 초과로 BRAKE · kp = kd = 0 (힘 풀림, 그 자리)
 """
@@ -25,13 +25,15 @@ import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common"))
-import robot_env   # ROBOT 설정 + H2 SDK 경로 (unitree_sdk2py 보다 먼저)
+import robot_env   # H2 SDK 경로 + DDS 초기화 (unitree_sdk2py 보다 먼저) — 설정은 안 바꿈
+import gripper_config   # gripper/gripper.yaml
 
 from unitree_sdk2py.core.channel import ChannelPublisher, ChannelSubscriber
 from unitree_sdk2py.idl.default import unitree_go_msg_dds__MotorCmd_
 from unitree_sdk2py.idl.unitree_go.msg.dds_ import MotorCmds_, MotorStates_
 
-Q_MIN, Q_MAX = 0.0, 5.4
+CFG = gripper_config.load()
+Q_MIN, Q_MAX = float(CFG["q_range"][0]), float(CFG["q_range"][1])   # 실측 범위 (gripper.yaml q_range)
 RATE = 200.0
 
 
@@ -51,10 +53,9 @@ def main():
     q_open, q_close = clip(a.open), clip(a.close)
     speed = max(0.1, min(3.0, a.speed))
     sides = ("left", "right") if a.side == "both" else (a.side,)
-    g = robot_env.CFG.get("gripper") or {}
-    topics = g.get("topics") or {"left": "rt/dex1/left", "right": "rt/dex1/right"}
+    topics = CFG["topics"]
     for s in sides:
-        print(f"[dex1] {s}: {topics[s]}/cmd · /state  (robot.yaml gripper.topics)")
+        print(f"[dex1] {s}: {topics[s]}/cmd · /state  (gripper/gripper.yaml)")
 
     robot_env.dds_init(a.iface)
     state, lock = {}, threading.Lock()
@@ -80,7 +81,7 @@ def main():
         time.sleep(0.05)
     missing = [s for s in sides if s not in state]
     if missing:
-        print(f"[dex1] 상태 없음: {missing} — 아무것도 보내지 않고 끝냄 (서비스 · -n · 전원 · 485 · gripper.topics 확인)")
+        print(f"[dex1] 상태 없음: {missing} — 아무것도 보내지 않고 끝냄 (서비스 · -n · 전원 · 485 · gripper/gripper.yaml topics 확인)")
         return
 
     with lock:

@@ -1,17 +1,17 @@
 """
-dex1_gripper.py — Dex1-1 그리퍼 2개를 DDS 로 계속 제어 (arm_server 안에서, end_effector: dex1 일 때만)
+dex1_gripper.py — Dex1-1 그리퍼 2개를 DDS 로 계속 제어 (gripper/ — 박스 잡기 쪽 코드와 따로, 아직 로봇에서 안 돌려 봄)
 
   dex1_1_service (미니 PC, C++) 가 485 ↔ DDS rt/dex1/{left,right}/{cmd,state} 를 맡고,
   이 모듈은 실제 손(left/right) 기준으로 목표 q 를 받아 rate Hz 로 끊김 없이 보낸다.
   서비스는 명령이 끊기면 BRAKE · kp = kd = 0 (힘 풀림) → 잡은 물체를 놓치지 않게 계속 송신.
 
-  · 손 ↔ 토픽: robot.yaml gripper.topics (이 로봇은 ID 0 그리퍼가 왼손 → rt/dex1/right)
+  · 손 ↔ 토픽: gripper/gripper.yaml topics (이 로봇은 ID 0 그리퍼가 왼손 → rt/dex1/right)
   · q [rad]: 0 = 닫힘 (보정 기준), 클수록 벌어짐. 목표는 gripper.q_range 로 자름
   · 처음 상태를 받기 전에는 아무것도 보내지 않고, 받으면 그 자리를 목표로 잡음 (켜자마자 움직이지 않음)
   · 목표로 갈 때 명령 q 를 max_vel [rad/s] 로 조금씩 옮김 (0.6 rad ≈ 1 cm, xr_teleoperate 주석)
   · release(): 송신을 멈춤 → 서비스가 시간 초과로 힘을 풂
 
-  g = Dex1Gripper(robot_env.GRIPPER).start()
+  g = Dex1Gripper(gripper_config.load()).start()
   g.set(left=2.7, right=None)      # 오른손은 그대로
   g.snapshot()                     # {"left": {"q", "dq", "tau", "cmd", "goal", "age_s", "ok"}, ...}
 """
@@ -28,14 +28,13 @@ STATE_STALE_S = 0.5          # 이보다 오래 상태가 안 오면 ok False (�
 
 class Dex1Gripper:
     def __init__(self, cfg):
-        cfg = dict(cfg or {})
-        self.topics = dict(cfg.get("topics") or {"left": "rt/dex1/left", "right": "rt/dex1/right"})
-        lo, hi = (cfg.get("q_range") or [0.0, 5.0])[:2]
-        self.q_lo, self.q_hi = float(lo), float(hi)
-        self.kp = float(cfg.get("kp", 5.0))
-        self.kd = float(cfg.get("kd", 0.05))
-        self.max_vel = float(cfg.get("max_vel", 3.0))
-        self.rate = float(cfg.get("rate", 200.0))
+        # 기본값으로 대신하지 않음 — gripper_config.load() 가 검사한 dict 를 받음 (좌우 토픽이 뒤바뀌면 위험)
+        self.topics = {"left": cfg["topics"]["left"], "right": cfg["topics"]["right"]}
+        self.q_lo, self.q_hi = float(cfg["q_range"][0]), float(cfg["q_range"][1])
+        self.kp = float(cfg["kp"])
+        self.kd = float(cfg["kd"])
+        self.max_vel = float(cfg["max_vel"])
+        self.rate = float(cfg["rate"])
         self._lk = threading.Lock()
         self._st = {s: None for s in SIDES}          # (t, q, dq, tau)
         self._cmd = {s: None for s in SIDES}         # 지금 보내는 명령 q
