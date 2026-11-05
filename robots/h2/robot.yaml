@@ -344,7 +344,7 @@ head_track:
 
 # 손 끝에 단 것 — hand: 기본 고무손 (구동 없음, 박스 잡기) | dex1: Dex1-1 그리퍼 (아래 gripper)
 #   바꾸면 IK 기준점(ik.ee_offset ↔ gripper.tcp_offset)과 IK 캐시 파일이 같이 바뀜 (hand 는 ik_cache 그대로, dex1 은 이름 뒤 _dex1)
-#   실행할 때만 바꾸기: END_EFFECTOR=dex1 ./start_robot.sh  — 박스 잡기(robot_server Box 모드)는 hand 전용
+#   실행할 때만 바꾸기: END_EFFECTOR=dex1 — 박스 잡기 서버(start_robot.sh)는 기본 손 전용이라 그리퍼 쪽에서는 띄우지 않음
 end_effector: hand
 
 gripper:                        # Dex1-1 (end_effector: dex1 일 때) — 외장 키트: 485–USB 보드 → 미니 PC, dex1_1_service -n <유선 인터페이스>
