@@ -33,6 +33,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import pick_core as pc
 from pick_core import robot_env, P
+import recorder as rec
 
 import cv2
 import numpy as np
@@ -43,6 +44,7 @@ from pydantic import BaseModel
 from typing import List, Optional
 
 PORT = 50030
+J_MAP = robot_env.JOINTS["map"]      # URDF 관절 이름 → 슬롯
 DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
 DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고
 TABLE_WIN = 31                       # 테이블 높이 잴 때 깊이 창 [픽셀]
@@ -200,6 +202,7 @@ class CamPitchMonitor:
     def __init__(self):
         self.lk = threading.Lock()
         self.cam_abs, self.pelvis_p, self.waist_p, self.t_cam, self.t_rob = None, None, None, 0.0, 0.0
+        self.arm_meas = None
         self.err = None
         self.waist_slot = int(robot_env.JOINTS["map"]["waist_pitch_joint"])
         try:
@@ -220,10 +223,16 @@ class CamPitchMonitor:
             self.err = f"D435i IMU 못 엶 ({type(e).__name__}: {e}) — udev 규칙 확인"
 
     def _on_low(self, msg):
+        q = [float(msg.motor_state[i].q) for i in pc.ARM]
         with self.lk:
             self.pelvis_p = float(msg.imu_state.rpy[1])
             self.waist_p = float(msg.motor_state[self.waist_slot].q)
+            self.arm_meas = np.asarray(q)        # 팔 14 축 실측 (제어 순서, rad) — 녹화 state (500 Hz 그대로 최신값)
             self.t_rob = time.time()
+
+    def arm_now(self):
+        with self.lk:
+            return None if self.arm_meas is None or time.time() - self.t_rob > 0.5 else self.arm_meas.copy()
 
     def _loop(self):
         import pyrealsense2 as rs
@@ -301,9 +310,14 @@ class FakeGripper:
 
 # ---------------- 실행기 ----------------
 class Runner:
-    def __init__(self, mdl, cam, grip, sim, cam_pitch=None):
+    def __init__(self, mdl, cam, grip, sim, cam_pitch=None, wrist=None):
         self.mdl, self.cam, self.grip, self.sim = mdl, cam, grip, sim
-        self.cam_pitch = cam_pitch      # CamPitchMonitor (실기) 또는 None
+        self.cam_pitch = cam_pitch      # CamPitchMonitor (실기) 또는 None — rt/lowstate (팔 실측 · IMU)
+        self.wrist = wrist              # 손목 카메라 (recorder.WristCams / FakeWristCams) 또는 None
+        self.rec = rec.Recorder()
+        self.rec_on = False             # 실행할 때 녹화
+        self.rec_name = "pick_" + datetime.date.today().strftime("%Y%m%d")
+        self.stage_idx = 0              # 녹화 stage (실행 순서 번호, 0 = 시작 전)
         self.lk = threading.Lock()
         self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
         self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
@@ -419,6 +433,44 @@ class Runner:
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
         return {k: plan.get(k) for k in keys if k in plan}
 
+    # ----- 녹화 -----
+    def rec_cameras(self):
+        """녹화할 카메라 {이름: {w, h}} — body = D435i 반 해상도, 손목 = 장치 크기 반."""
+        cams = {"body": {"w": W // 2, "h": H // 2}}
+        if self.wrist:
+            for n in self.wrist.names():
+                w0, h0 = self.wrist.size.get(n, (640, 480))
+                cams[n] = {"w": w0 // 2, "h": h0 // 2}
+        return cams
+
+    def rec_sample(self):
+        """30 Hz 한 틱: state(16) · action(16) · tcp(6) · stage · images. 값이 하나라도 없으면 None (그 틱 건너뜀)."""
+        q = self.cam_pitch.arm_now() if self.cam_pitch else None
+        if q is None:
+            q = self.arm_q                       # --sim: arm_server /pose (5 Hz)
+        cmd = pc.LAST_CMD["q"]
+        g = self.grip.snapshot()
+        gl, gr = g.get("left") or {}, g.get("right") or {}
+        if q is None or cmd is None or None in (gl.get("q"), gr.get("q"), gl.get("goal"), gr.get("goal")):
+            return None
+        img, _ = self.cam.frame()
+        if img is None:
+            return None
+        images = {"body": img}
+        if self.wrist:
+            for n in self.wrist.names():
+                images[n] = self.wrist.frame(n)[0]
+        qm = self.mdl.to_model(q)
+        tcp = np.r_[self.mdl.tcp(qm, "left").translation, self.mdl.tcp(qm, "right").translation]
+        state = np.r_[q[:7], gl["q"], q[7:], gr["q"]]
+        action = np.r_[cmd[:7], gl["goal"], cmd[7:], gr["goal"]]
+        return {"state": state, "action": action, "tcp": tcp, "stage": self.stage_idx, "images": images}
+
+    @staticmethod
+    def rec_state_names():
+        names = [n for n, _ in sorted(((k, v) for k, v in J_MAP.items() if int(v) in pc.ARM), key=lambda kv: pc.ARM.index(int(kv[1])))]
+        return names[:7] + ["left_gripper_q"] + names[7:] + ["right_gripper_q"]
+
     # ----- 실행 -----
     def start(self, plan_id, step_mode):
         with self.lk:
@@ -442,6 +494,18 @@ class Runner:
         self.stop_evt.clear()
         self.next_evt.clear()
         self.ctx = {"side": plan["side"], "floor_z": plan["floor_z"]}
+        self.stage_idx = 0
+        if self.rec_on:
+            if pc.LAST_CMD["q"] is None:          # 이번 실행 전 스트림을 안 보냈으면 지금 목표에서 시작
+                pc.LAST_CMD.update(q=np.asarray(q_now, dtype=float), t=time.time())
+            names = [k if k != "arm" else sg.name for k, sg in plan["seq"]]
+            try:
+                self.rec.start(self.rec_name, self.rec_cameras(), self.rec_state_names(), self.rec_sample,
+                               {"side": plan["side"], "plan_id": self.plan_id, "stages": ["시작"] + names,
+                                "plan": self.summary(plan), "step_mode": bool(step_mode), "table_plane": self.table_plane})
+            except (ValueError, RuntimeError) as e:
+                raise HTTPException(409, f"녹화 시작 못 함: {e}")
+            self.say(f"녹화 시작 → {self.rec_name}")
         self.th = threading.Thread(target=self._run, args=(plan, step_mode), daemon=True)
         self.th.start()
 
@@ -484,13 +548,15 @@ class Runner:
             self.phase = "running"
         self.say(f"실행 #{self.plan_id} ({'단계별' if step_mode else '연속'}) — 약 {plan['total_s']} 초")
         result = "done"
+        close_info = None
         try:
-            for kind, sg in plan["seq"]:
+            for si, (kind, sg) in enumerate(plan["seq"], 1):
                 name = sg.name if kind == "arm" else {"@open": "그리퍼 벌림", "@close": "그리퍼 닫기",
                                                      "@hold": f"{P['hold_s']} 초 들고 있기"}[kind]
                 if step_mode and not self._wait_next(name):
                     result = "stopped"
                     break
+                self.stage_idx = si
                 with self.lk:
                     self.stage = name
                 if kind == "arm":
@@ -533,6 +599,7 @@ class Runner:
                         result = "stopped"
                         break
                     held = gap >= plan["close_mm"] + P["contact_min_mm"]
+                    close_info = {"gap_mm": round(gap, 1), "target_mm": plan["close_mm"], "held": bool(held), "tau": g.get("tau")}
                     self.say(f"{name}: {info} → " + ("박스에 막힘 = 잡음" if held else "목표까지 닫힘 = 놓친 것으로 봄"))
                     if not held:
                         self._grip_to(side, plan["q_open"])
@@ -558,6 +625,12 @@ class Runner:
         self.say({"done": "잡기 순서 끝", "missed": "놓침 — 그리퍼를 벌림. [복귀] 를 누르세요",
                   "stopped": "멈춤 (팔은 그 자리, 그리퍼는 그 상태 유지)", "error": "오류로 멈춤"}[result])
         self._jsonl({"result": result})
+        if self.rec.active:
+            ok = result == "done" and bool(close_info and close_info.get("held"))
+            r = self.rec.stop(ok, result, {"close": close_info})
+            self.say(f"녹화 저장 {r.get('episode')} ({r['n']} 프레임, {r.get('mb')} MB, {'성공' if ok else '실패 — 학습에서 빠짐'})"
+                     if r and r.get("saved") else f"녹화 안 남김 ({(r or {}).get('why')})")
+            self._jsonl({"rec": r})
 
     def _arrival(self, side, sg):
         """도착 0.4 초 뒤: 보낸 관절(경로 끝) 의 집게 가운데 vs 실측 관절의 집게 가운데 [mm] — 팔 추종 오차."""
@@ -691,6 +764,11 @@ class RunReq(BaseModel):
     step_mode: bool = True
 
 
+class RecReq(BaseModel):
+    enabled: bool
+    name: str
+
+
 class TableReq(BaseModel):
     u: float
     v: float
@@ -770,6 +848,37 @@ def make_app(r: Runner):
     def api_table(q: TableReq):
         return r.measure_table(q.u, q.v, q.reset)
 
+    @app.post("/api/rec")
+    def api_rec(q: RecReq):
+        if r.busy():
+            raise HTTPException(409, "실행 중")
+        try:
+            r.rec.ds_dir(q.name)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        err = r.rec.check_cameras(q.name, r.rec_cameras()) if q.enabled else None
+        if err:
+            raise HTTPException(409, err)
+        r.rec_on, r.rec_name = bool(q.enabled), q.name
+        r.say(f"녹화 {'켬' if q.enabled else '끔'} — 데이터셋 {q.name} (카메라 {list(r.rec_cameras())})")
+        return {"ok": True}
+
+    @app.get("/api/datasets")
+    def api_datasets():
+        return {"datasets": r.rec.datasets(), "cameras_now": r.rec_cameras(),
+                "wrist_err": getattr(r.wrist, "err", {}) if r.wrist else {}}
+
+    @app.get("/api/dataset/zip")
+    def api_dataset_zip(name: str, only_ok: bool = True):
+        if r.rec.active:
+            raise HTTPException(409, "녹화 중")
+        try:
+            path = r.rec.make_zip(name, only_ok)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(404, f"데이터셋 없음: {e}")
+        from fastapi.responses import FileResponse
+        return FileResponse(path, filename=os.path.basename(path), media_type="application/zip")
+
     @app.post("/api/table/clear")
     def api_table_clear():
         with r.lk:
@@ -799,7 +908,8 @@ def make_app(r: Runner):
                   "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*")),
                   "cam_pitch": r.cam_pitch.read() if r.cam_pitch else None,
                   "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
-                  "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX]}
+                  "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX],
+                  "rec": {"on": r.rec_on, "name": r.rec_name, "active": r.rec.active, "n": r.rec.n, "last": r.rec.last}}
         g = r.grip.snapshot()
         st["gripper"] = {}
         for s in pc.SIDES:
@@ -847,6 +957,10 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 <button id="run" disabled>실행</button><button id="next" disabled>다음 단계 ▶</button><button id="home" disabled>복귀 (위로→준비)</button><br>
 선택한 팔: <button id="pready">준비 자세로</button><button id="pdef">기본 자세로</button><br>
 그리퍼 (선택한 손): <button id="gopen">벌림</button><button id="gclose">닫힘</button>
+</fieldset>
+<fieldset><legend>녹화 (ACT 데이터)</legend>
+<label><input type="checkbox" id="recon">실행할 때 녹화</label> 데이터셋 <input id="recname" style="width:150px;background:#222;color:#eee;border:1px solid #555"><br>
+<span id="recstat" style="font-size:12px"></span><div id="dslist" style="font-size:12px"></div>
 </fieldset>
 <div id="status"></div><pre id="plan"></pre><pre id="log"></pre></div></div>
 <script>
@@ -908,6 +1022,20 @@ async function poll(){try{const s=await (await fetch('/api/state')).json();
  $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
  $('run').disabled=!(planOk&&s.plan_id===planId&&!s.busy); $('next').disabled=!s.waiting; $('home').disabled=!s.can_home;
  ['gopen','gclose','pready','pdef'].forEach(k=>$(k).disabled=s.busy);}catch(e){} setTimeout(poll,300);}
+async function recSet(){try{await post('/api/rec',{enabled:$('recon').checked,name:$('recname').value.trim()});dsList();}
+ catch(e){$('recon').checked=false;alert(e.message);}}
+$('recon').onchange=recSet; $('recname').onchange=()=>{if($('recon').checked)recSet();};
+async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
+ const cams=Object.entries(j.cameras_now).map(([k,v])=>`${k} ${v.w}×${v.h}`).join(', ');
+ const werr=Object.entries(j.wrist_err||{}).map(([k,v])=>`${k}: ${v}`).join(', ');
+ $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
+  j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
+let recInit=false;
+setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const r=s.rec; if(!r)return;
+ if(!recInit){$('recon').checked=r.on;$('recname').value=r.name;recInit=true;dsList();}
+ const l=r.last; $('recstat').innerHTML=(r.active?`<span class="bad">● 녹화 중 ${r.n} 프레임</span>`:(r.on?'켜짐 — 다음 실행을 녹화':'꺼짐'))+
+  (l?` · 마지막: ${l.saved?`${l.episode} ${l.n} 프레임 ${l.mb} MB ${l.ok?'성공':'실패'}`:`안 남김 (${l.why})`}`:'');
+ if(l&&l.saved&&l.episode!==window._lastEp){window._lastEp=l.episode;dsList();}}catch(e){}},700);
 poll();
 </script></body></html>"""
 
@@ -922,6 +1050,7 @@ def main():
     mdl = pc.Model()
     if a.sim:
         cam, grip = FakeCamera(a.sim_top_z), FakeGripper()
+        wrist = rec.FakeWristCams()
     else:
         robot_env.dds_init(a.iface)
         grip = RealGripper()
@@ -929,7 +1058,9 @@ def main():
         camp = CamPitchMonitor()
         if camp.err:
             print(f"[pick] ⚠ 카메라 숙임 확인 못 함: {camp.err}")
-    r = Runner(mdl, cam, grip, a.sim, cam_pitch=None if a.sim else camp)
+        wrist = rec.WristCams(pc.CFG.get("wrist_cams"))
+        print(f"[pick] 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
+    r = Runner(mdl, cam, grip, a.sim, cam_pitch=None if a.sim else camp, wrist=wrist)
     print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
           f"집게 {pc.MM_PER_RAD} mm/rad (계산값)")
     uvicorn.run(make_app(r), host="0.0.0.0", port=a.port, log_level="warning")

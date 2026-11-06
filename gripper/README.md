@@ -36,6 +36,26 @@ ROBOT_CHECK=1 ./start_fsm.sh stand     # 거치대 + FSM 703 (한 번)
 5. [정지] = 그 자리에서 멈춤 (그리퍼는 그 상태 유지) → [복귀] = 위로 → 준비 자세
 6. 끝나면 [기본 자세로] (같은 경로 반대)
 
+## 녹화 (ACT 데이터) — `recorder.py`
+
+웹 **녹화** 칸: [실행할 때 녹화] + 데이터셋 이름 (영문 · 숫자 · _ -) → [실행] 한 번 = 에피소드 1 개 (준비 자세 → … → 준비 자세).
+끝까지 가고 박스를 잡았으면(닫기 '잡음') `ok: true`, 놓침 · 멈춤 · 오류는 `ok: false` 로 남음 (학습에서 빠짐).
+**zip (성공만)** 링크 → 학습 PC 웹에 올림.
+
+```
+gripper/data/<데이터셋>/info.json                       format h2-gripper-episodes-v1, cameras {이름: {w, h}}, state_names
+gripper/data/<데이터셋>/episodes/ep_000001/episode.npz  t · state(N,16) · action(N,16) · tcp(N,6) · stage(N,) ·
+                                                        jpeg_<카메라> · jpeg_off_<카메라>   (30 Hz)
+gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side · stages · plan · close (닫은 간격 · 토크)
+```
+
+- state = [왼팔 7 실측, 왼 그리퍼 q, 오른팔 7 실측, 오른 그리퍼 q] (rt/lowstate 500 Hz 의 최신값) — 한 손 학습은 학습기에서 골라 씀
+- action = [왼팔 7 지령, 왼 그리퍼 목표, 오른팔 7 지령, 오른 그리퍼 목표] (지령 = arm_server /stream 으로 실제 보낸 값)
+- 카메라: body = D435i 컬러 424×240 + 손목 카메라 (`gripper.yaml wrist_cams`, 장치 크기의 반 — 640×480 이면 320×240).
+  데이터셋 안에서는 카메라 구성 · 크기가 같아야 함 (다르면 녹화를 켤 때 거부)
+- 크기: 잡기 한 번 ≈ 38 초 · 1100 프레임 · 약 16 MB (가짜 카메라 기준, 실제 영상은 JPEG 가 더 클 수 있음)
+- 확인: 가짜 로봇 · 가짜 카메라로 녹화 → npz · meta · zip 까지 (2026-11-06). 실기 녹화 · 학습기 읽기는 아직
+
 로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
 
 ### 계산으로 정한 것 (실물 확인 전)

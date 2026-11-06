@@ -439,11 +439,15 @@ def arm_ready_check():
     return True, "ok", np.radians(np.asarray(pose["arm_target_deg"], dtype=float))
 
 
+LAST_CMD = {"q": None, "t": 0.0}    # 마지막으로 arm_server 에 보낸 팔 14 축 목표 (제어 순서, rad) — 녹화의 action
+
+
 def run_seg(mdl, sg, stop_evt, on_tick=None):
     """구간 하나를 arm_server /stream 으로. → (ok, 메시지). stop_evt 가 켜지면 그 자리에서 멈춤."""
     b = call("/stream/begin", {"max_vel": float(P["server_max_vel"])})
     tok = b["token"]
     start_ctrl = np.radians(np.asarray(b["target_deg"], dtype=float))
+    LAST_CMD.update(q=start_ctrl.copy(), t=time.time())
     first_ctrl = mdl.to_ctrl(sg.qs[0])
     off = float(np.max(np.abs(start_ctrl - first_ctrl)))
     n = len(sg.qs) - 1
@@ -461,6 +465,7 @@ def run_seg(mdl, sg, stop_evt, on_tick=None):
             i = min(int(f), n - 1) if n > 0 else 0
             qm = sg.qs[i] + (sg.qs[min(i + 1, n)] - sg.qs[i]) * (f - i) if n > 0 else sg.qs[0]
             r = call("/stream/cmd", {"token": tok, "deg": np.degrees(mdl.to_ctrl(qm)).tolist()}, timeout=1.0)
+            LAST_CMD.update(q=np.radians(np.asarray(r["target_deg"], dtype=float)), t=time.time())   # 서버가 자른 뒤 실제로 보낸 값
             n_clip += int(bool(r.get("vel_clip")))
             lag = float(np.max(np.abs(np.asarray(r["target_deg"]) - np.asarray(r["meas_deg"]))))
             if lag > float(P["track_abort_deg"]):

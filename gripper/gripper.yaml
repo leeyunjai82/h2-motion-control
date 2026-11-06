@@ -69,3 +69,10 @@ pick:
   v_joint: 0.4                # 관절 최고 계획 속도 [rad/s]
   server_max_vel: 1.0         # arm_server /stream 관절 속도 상한 [rad/s] (서버 최대 3.0)
   track_abort_deg: 15         # 명령 ↔ 실측 관절 차이가 이보다 크면 그 자리에서 멈춤
+
+# 손목 카메라 (녹화용, gripper/recorder.py) — USB UVC, 640×480 MJPEG 30 fps 요청. 이름: 장치 경로 (꽂는 순서가 바뀌어도 같은
+#   /dev/v4l/by-id/… 권장) 또는 번호. 비워 두면(null) 안 씀. 한 데이터셋 안에서는 카메라 구성이 같아야 함 (처음 에피소드가 정함)
+#   확인: v4l2-ctl --list-devices · ls -l /dev/v4l/by-id/
+wrist_cams:
+  wrist_left: null
+  wrist_right: null
