@@ -82,24 +82,41 @@ if [ $SIM -eq 0 ]; then
   if pgrep -f dex1_1_gripper_server >/dev/null; then
     echo "❌ 그리퍼 서비스가 이미 떠 있음 (다른 창?) — 끄고 다시: sudo pkill -f dex1_1_gripper_server" >&2; exit 1
   fi
-  DEX1_SEEN=$(grep -c "Gripper Server started" "$LOG_DIR/dex1_service_$DAY.log" 2>/dev/null || true); DEX1_SEEN=${DEX1_SEEN:-0}
-  DEX1_LINE0=$(wc -l < "$LOG_DIR/dex1_service_$DAY.log" 2>/dev/null || echo 0)
-  echo "[start] dex1_service  ($DEX1_BIN -n $IFACE) ..."
-  ( cd "$(dirname "$DEX1_BIN")" && exec sudo "$DEX1_BIN" -n "$IFACE" ) > >(stamp >> "$LOG_DIR/dex1_service_$DAY.log") 2>&1 &
-  PIDS+=($!); NAMES+=("dex1_service")
-  ok=0
-  for i in $(seq 1 15); do
-    n=$(grep -c "Gripper Server started" "$LOG_DIR/dex1_service_$DAY.log" 2>/dev/null || true)
-    [ "${n:-0}" -gt "$DEX1_SEEN" ] && { ok=1; break; }
-    alive "${PIDS[-1]}" || break
-    sleep 1
+  DLOG="$LOG_DIR/dex1_service_$DAY.log"; touch "$DLOG"
+  # 서비스는 시작할 때 포트를 한 번 빠르게 훑어 모터를 찾음 — 한 손이 그때 응답을 못 하면 빠진 채 뜸
+  # (2026-11-05 · 11-06 ID 0 이 빠졌다가 서비스만 다시 띄우자 찾음) → 둘 다 찾을 때까지 최대 3 번
+  found=""
+  for attempt in 1 2 3; do
+    DEX1_SEEN=$(grep -c "Gripper Server started" "$DLOG" || true); DEX1_SEEN=${DEX1_SEEN:-0}
+    DEX1_LINE0=$(wc -l < "$DLOG")
+    echo "[start] dex1_service  ($DEX1_BIN -n $IFACE) ... (시도 $attempt/3)"
+    ( cd "$(dirname "$DEX1_BIN")" && exec sudo "$DEX1_BIN" -n "$IFACE" ) > >(stamp >> "$DLOG") 2>&1 &
+    DPID=$!
+    ok=0
+    for i in $(seq 1 15); do
+      n=$(grep -c "Gripper Server started" "$DLOG" || true)
+      [ "${n:-0}" -gt "$DEX1_SEEN" ] && { ok=1; break; }
+      alive "$DPID" || break
+      sleep 1
+    done
+    if [ $ok -eq 1 ]; then
+      sleep 0.5
+      found=$(tail -n +"$((DEX1_LINE0 + 1))" "$DLOG" | grep -o "Motor ID: [01]" | sort -u | tr '\n' ' ')
+      echo "[start] dex1_service  찾은 모터: ${found:-없음}"
+      if [[ "$found" == *"Motor ID: 0"* && "$found" == *"Motor ID: 1"* ]]; then
+        PIDS+=("$DPID"); NAMES+=("dex1_service"); break
+      fi
+    else
+      echo "[start] dex1_service  안 뜸 — 로그: $DLOG"
+    fi
+    sudo -n kill -TERM "$DPID" 2>/dev/null || sudo kill -TERM "$DPID"
+    for k in $(seq 1 5); do alive "$DPID" || break; sleep 1; done
+    alive "$DPID" && { sudo kill -9 "$DPID" 2>/dev/null || true; }
+    found=""
+    [ $attempt -lt 3 ] && { echo "[start] 둘 다 못 찾음 — 2 초 뒤 다시"; sleep 2; }
   done
-  [ $ok -eq 1 ] || { echo "❌ 그리퍼 서비스가 안 뜸 — 로그: $LOG_DIR/dex1_service_$DAY.log" >&2; exit 1; }
-  # 두 그리퍼 모두 찾았는지 (2026-11-05: 오른손 선 접촉 불량으로 ID 0 만 빠진 채 시작된 적 있음)
-  found=$(tail -n +"$((DEX1_LINE0 + 1))" "$LOG_DIR/dex1_service_$DAY.log" | grep -o "Motor ID: [01]" | sort -u | tr '\n' ' ')
-  echo "[start] dex1_service  찾은 모터: ${found:-없음}"
   if [[ "$found" != *"Motor ID: 0"* || "$found" != *"Motor ID: 1"* ]]; then
-    echo "❌ 그리퍼 둘 다 못 찾음 (ID 0 = 오른손, ID 1 = 왼손) — 그 손 그리퍼의 전원 · 485 선 확인 후 다시" >&2; exit 1
+    echo "❌ 3 번 다 그리퍼 둘 다 못 찾음 (ID 0 = 오른손, ID 1 = 왼손) — 빠진 손 그리퍼의 전원 · 485 선 확인 후 다시" >&2; exit 1
   fi
 fi
 
