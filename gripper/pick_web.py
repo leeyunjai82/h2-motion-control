@@ -21,6 +21,7 @@ pick_web.py — 그리퍼 한 팔로 작은 박스 잡기 웹 (http://<미니 PC
 import argparse
 import collections
 import datetime
+import glob
 import json
 import math
 import os
@@ -329,6 +330,8 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
+        if not self.sim and not glob.glob("/dev/ttyUSB*"):
+            raise HTTPException(409, "485–USB 보드 포트(/dev/ttyUSB*) 없음 — 보드 USB 를 꽂고 start_gripper.sh 를 다시 실행")
         if np.max(np.abs(self.mdl.to_model(q_now) - plan["q_start"])) > math.radians(3.0):
             raise HTTPException(409, "계획 뒤에 팔이 움직임 — 다시 클릭해 계획")
         self.stop_evt.clear()
@@ -676,7 +679,8 @@ def make_app(r: Runner):
         with r.lk:
             st = {"phase": r.phase, "stage": r.stage, "waiting": r.waiting, "log": r.log[-25:],
                   "plan_id": r.plan_id, "plan": r.summary(r.plan), "can_home": bool(r.ctx) and not r.busy(),
-                  "busy": r.busy(), "table_z": r.table_z}
+                  "busy": r.busy(), "table_z": r.table_z,
+                  "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*"))}
         g = r.grip.snapshot()
         st["gripper"] = {}
         for s in pc.SIDES:
@@ -776,7 +780,7 @@ $('gclose').onclick=()=>{if(confirm('집게를 닫습니다 (≈10 mm). 손가�
 async function poll(){try{const s=await (await fetch('/api/state')).json();
  if(s.table_z!==null&&s.table_z!==undefined&&tableZ===null){tableZ=s.table_z;$('tblz').textContent=`테이블 z ${s.table_z.toFixed(3)}`;hint();}
  const g=s.gripper||{}; const gs=k=>g[k]?`${g[k].q.toFixed(2)} rad ≈ ${g[k].mm} mm`:'상태 없음';
- $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}`;
+ $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`;
  $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
  $('run').disabled=!(planOk&&s.plan_id===planId&&!s.busy); $('next').disabled=!s.waiting; $('home').disabled=!s.can_home;
  ['gopen','gclose','pready','pdef'].forEach(k=>$(k).disabled=s.busy);}catch(e){} setTimeout(poll,300);}

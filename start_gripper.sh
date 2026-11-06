@@ -159,8 +159,19 @@ echo "    - 로그         : $LOG_DIR/${TAG}{dex1_service,arm_server,pick_web}_$
 echo "    - 종료         : Ctrl+C"
 echo ""
 # 띄운 것이 죽으면 바로 알림 (다시 띄우지는 않음 — 그리퍼 서비스가 죽으면 그리퍼 힘이 풀림)
-DEAD=()
+# 485–USB 보드 포트가 사라지면 알림 (2026-11-06 보드 USB 가 빠져 오른손 → 전체 응답 없음, 다시 꽂아 복구)
+DEAD=(); TTY0=$(ls /dev/ttyUSB* 2>/dev/null | tr '\n' ' '); TTY_WARNED=0
 while true; do
+  if [ $SIM -eq 0 ]; then
+    TTY=$(ls /dev/ttyUSB* 2>/dev/null | tr '\n' ' ')
+    if [ "$TTY" != "$TTY0" ] && [ $TTY_WARNED -eq 0 ]; then
+      TTY_WARNED=1
+      echo ""
+      echo "  ⚠⚠ $(date '+%H:%M:%S') 485–USB 보드 포트가 바뀜: 시작 [${TTY0}] → 지금 [${TTY:-없음}]"
+      echo "     보드 USB 가 빠졌거나 다시 잡힘 — 그리퍼가 명령을 안 받을 수 있음. 팔을 [기본 자세로] → Ctrl+C →"
+      echo "     USB 를 단단히 꽂고 ./start_gripper.sh 다시"
+    fi
+  fi
   for i in "${!PIDS[@]}"; do
     [[ " ${DEAD[*]-} " == *" $i "* ]] && continue
     if ! alive "${PIDS[$i]}"; then
