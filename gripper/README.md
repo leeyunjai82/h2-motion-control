@@ -74,6 +74,27 @@ gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side
 
 로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
 
+## VR 조작 (Quest 3) — `vr_teleop.py` · 1단계 읽기 전용
+
+**로봇에 명령을 보내지 않음** (arm_server · 그리퍼 호출 없음). 가상 팔만 컨트롤러를 따라가고 모니터에 결과를 보여 줌.
+손 움직임에 H2 가 얼마나 따라오는지 (손목 한계 · 몸통 · 테이블 · 다른 팔) 를 로봇 없이 먼저 체감하는 단계.
+
+```bash
+source activate_tv.sh && python gripper/vr_teleop.py          # 모니터: http://localhost:50040/
+adb reverse tcp:50040 tcp:50040                               # Quest 3 USB 연결 (개발자 모드) — Quest 브라우저에서 http://localhost:50040/vr
+```
+
+- 조작: **그립(중지) 버튼을 누르고 있는 동안만** 따라감 (누른 순간 기준 상대 이동, 떼면 그 자리) · 트리거 = 그리퍼 닫기 ·
+  B/Y = 방향 맞춤 (로봇과 같은 방향을 보고 누름). Quest 화면: 컨트롤러 옆 작은 상자 색 = 초록 따라감 · 노랑 일부만 · 빨강 멈춤 (진동)
+- IK: 위치 우선 → 자세는 위치를 해치지 않는 만큼 → 남는 자유도로 준비 자세 쪽. 자세를 다 못 맞추면 '자세 일부만 (N° 못 따라감)'
+- 멈춤 (그 tick 버림, 팔 그대로): 몸통 < body_clear_m · 그리퍼 바닥이 테이블 + tip_clear_mm 아래 · 양팔 사이 < vr.arm_gap_m · IK 가 30 mm 넘게 못 닿음
+- 속도: 목표 TCP ≤ vr.v_max · 회전 ≤ vr.w_max_deg/s · 관절 ≤ vr.joint_vmax (방향을 유지하며 같은 비율로 줄임)
+- 테이블 높이 `vr.table_z_m` 은 ⚠ 확인 필요 — 잡기 웹 테이블 측정값으로 맞추거나 `--table-z` 로 줌
+- Wi-Fi 로 쓰려면 HTTPS 필요: `openssl req -x509 -newkey rsa:2048 -nodes -keyout vr.key -out vr.crt -days 365 -subj "/CN=h2"` 후
+  `--https vr.crt vr.key` (자체 서명 경고 수락 후 WebXR 동작은 확인 필요)
+- 확인한 것: 가짜 컨트롤러 (WebSocket) 로 앞 이동 · yaw · 몸 가운데 이동 · 몸통 / 테이블 멈춤 · 방향 맞춤 · 연결 끊김. 모니터 · VR 페이지 로드 (헤드리스 Chromium).
+  **Quest 3 실기 (WebXR · 패스스루 · 버튼 번호 · 진동) 는 아직 확인 전**
+
 ### 배치 (2026-11-06)
 
 - 물체는 양옆 (오른쪽 = 오른팔, 왼쪽 = 왼팔), 통은 가운데 **pelvis 앞 0.40 m 이상** (가슴 앞면에서 약 30 cm). 가슴 바로 앞(0.30–0.35)은
