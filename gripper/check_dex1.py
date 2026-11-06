@@ -49,7 +49,7 @@ def main():
                 return
             s = msg.states[0]
             with lock:
-                last[side] = (time.time(), s.q, s.dq, s.tau_est, s.temperature, s.lost)
+                last[side] = (time.time(), s.q, s.dq, s.tau_est, s.temperature, s.lost, s.mode, list(s.reserve))
         return f
 
     subs = []
@@ -72,12 +72,12 @@ def main():
             if side not in snap:
                 parts.append(f"{name}: 상태 없음")
                 continue
-            t, q, dq, tau, temp, lost = snap[side]
+            t, q, dq, tau, temp, lost, mode, rsv = snap[side]
             seen[side] = True
             qmin[side] = q if qmin[side] is None else min(qmin[side], q)
             qmax[side] = q if qmax[side] is None else max(qmax[side], q)
             age = now - t
-            parts.append(f"{name}: q {q:6.3f}  dq {dq:6.2f}  tau {tau:5.2f}  {temp:3d}°C"
+            parts.append(f"{name}: q {q:6.3f}  dq {dq:6.2f}  tau {tau:5.2f}  {temp:3d}°C  mode {mode}  lost {lost}  rsv {rsv}"
                          + (f"  ({age:.1f}s 전)" if age > 0.5 else ""))
         print(" | ".join(parts), flush=True)
 
