@@ -46,6 +46,7 @@ PORT = 50030
 DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
 DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고
 TABLE_WIN = 31                       # 테이블 높이 잴 때 깊이 창 [픽셀]
+TABLE_SLOPE_MAX_DEG = 8.0            # 테이블 점들로 맞춘 평면이 이보다 기울면 거부 (몸통 뒤 기움 ≈ 4°, 2026-11-06 check_rsimu)
 CLICK_Z_TABLE = (-0.40, 0.30)        # 테이블 높이로 받아들이는 범위 [m, pelvis] (시연 테이블 110 cm ≈ +0.06~0.09)
 LOG_DIR = os.path.join(os.path.dirname(HERE), "logs")
 CX, CY, CZ, CP = robot_env.CAMERA_X, robot_env.CAMERA_Y, robot_env.CAMERA_Z, robot_env.CAMERA_PITCH
@@ -68,6 +69,30 @@ def ray_to_plane(d_cam, z):
         return None
     t = (z - o[2]) / a[2]
     return None if t <= 0 else o + t * a
+
+
+def ray_to_tilted(d_cam, plane, h):
+    """시선 ∩ 기울어진 평면 z = a0 + b·x + c·y + h (plane = (a0, b, c), pelvis). 없으면 None."""
+    a0, b, c = plane
+    a = A_CT @ np.asarray(d_cam, dtype=float)
+    o = B_CT + P2T
+    den = a[2] - b * a[0] - c * a[1]
+    if abs(den) < 1e-9:
+        return None
+    t = (a0 + h + b * o[0] + c * o[1] - o[2]) / den
+    return None if t <= 0 else o + t * a
+
+
+def fit_plane(pts):
+    """테이블 점들 → (a0, b, c): z = a0 + b·x + c·y. 1 점 = 수평, 2 점 = 두 점 방향 기울기만, 3 점 이상 = 최소제곱."""
+    P = np.asarray(pts, dtype=float)
+    m = P.mean(axis=0)
+    if len(P) == 1:
+        return float(m[2]), 0.0, 0.0
+    X = P[:, :2] - m[:2]
+    bc = np.linalg.lstsq(X, P[:, 2] - m[2], rcond=None)[0]     # 2 점이면 최소 노름 = 두 점 방향 기울기
+    b, c = float(bc[0]), float(bc[1])
+    return float(m[2] - b * m[0] - c * m[1]), b, c
 
 
 def pelvis_to_pixel(p, K):
@@ -218,7 +243,8 @@ class Runner:
         self.mdl, self.cam, self.grip, self.sim = mdl, cam, grip, sim
         self.lk = threading.Lock()
         self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
-        self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] — [테이블 높이 재기] 로 한 번
+        self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
+        self.table_pts, self.table_plane = [], None   # 테이블 점들 · 평면 (a0, b, c) — 점을 2–3 곳 찍으면 기울기까지
         self.phase, self.stage, self.waiting = "idle", "", False
         self.log = []
         self.stop_evt, self.next_evt = threading.Event(), threading.Event()
@@ -258,21 +284,33 @@ class Runner:
         return self.th is not None and self.th.is_alive()
 
     # ----- 테이블 높이 -----
-    def measure_table(self, u, v):
+    def measure_table(self, u, v, reset=False):
         if self.busy():
             raise HTTPException(409, "실행 중")
+        if reset:
+            with self.lk:
+                self.table_pts, self.table_plane, self.table_z = [], None, None
         got = self.cam.point(u, v, win=TABLE_WIN)
         if got is None:
             raise HTTPException(400, "그 자리 깊이 없음 — 테이블 빈 곳을 다시 클릭")
         p, spread = got
         if not (CLICK_Z_TABLE[0] <= p[2] <= CLICK_Z_TABLE[1]):
             raise HTTPException(400, f"테이블 높이 z {p[2]:.3f} 이 범위 {CLICK_Z_TABLE} 밖 — 테이블 빈 곳을 클릭했는지 확인")
+        pts = (self.table_pts + [p.tolist()])[-6:]
+        plane = fit_plane(pts)
+        slope = math.degrees(math.atan(math.hypot(plane[1], plane[2])))
+        if slope > TABLE_SLOPE_MAX_DEG:
+            raise HTTPException(400, f"테이블 점들로 맞춘 평면이 {slope:.1f}° 기움 (> {TABLE_SLOPE_MAX_DEG}°) — 박스 위나 테이블 밖을 찍었는지 확인, [테이블 지우기] 후 다시")
+        zc = float(np.mean([q[2] for q in pts]))
         with self.lk:
-            self.table_z, self.table_click = float(p[2]), (u, v)
+            self.table_pts, self.table_plane, self.table_z, self.table_click = pts, plane, zc, (u, v)
             self.plan = None
-        self._jsonl({"table_z": round(float(p[2]), 4), "table_pt": np.round(p, 4).tolist(), "spread_mm": round(spread, 1), "px": [u, v]})
-        self.say(f"테이블 높이 z {p[2]:.3f} (pelvis, 점 {np.round(p, 3).tolist()}, 깊이 흔들림 {spread:.0f} mm)")
-        return {"table_z": round(float(p[2]), 4), "spread_mm": round(spread, 1)}
+        info = {"table_z": round(zc, 4), "n": len(pts), "spread_mm": round(spread, 1),
+                "slope_x_mm_per_10cm": round(plane[1] * 100, 1), "slope_y_mm_per_10cm": round(plane[2] * 100, 1)}
+        self._jsonl({"table_pt": np.round(p, 4).tolist(), "table_plane": [round(v, 5) for v in plane], **info, "px": [u, v]})
+        self.say(f"테이블 점 {len(pts)}: {np.round(p, 3).tolist()} (깊이 흔들림 {spread:.0f} mm) → 평균 z {zc:.3f}, "
+                 f"기울기 앞으로 {plane[1] * 100:+.1f} · 왼쪽으로 {plane[2] * 100:+.1f} mm/10 cm")
+        return info
 
     # ----- 계획 -----
     def make_plan(self, u, v, side, width_mm, height_mm, rpy, bin_uv=None, bin_h_mm=None):
@@ -281,19 +319,19 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
-        if self.table_z is None:
-            raise HTTPException(409, "먼저 [테이블 높이 재기] — 테이블 빈 곳을 클릭")
-        # 박스 윗면 = 클릭 픽셀 시선 ∩ 평면 z = 테이블 + 박스 높이 (깊이 안 씀)
-        top = ray_to_plane(self.cam.ray(u, v), self.table_z + height_mm / 1000.0)
+        if self.table_plane is None:
+            raise HTTPException(409, "먼저 [테이블 점 추가] — 테이블 빈 곳을 1–3 곳 클릭")
+        # 박스 윗면 = 클릭 픽셀 시선 ∩ (테이블 평면 + 박스 높이) (깊이 안 씀, 테이블 기울기 포함)
+        top = ray_to_tilted(self.cam.ray(u, v), self.table_plane, height_mm / 1000.0)
         if top is None:
             raise HTTPException(400, "그 픽셀 시선이 박스 윗면 높이와 만나지 않음")
         bin_pt = None
         if bin_uv is not None:   # 통 = 입구 가운데 클릭 시선 ∩ 평면 z = 테이블 + 통 높이
-            bin_pt = ray_to_plane(self.cam.ray(*bin_uv), self.table_z + bin_h_mm / 1000.0)
+            bin_pt = ray_to_tilted(self.cam.ray(*bin_uv), self.table_plane, bin_h_mm / 1000.0)
             if bin_pt is None:
                 raise HTTPException(400, "그 픽셀 시선이 통 테두리 높이와 만나지 않음")
         plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt=bin_pt, bin_h_mm=bin_h_mm)
-        plan["table_z"] = round(self.table_z, 4)
+        plan["table_z"] = round(self.table_plane[0] + self.table_plane[1] * top[0] + self.table_plane[2] * top[1], 4)   # 박스 자리 테이블 높이
         dp = self.cam.point(u, v)          # 비교용: 깊이로 잰 윗면 (계획에는 안 씀)
         if dp is not None:
             d = (dp[0] - top) * 1000
@@ -589,6 +627,7 @@ class RunReq(BaseModel):
 class TableReq(BaseModel):
     u: float
     v: float
+    reset: bool = False
 
 
 class PoseReq(BaseModel):
@@ -662,7 +701,14 @@ def make_app(r: Runner):
 
     @app.post("/api/table")
     def api_table(q: TableReq):
-        return r.measure_table(q.u, q.v)
+        return r.measure_table(q.u, q.v, q.reset)
+
+    @app.post("/api/table/clear")
+    def api_table_clear():
+        with r.lk:
+            r.table_pts, r.table_plane, r.table_z, r.table_click, r.plan = [], None, None, None, None
+        r.say("테이블 점 지움")
+        return {"ok": True}
 
     @app.post("/api/pose")
     def api_pose(q: PoseReq):
@@ -682,7 +728,7 @@ def make_app(r: Runner):
         with r.lk:
             st = {"phase": r.phase, "stage": r.stage, "waiting": r.waiting, "log": r.log[-25:],
                   "plan_id": r.plan_id, "plan": r.summary(r.plan), "can_home": bool(r.ctx) and not r.busy(),
-                  "busy": r.busy(), "table_z": r.table_z,
+                  "busy": r.busy(), "table_z": r.table_z, "table_n": len(r.table_pts),
                   "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*"))}
         g = r.grip.snapshot()
         st["gripper"] = {}
@@ -721,8 +767,9 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 놓는 곳 <label><input type="radio" name="dest" value="bin" checked>통</label><label><input type="radio" name="dest" value="same">제자리</label>
 · 통 높이 <input id="binh" type="number" value="80" min="10" max="250"> mm (테이블 → 테두리)<br>
 RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><input id="y" type="number" step="5"> deg
-<button id="tbl">테이블 높이 재기</button> <span id="tblz">테이블: 안 잼</span>
-<div id="clickhint" style="font-size:13px;color:#ff0">먼저 [테이블 높이 재기] → 테이블 빈 곳 클릭</div>
+<button id="tbl">테이블 점 추가</button><button id="tblclr">테이블 지우기</button> <span id="tblz">테이블: 안 잼</span>
+<div style="font-size:12px">테이블 빈 곳을 앞 · 뒤 · 옆 2–3 곳 (점마다 [테이블 점 추가] → 클릭). 1 곳이면 수평으로 봄</div>
+<div id="clickhint" style="font-size:13px;color:#ff0">먼저 [테이블 점 추가] → 테이블 빈 곳 클릭</div>
 <div style="font-size:12px">0,0,0 = 손이 앞 · 집게 좌우, pitch + = 앞으로 숙임 (손목 pitch ±33° 라 90 은 거의 안 닿음). 박스 윗면 가운데를 클릭하면 계획 (접근은 위에서 수직)</div>
 </fieldset>
 <fieldset><legend>실행</legend>
@@ -743,14 +790,15 @@ async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-
 let boxUV=null, tableMode=false, tableZ=null;
 const dest=()=>document.querySelector('input[name=dest]:checked').value;
 const hint=()=>{$('clickhint').textContent=tableMode?'테이블 빈 곳을 클릭 (박스·통 없는 평평한 곳)':
-  tableZ===null?'먼저 [테이블 높이 재기] → 테이블 빈 곳 클릭':
+  tableZ===null?'먼저 [테이블 점 추가] → 테이블 빈 곳 클릭':
   boxUV?'② 통 입구 가운데를 클릭 (다시 하려면 놓는 곳을 바꿨다 되돌리기)':'① 박스 윗면 가운데를 클릭';};
 $('tbl').onclick=()=>{tableMode=true;boxUV=null;hint();};
+$('tblclr').onclick=async()=>{try{await post('/api/table/clear');tableZ=null;$('tblz').textContent='테이블: 안 잼';boxUV=null;hint();}catch(e){alert(e.message);}};
 document.querySelectorAll('input[name=dest]').forEach(x=>x.onchange=()=>{boxUV=null;hint();});
 $('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
  const u=(e.clientX-rc.left)*__W__/rc.width, v=(e.clientY-rc.top)*__H__/rc.height;
  if(tableMode){tableMode=false;hint();try{const t=await post('/api/table',{u,v});tableZ=t.table_z;
-   $('tblz').textContent=`테이블 z ${t.table_z.toFixed(3)} (흔들림 ${t.spread_mm} mm)`;hint();}catch(err){alert(err.message);} return;}
+   $('tblz').textContent=`테이블 점 ${t.n} · 평균 z ${t.table_z.toFixed(3)} · 기울기 앞 ${t.slope_x_mm_per_10cm} · 왼 ${t.slope_y_mm_per_10cm} mm/10cm (흔들림 ${t.spread_mm} mm)`;hint();}catch(err){alert(err.message);} return;}
  let body={u,v,side:side(),width_mm:+$('size').value,height_mm:+$('height').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]};
  if(dest()==='bin'){ if(!boxUV){boxUV=[u,v];hint();$('plan').textContent='박스 클릭 저장 — 이제 통 안쪽 가운데를 클릭';return;}
    body.u=boxUV[0];body.v=boxUV[1];body.bin_u=u;body.bin_v=v;body.bin_h_mm=+$('binh').value;boxUV=null;hint();}
@@ -759,7 +807,7 @@ $('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
   planId=j.plan_id; const p=j.plan; planOk=p.ok; showPlan(p);}catch(err){planOk=false;$('plan').innerHTML='<span class="bad">'+err.message+'</span>';}};
 function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
 function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg}\n`;
- s+=`윗면 가운데 (pelvis, 테이블 평면 ${p.table_z} + 높이) ${f3(p.top)}\n`;
+ s+=`윗면 가운데 (pelvis, 박스 자리 테이블 z ${p.table_z} + 높이) ${f3(p.top)}\n`;
  if(p.depth_diff_mm) s+=`  (참고: 깊이로 잰 점 − 평면 점 = 앞뒤 ${p.depth_diff_mm[0]} · 좌우 ${p.depth_diff_mm[1]} · 높이 ${p.depth_diff_mm[2]} mm, 흔들림 ${p.depth_spread_mm} mm)\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
  if(p.bin) s+=`통 입구 (클릭) ${f3(p.bin)} · 테두리 z ${p.rim_z} · 놓는 자리 ${f3(p.release)}\n`;
  s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
@@ -781,7 +829,7 @@ $('pready').onclick=()=>poseGo('ready'); $('pdef').onclick=()=>poseGo('default')
 $('gopen').onclick=()=>post('/api/gripper',{side:side(),action:'open',size_mm:+$('size').value}).catch(e=>alert(e.message));
 $('gclose').onclick=()=>{if(confirm('집게를 닫습니다 (≈10 mm). 손가락을 빼세요.'))post('/api/gripper',{side:side(),action:'close'}).catch(e=>alert(e.message));};
 async function poll(){try{const s=await (await fetch('/api/state')).json();
- if(s.table_z!==null&&s.table_z!==undefined&&tableZ===null){tableZ=s.table_z;$('tblz').textContent=`테이블 z ${s.table_z.toFixed(3)}`;hint();}
+ if(s.table_z!==null&&s.table_z!==undefined&&tableZ===null){tableZ=s.table_z;$('tblz').textContent=`테이블 점 ${s.table_n} · 평균 z ${s.table_z.toFixed(3)}`;hint();}
  const g=s.gripper||{}; const gs=k=>g[k]?`${g[k].q.toFixed(2)} rad ≈ ${g[k].mm} mm`:'상태 없음';
  $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`;
  $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
