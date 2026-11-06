@@ -321,6 +321,7 @@ class Runner:
         self.rec_name = "pick_" + datetime.date.today().strftime("%Y%m%d")
         self.stage_idx = 0              # 녹화 stage (실행 순서 번호, 0 = 시작 전)
         self.pol = pol.PolicyRunner(self, pc)   # ACT 정책 실행
+        self.speed = 2.0                # 속도 배율 (웹) — 계획 · 자세 이동에 씀
         self.lk = threading.Lock()
         self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
         self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
@@ -410,7 +411,9 @@ class Runner:
             bin_pt = ray_to_tilted(self.cam.ray(*bin_uv), self.table_plane, bin_h_mm / 1000.0)
             if bin_pt is None:
                 raise HTTPException(400, "그 픽셀 시선이 통 테두리 높이와 만나지 않음")
+        pc.set_speed(self.speed)
         plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt=bin_pt, bin_h_mm=bin_h_mm)
+        plan["speed"] = self.speed
         plan["table_z"] = round(self.table_plane[0] + self.table_plane[1] * top[0] + self.table_plane[2] * top[1], 4)   # 박스 자리 테이블 높이
         if plan.get("grasp"):     # 자로 확인할 값: 테이블 면 → 집게 가운데 (두 패드 가운데)
             plan["pre_above_table_mm"] = round((plan["pre"][2] - plan["table_z"]) * 1000)
@@ -435,7 +438,7 @@ class Runner:
     def summary(plan):
         if plan is None:
             return None
-        keys = ("ok", "side", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+        keys = ("ok", "side", "speed", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
         return {k: plan.get(k) for k in keys if k in plan}
 
@@ -662,6 +665,7 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
+        pc.set_speed(min(self.speed, 2.0))
         seq, why = pc.plan_home(self.mdl, q_now, self.ctx["side"], self.ctx["floor_z"])
         if seq is None:
             raise HTTPException(409, f"복귀 계획 불가: {why}")
@@ -693,6 +697,7 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
+        pc.set_speed(min(self.speed, 2.0))     # 기본 ↔ 준비 자세는 ×2 까지
         segs, info = pc.plan_pose(self.mdl, q_now, side, which)
         if segs is None:
             raise HTTPException(409, info)
@@ -889,6 +894,19 @@ def make_app(r: Runner):
         r.say(f"녹화 {'켬' if q.enabled else '끔'} — 데이터셋 {q.name} (카메라 {list(r.rec_cameras())})")
         return {"ok": True}
 
+    @app.post("/api/speed")
+    def api_speed(body: dict):
+        f = float(body.get("f", 1.0))
+        if not (0.25 <= f <= pc.SPEED_MAX):
+            raise HTTPException(400, f"속도 배율 0.25–{pc.SPEED_MAX}")
+        if r.busy():
+            raise HTTPException(409, "실행 중 — 다음 계획부터")
+        r.speed = f
+        with r.lk:
+            r.plan = None                    # 이전 계획은 이전 속도 — 다시 클릭
+        r.say(f"속도 ×{f} (다음 클릭부터)")
+        return {"ok": True}
+
     @app.get("/api/models")
     def api_models():
         return {"models": pol.models(), "loaded": r.pol.info()}
@@ -988,7 +1006,7 @@ def make_app(r: Runner):
         with r.lk:
             st = {"phase": r.phase, "stage": r.stage, "waiting": r.waiting, "log": r.log[-25:],
                   "plan_id": r.plan_id, "plan": r.summary(r.plan), "can_home": bool(r.ctx) and not r.busy(),
-                  "busy": r.busy(), "table_z": r.table_z, "table_n": len(r.table_pts),
+                  "busy": r.busy(), "table_z": r.table_z, "speed": r.speed, "table_n": len(r.table_pts),
                   "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*")),
                   "cam_pitch": r.cam_pitch.read() if r.cam_pitch else None,
                   "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
@@ -1041,7 +1059,8 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 <div style="font-size:12px">0,0,0 = 손이 앞 · 집게 좌우, pitch + = 앞으로 숙임 (손목 pitch ±33° 라 90 은 거의 안 닿음). 박스 윗면 가운데를 클릭하면 계획 (접근은 위에서 수직)</div>
 </fieldset>
 <fieldset><legend>실행</legend>
-<label><input type="checkbox" id="step" checked>단계별 (매 단계 [다음 단계])</label><br>
+<label><input type="checkbox" id="step" checked>단계별 (매 단계 [다음 단계])</label>
+속도 <select id="spd" style="background:#222;color:#eee"><option value="1">×1</option><option value="1.5">×1.5</option><option value="2" selected>×2</option><option value="3">×3</option></select><br>
 <button id="run" disabled>실행</button><button id="next" disabled>다음 단계 ▶</button><button id="home" disabled>복귀 (위로→준비)</button><br>
 선택한 팔: <button id="pready">준비 자세로</button><button id="pdef">기본 자세로</button><br>
 그리퍼 (선택한 손): <button id="gopen">벌림</button><button id="gclose">닫힘</button>
@@ -1096,7 +1115,7 @@ $('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
  try{const j=await post('/api/plan',body);
   planId=j.plan_id; const p=j.plan; planOk=p.ok; showPlan(p);}catch(err){planOk=false;$('plan').innerHTML='<span class="bad">'+err.message+'</span>';}};
 function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
-function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg}\n`;
+function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg} · 속도 ×${p.speed}\n`;
  s+=`윗면 가운데 (pelvis, 박스 자리 테이블 z ${p.table_z} + 높이) ${f3(p.top)}\n`;
  if(p.depth_diff_mm) s+=`  (참고: 깊이로 잰 점 − 평면 점 = 앞뒤 ${p.depth_diff_mm[0]} · 좌우 ${p.depth_diff_mm[1]} · 높이 ${p.depth_diff_mm[2]} mm, 흔들림 ${p.depth_spread_mm} mm)\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
  if(p.pre_above_table_mm!=null) s+=`자로 확인: 집게 가운데(두 패드 가운데)가 테이블 면 위 — 접근 위치 ${p.pre_above_table_mm} mm · 잡는 자리 ${p.grasp_above_table_mm} mm\n`;
@@ -1137,7 +1156,9 @@ async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
  const werr=Object.entries(j.wrist_err||{}).map(([k,v])=>`${k}: ${v}`).join(', ');
  $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
   j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
-let recInit=false, wristInit=false;
+let recInit=false, wristInit=false, spdInit=false;
+$('spd').onchange=async()=>{try{await post('/api/speed',{f:+$('spd').value});planOk=false;$('plan').textContent='속도를 바꿈 — 박스를 다시 클릭';}catch(e){alert(e.message);}};
+setInterval(async()=>{if(spdInit)return;try{const s=await (await fetch('/api/state')).json(); if(s.speed){$('spd').value=String(s.speed);spdInit=true;}}catch(e){}},800);
 async function modelList(){try{const j=await (await fetch('/api/models')).json();
  $('msel').innerHTML=j.models.map(m=>`<option value="${m.name}">${m.name} (${m.side}, ${m.episodes} 에피소드, 검증 ${m.val_err_deg==null?'-':m.val_err_deg.toFixed(1)+'°'})</option>`).join('');
  if(j.loaded) $('msel').value=j.loaded.name;}catch(e){}}

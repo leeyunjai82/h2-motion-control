@@ -210,10 +210,26 @@ def rpy_matrix(rpy_deg):
 
 
 # ---------------- 경로 ----------------
+SPEED = {"f": 1.0}      # 속도 배율 (웹에서 고름) — 계획할 때 v_lin · v_slow · v_joint 와 서버 상한에 곱함 (서버 상한은 3.0 rad/s 까지)
+SPEED_MAX = 3.0
+
+
+def set_speed(f):
+    f = float(f)
+    if not (0.25 <= f <= SPEED_MAX):
+        raise ValueError(f"속도 배율 0.25–{SPEED_MAX}")
+    SPEED["f"] = f
+
+
+def seg_vmax():
+    return min(3.0, float(P["server_max_vel"]) * SPEED["f"])
+
+
 class Seg:
     """팔 한 구간: 관절 경로 (모델 순서 샘플 목록) + 시간."""
     def __init__(self, name, qs, sec, kind, clear_min):
         self.name, self.qs, self.sec, self.kind, self.clear_min = name, qs, sec, kind, clear_min
+        self.vmax = seg_vmax()             # arm_server /stream 관절 속도 상한 (계획할 때 배율)
 
 
 def seg_time(qs, length_m, v_lin, v_joint):
@@ -229,7 +245,7 @@ def seg_time(qs, length_m, v_lin, v_joint):
 
 def joint_seg(name, q_from, q_to, n=40):
     qs = [q_from + (q_to - q_from) * (i / n) for i in range(n + 1)]
-    return Seg(name, qs, seg_time(qs, 0.0, 0.0, float(P["v_joint"])), "joint", None)
+    return Seg(name, qs, seg_time(qs, 0.0, 0.0, float(P["v_joint"]) * SPEED["f"]), "joint", None)
 
 
 JOINT_KO = {"shoulder_pitch": "어깨 pitch", "shoulder_roll": "어깨 roll", "shoulder_yaw": "어깨 yaw", "elbow": "팔꿈치",
@@ -265,7 +281,8 @@ def cart_seg(mdl, name, side, q_from, T_to, v_lin):
                           " → RPY(pitch)·박스 위치를 바꿔 보세요")
         qs.append(q2)
         q = q2
-    return Seg(name, qs, seg_time(qs, float(np.linalg.norm(dp)), v_lin, float(P["v_joint"])), "cart", None), None
+    f = SPEED["f"]
+    return Seg(name, qs, seg_time(qs, float(np.linalg.norm(dp)), v_lin * f, float(P["v_joint"]) * f), "cart", None), None
 
 
 STEP_KO = {"@open": "그리퍼 벌림", "@close": "그리퍼 닫기", "@hold": "들고 있기"}
@@ -444,7 +461,7 @@ LAST_CMD = {"q": None, "t": 0.0}    # 마지막으로 arm_server 에 보낸 팔 
 
 def run_seg(mdl, sg, stop_evt, on_tick=None):
     """구간 하나를 arm_server /stream 으로. → (ok, 메시지). stop_evt 가 켜지면 그 자리에서 멈춤."""
-    b = call("/stream/begin", {"max_vel": float(P["server_max_vel"])})
+    b = call("/stream/begin", {"max_vel": float(getattr(sg, "vmax", P["server_max_vel"]))})
     tok = b["token"]
     start_ctrl = np.radians(np.asarray(b["target_deg"], dtype=float))
     LAST_CMD.update(q=start_ctrl.copy(), t=time.time())
