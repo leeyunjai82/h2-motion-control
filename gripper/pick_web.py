@@ -793,7 +793,8 @@ def make_app(r: Runner):
     @app.get("/", response_class=HTMLResponse)
     def index():
         return PAGE.replace("__W__", str(W)).replace("__H__", str(H)).replace(
-            "__RPY__", json.dumps(P["rpy_deg"])).replace("__SIM__", "true" if r.sim else "false")
+            "__RPY__", json.dumps(P["rpy_deg"])).replace("__SIM__", "true" if r.sim and not getattr(r, "cam_only", False) else "false").replace(
+            "__CAMONLY__", "true" if getattr(r, "cam_only", False) else "false")
 
     @app.get("/video")
     def video():
@@ -982,9 +983,10 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 </fieldset>
 <div id="status"></div><pre id="plan"></pre><pre id="log"></pre></div></div>
 <script>
-const RPY=__RPY__, SIM=__SIM__; let planId=0, planOk=false;
+const RPY=__RPY__, SIM=__SIM__, CAMONLY=__CAMONLY__; let planId=0, planOk=false;
 ['r','p','y'].forEach((k,i)=>document.getElementById(k).value=RPY[i]);
 if(SIM) document.getElementById('simnote').innerHTML='<span class="sim">SIM — 가짜 카메라 · 가짜 그리퍼</span>';
+if(CAMONLY) document.getElementById('simnote').innerHTML='<span class="sim">카메라만 — 로봇 · 그리퍼 안 씀 (팔 · 그리퍼 버튼은 동작 안 함)</span>';
 const $=id=>document.getElementById(id);
 const side=()=>document.querySelector('input[name=side]:checked').value;
 async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
@@ -1068,11 +1070,16 @@ def main():
     ap.add_argument("--port", type=int, default=PORT)
     ap.add_argument("--sim", action="store_true", help="가짜 카메라 · 가짜 그리퍼 (팔은 arm_server 를 그대로 씀)")
     ap.add_argument("--sim-top-z", type=float, default=0.0, help="--sim 클릭 평면 높이 [m, pelvis]")
+    ap.add_argument("--cam-only", action="store_true", help="로봇 없이 카메라만 (D435i + 손목 카메라 화면 확인, 팔 · 그리퍼 · DDS 안 씀)")
     a = ap.parse_args()
     mdl = pc.Model()
     if a.sim:
         cam, grip = FakeCamera(a.sim_top_z), FakeGripper()
         wrist = rec.FakeWristCams()
+    elif a.cam_only:
+        cam, grip = RealCamera(), FakeGripper()
+        wrist = rec.WristCams(pc.CFG.get("wrist_cams"))
+        print(f"[pick] 카메라만 — 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
     else:
         robot_env.dds_init(a.iface)
         grip = RealGripper()
@@ -1082,8 +1089,9 @@ def main():
             print(f"[pick] ⚠ 카메라 숙임 확인 못 함: {camp.err}")
         wrist = rec.WristCams(pc.CFG.get("wrist_cams"))
         print(f"[pick] 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
-    r = Runner(mdl, cam, grip, a.sim, cam_pitch=None if a.sim else camp, wrist=wrist)
-    print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
+    r = Runner(mdl, cam, grip, a.sim or a.cam_only, cam_pitch=None if (a.sim or a.cam_only) else camp, wrist=wrist)
+    r.cam_only = a.cam_only
+    print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else '카메라만' if a.cam_only else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
           f"집게 {pc.MM_PER_RAD} mm/rad (계산값)")
     uvicorn.run(make_app(r), host="0.0.0.0", port=a.port, log_level="warning")
 

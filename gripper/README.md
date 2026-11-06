@@ -56,6 +56,8 @@ gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side
 - 크기: 잡기 한 번 ≈ 38 초 · 1100 프레임 · 약 16 MB (가짜 카메라 기준, 실제 영상은 JPEG 가 더 클 수 있음)
 - 확인: 가짜 로봇 · 가짜 카메라로 녹화 → npz · meta · zip 까지 (2026-11-06). 실기 녹화 · 학습기 읽기는 아직
 
+카메라만 확인 (로봇 꺼짐 · 충전 중): `source activate_tv.sh && python gripper/pick_web.py --cam-only` → D435i · 손목 카메라 화면만.
+
 로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
 
 ### 계산으로 정한 것 (실물 확인 전)
