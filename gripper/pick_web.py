@@ -46,6 +46,7 @@ PORT = 50030
 DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
 DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고
 TABLE_WIN = 31                       # 테이블 높이 잴 때 깊이 창 [픽셀]
+CAM_PITCH_OK, CAM_PITCH_MAX = 0.5, 1.0   # 카메라 숙임 (몸통 기준) 기준값과 차이 [deg]: OK / 넘으면 실행 거부 (거치대를 맞출 것)
 TABLE_SLOPE_MAX_DEG = 8.0            # 테이블 점들로 맞춘 평면이 이보다 기울면 거부 (몸통 뒤 기움 ≈ 4°, 2026-11-06 check_rsimu)
 CLICK_Z_TABLE = (-0.40, 0.30)        # 테이블 높이로 받아들이는 범위 [m, pelvis] (시연 테이블 110 cm ≈ +0.06~0.09)
 LOG_DIR = os.path.join(os.path.dirname(HERE), "logs")
@@ -191,6 +192,67 @@ class FakeCamera:
         return None if p is None else (p, 0.0)
 
 
+# ---------------- 카메라 숙임 (거치대) ----------------
+class CamPitchMonitor:
+    """utils/check_rsimu.py 와 같은 계산을 계속: 몸통 기준 카메라 숙임 = D435i 가속도 숙임 − (로봇 IMU pitch + 허리 pitch).
+    기준값(robot_env.CAMERA_PITCH = calib_local.yaml)과 비교만 (저장 안 함 — 거치대를 기준에 맞춤).
+    D435i IMU 를 sudo 없이 읽으려면 RealSense udev 규칙 (2026-11-06 설치). 못 읽으면 None (잡기는 막지 않음)."""
+    def __init__(self):
+        self.lk = threading.Lock()
+        self.cam_abs, self.pelvis_p, self.waist_p, self.t_cam, self.t_rob = None, None, None, 0.0, 0.0
+        self.err = None
+        self.waist_slot = int(robot_env.JOINTS["map"]["waist_pitch_joint"])
+        try:
+            from unitree_sdk2py.core.channel import ChannelSubscriber
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
+            self.sub = ChannelSubscriber("rt/lowstate", LowState_)
+            self.sub.Init(self._on_low, 10)
+        except Exception as e:  # noqa: BLE001
+            self.err = f"로봇 IMU 구독 실패 ({type(e).__name__})"
+        try:
+            import pyrealsense2 as rs
+            self.pipe = rs.pipeline()
+            cfg = rs.config()
+            cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 200)
+            self.pipe.start(cfg)
+            threading.Thread(target=self._loop, daemon=True).start()
+        except Exception as e:  # noqa: BLE001
+            self.err = f"D435i IMU 못 엶 ({type(e).__name__}: {e}) — udev 규칙 확인"
+
+    def _on_low(self, msg):
+        with self.lk:
+            self.pelvis_p = float(msg.imu_state.rpy[1])
+            self.waist_p = float(msg.motor_state[self.waist_slot].q)
+            self.t_rob = time.time()
+
+    def _loop(self):
+        import pyrealsense2 as rs
+        while True:
+            try:
+                fs = self.pipe.wait_for_frames(2000)
+                f = fs.first_or_default(rs.stream.accel)
+                if not f:
+                    continue
+                a = f.as_motion_frame().get_motion_data()
+                p = math.atan2(-a.z, math.hypot(a.x, a.y))
+                with self.lk:
+                    self.cam_abs = p if self.cam_abs is None else self.cam_abs + 0.02 * (p - self.cam_abs)   # 약 0.25 초 평균
+                    self.t_cam = time.time()
+            except Exception as e:  # noqa: BLE001
+                self.err = f"D435i IMU 읽기 오류 ({type(e).__name__})"
+                time.sleep(1.0)
+
+    def read(self):
+        """→ {"now", "ref", "diff"} [deg] 또는 None (값 없음 · 오래됨)."""
+        now = time.time()
+        with self.lk:
+            if self.cam_abs is None or self.pelvis_p is None or now - self.t_cam > 1.0 or now - self.t_rob > 1.0:
+                return None
+            c2t = math.degrees(self.cam_abs - (self.pelvis_p + self.waist_p))
+        ref = math.degrees(robot_env.CAMERA_PITCH)
+        return {"now": round(c2t, 2), "ref": round(ref, 2), "diff": round(c2t - ref, 2)}
+
+
 # ---------------- 그리퍼 ----------------
 class RealGripper:
     def __init__(self):
@@ -239,8 +301,9 @@ class FakeGripper:
 
 # ---------------- 실행기 ----------------
 class Runner:
-    def __init__(self, mdl, cam, grip, sim):
+    def __init__(self, mdl, cam, grip, sim, cam_pitch=None):
         self.mdl, self.cam, self.grip, self.sim = mdl, cam, grip, sim
+        self.cam_pitch = cam_pitch      # CamPitchMonitor (실기) 또는 None
         self.lk = threading.Lock()
         self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
         self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
@@ -368,6 +431,10 @@ class Runner:
         ok, msg, q_now = pc.arm_ready_check()
         if not ok:
             raise HTTPException(409, msg)
+        cp = self.cam_pitch.read() if self.cam_pitch else None
+        if cp is not None and abs(cp["diff"]) > CAM_PITCH_MAX:
+            raise HTTPException(409, f"카메라 숙임 {cp['now']}° — 기준 {cp['ref']}° 와 {cp['diff']:+.2f}° (허용 ±{CAM_PITCH_MAX}°). "
+                                     f"거치대를 {abs(cp['diff']):.1f}° {'덜 숙이게 (위로)' if cp['diff'] > 0 else '더 숙이게 (아래로)'} 맞춘 뒤 테이블 · 박스를 다시 찍으세요")
         if not self.sim and not glob.glob("/dev/ttyUSB*"):
             raise HTTPException(409, "485–USB 보드 포트(/dev/ttyUSB*) 없음 — 보드 USB 를 꽂고 start_gripper.sh 를 다시 실행")
         if np.max(np.abs(self.mdl.to_model(q_now) - plan["q_start"])) > math.radians(3.0):
@@ -729,7 +796,10 @@ def make_app(r: Runner):
             st = {"phase": r.phase, "stage": r.stage, "waiting": r.waiting, "log": r.log[-25:],
                   "plan_id": r.plan_id, "plan": r.summary(r.plan), "can_home": bool(r.ctx) and not r.busy(),
                   "busy": r.busy(), "table_z": r.table_z, "table_n": len(r.table_pts),
-                  "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*"))}
+                  "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*")),
+                  "cam_pitch": r.cam_pitch.read() if r.cam_pitch else None,
+                  "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
+                  "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX]}
         g = r.grip.snapshot()
         st["gripper"] = {}
         for s in pc.SIDES:
@@ -831,7 +901,10 @@ $('gclose').onclick=()=>{if(confirm('집게를 닫습니다 (≈10 mm). 손가�
 async function poll(){try{const s=await (await fetch('/api/state')).json();
  if(s.table_z!==null&&s.table_z!==undefined&&tableZ===null){tableZ=s.table_z;$('tblz').textContent=`테이블 점 ${s.table_n} · 평균 z ${s.table_z.toFixed(3)}`;hint();}
  const g=s.gripper||{}; const gs=k=>g[k]?`${g[k].q.toFixed(2)} rad ≈ ${g[k].mm} mm`:'상태 없음';
- $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`;
+ $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`+
+  (s.cam_pitch?`<br>카메라 숙임 (몸통 기준) ${s.cam_pitch.now.toFixed(2)}° · 기준 ${s.cam_pitch.ref.toFixed(2)}° · <span class="${Math.abs(s.cam_pitch.diff)<=s.cam_pitch_lim[0]?'ok':'bad'}">차이 ${s.cam_pitch.diff>0?'+':''}${s.cam_pitch.diff.toFixed(2)}°</span>`+
+    (Math.abs(s.cam_pitch.diff)>s.cam_pitch_lim[1]?` — 거치대를 ${Math.abs(s.cam_pitch.diff).toFixed(1)}° ${s.cam_pitch.diff>0?'위로':'아래로'} (실행 막힘)`:(Math.abs(s.cam_pitch.diff)>s.cam_pitch_lim[0]?' — 수집 전에 맞추기 권장':'')):
+   (s.cam_pitch_err?`<br><span class="bad">카메라 숙임: ${s.cam_pitch_err}</span>`:''));
  $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
  $('run').disabled=!(planOk&&s.plan_id===planId&&!s.busy); $('next').disabled=!s.waiting; $('home').disabled=!s.can_home;
  ['gopen','gclose','pready','pdef'].forEach(k=>$(k).disabled=s.busy);}catch(e){} setTimeout(poll,300);}
@@ -853,7 +926,10 @@ def main():
         robot_env.dds_init(a.iface)
         grip = RealGripper()
         cam = RealCamera()
-    r = Runner(mdl, cam, grip, a.sim)
+        camp = CamPitchMonitor()
+        if camp.err:
+            print(f"[pick] ⚠ 카메라 숙임 확인 못 함: {camp.err}")
+    r = Runner(mdl, cam, grip, a.sim, cam_pitch=None if a.sim else camp)
     print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
           f"집게 {pc.MM_PER_RAD} mm/rad (계산값)")
     uvicorn.run(make_app(r), host="0.0.0.0", port=a.port, log_level="warning")
