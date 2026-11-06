@@ -29,8 +29,9 @@ from pick_core import P
 import numpy as np
 import pinocchio as pin
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse
+import xml.etree.ElementTree as ET
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, HTMLResponse
 
 READ_ONLY = True            # 1단계 — 이 파일에는 arm_server / 그리퍼로 보내는 코드가 없음
 
@@ -100,6 +101,7 @@ class Teleop:
         self.rate = 0.0
         self.rtt_ms = None
         self.n_msg = 0
+        self.n_sock = 0             # 열린 WebSocket 수 (Quest 와 3D 보기 가짜 컨트롤러가 동시에 보내면 섞임)
         m = self.mdl.m
         self.sh_jid = {s: m.getJointId(f"{s}_shoulder_pitch_joint") for s in pc.SIDES}
         self.gap_max = pc.gap_mm(pc.Q_HI)
@@ -306,7 +308,7 @@ class Teleop:
     def state(self):
         with self.lock:
             mdl = self.mdl
-            out = {"read_only": READ_ONLY, "rate_hz": round(self.rate, 1), "rtt_ms": self.rtt_ms,
+            out = {"read_only": READ_ONLY, "n_sock": self.n_sock, "rate_hz": round(self.rate, 1), "rtt_ms": self.rtt_ms,
                    "age_s": None if not self.last_msg else round(time.monotonic() - self.last_msg, 2),
                    "heading_deg": round(math.degrees(self.heading), 1), "table_z": self.table_z,
                    "v_max": self.v_max, "scale": self.scale,
@@ -338,8 +340,67 @@ class Teleop:
             return out
 
 
+class View:
+    """3D 보기 (URDF 메시) — 가상 팔 관절을 전체 모델에 넣어 링크 자세를 계산. 팔 말고 다른 관절은 0."""
+
+    def __init__(self, t):
+        self.t = t
+        env = pc.robot_env
+        self.full = pin.buildModelFromUrdf(env.URDF_PATH)
+        self.fd = self.full.createData()
+        rm = t.mdl.m
+        self.qmap = [(self.full.joints[self.full.getJointId(rm.names[j])].idx_q, rm.joints[j].idx_q) for j in range(1, rm.njoints)]
+        self.mesh_dir = env.MESH_DIR
+        files = {f.lower(): f for f in os.listdir(self.mesh_dir)}
+        self.visuals, self.fids = [], {}
+        for link in ET.parse(env.URDF_PATH).getroot().findall("link"):
+            name = link.get("name")
+            for vis in link.findall("visual"):
+                mesh = vis.find("geometry/mesh")
+                if mesh is None:
+                    continue
+                fn = files.get(os.path.basename(mesh.get("filename", "")).lower())
+                if fn is None or not self.full.existFrame(name, pin.BODY):
+                    continue
+                o = vis.find("origin")
+                xyz = [float(v) for v in (o.get("xyz", "0 0 0") if o is not None else "0 0 0").split()]
+                rpy = [float(v) for v in (o.get("rpy", "0 0 0") if o is not None else "0 0 0").split()]
+                Tm = np.eye(4)
+                Tm[:3, :3], Tm[:3, 3] = pin.rpy.rpyToMatrix(*rpy), xyz
+                sc = [float(v) for v in mesh.get("scale", "1 1 1").split()]
+                col = vis.find("material/color")
+                rgba = [float(v) for v in col.get("rgba").split()] if col is not None and col.get("rgba") else [0.75, 0.75, 0.78, 1.0]
+                self.visuals.append({"link": name, "mesh": fn, "origin": Tm.T.flatten().round(6).tolist(), "scale": sc, "rgba": rgba})
+                self.fids[name] = self.full.getFrameId(name, pin.BODY)
+        self.mesh_ok = set(v["mesh"] for v in self.visuals)
+
+    def info(self):
+        e = pc.ENVELOPE
+        return {"visuals": self.visuals, "table_z": self.t.table_z,
+                "body": {"front_x": float(P["body_front_x"]), "half_y": float(P["body_half_y"]), "z_min": float(P["body_z_min"]),
+                         "clear": float(P["body_clear_m"])},
+                "envelope": {"min": e.min(axis=0).round(4).tolist(), "max": e.max(axis=0).round(4).tolist()}}
+
+    def poses(self):
+        t = self.t
+        with t.lock:
+            qf = np.zeros(self.full.nq)
+            for fi, ri in self.qmap:
+                qf[fi] = t.q[ri]
+            pin.framesForwardKinematics(self.full, self.fd, qf)
+            links = {n: self.fd.oMf[f].homogeneous.T.flatten().round(5).tolist() for n, f in self.fids.items()}
+            hands = {}
+            for s in SIDES:
+                h = t.hands[s]
+                T = t.mdl.tcp(t.q, s)
+                hands[s] = {"tcp": T.homogeneous.T.flatten().round(5).tolist(), "level": h.st["level"],
+                            "target": None if h.tgt is None else r3(h.tgt[0]), "state": h.st["state"], "reason": h.st.get("reason", "")}
+            return {"links": links, "hands": hands}
+
+
 def make_app(t):
     app = FastAPI()
+    view = View(t)
     here = HERE
 
     def page(name):
@@ -354,6 +415,31 @@ def make_app(t):
     def vr():
         return page("vr.html")
 
+    @app.get("/view")
+    def view_page():
+        return page("vr_view.html")
+
+    @app.get("/api/view/info")
+    def api_view_info():
+        return view.info()
+
+    @app.get("/api/view/poses")
+    def api_view_poses():
+        return view.poses()
+
+    @app.get("/api/mesh/{name}")
+    def api_mesh(name: str):
+        if name not in view.mesh_ok:
+            raise HTTPException(404, "mesh 없음")
+        return FileResponse(os.path.join(view.mesh_dir, name), media_type="application/octet-stream")
+
+    @app.get("/vendor/three.min.js")
+    def three_js():
+        f = os.path.join(pc.robot_env.VENDOR_DIR, "three.min.js")
+        if not os.path.exists(f):
+            raise HTTPException(404, f"{f} 없음 (common/dashboard.py 와 같은 파일)")
+        return FileResponse(f, media_type="application/javascript")
+
     @app.get("/api/state")
     def api_state():
         return t.state()
@@ -366,6 +452,7 @@ def make_app(t):
     @app.websocket("/ws")
     async def ws(sock: WebSocket):
         await sock.accept()
+        t.n_sock += 1
         try:
             while True:
                 msg = await sock.receive_json()
@@ -373,6 +460,7 @@ def make_app(t):
         except WebSocketDisconnect:
             pass
         finally:
+            t.n_sock -= 1
             with t.lock:
                 for h in t.hands.values():
                     h.engaged, h.tgt = False, None

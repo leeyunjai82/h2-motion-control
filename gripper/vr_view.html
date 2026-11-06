@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H2 VR 3D 보기</title>
+<style>
+  body { font-family: sans-serif; margin: 0; background: #f4f4f4; color: #222; }
+  #wrap { display: flex; flex-wrap: wrap; }
+  #view { flex: 1 1 640px; min-width: 320px; height: 70vh; position: relative; }
+  #view canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; left: 8px; top: 8px; background: #fffd; padding: 6px 10px; border-radius: 6px; font-size: 14px; line-height: 1.5; }
+  #side { flex: 0 1 380px; padding: 10px 14px; }
+  .ok { color: #1a8a2a; } .warn { color: #b77800; } .stop { color: #c62828; } .idle { color: #777; }
+  fieldset { border: 1px solid #ccc; border-radius: 6px; margin: 8px 0; }
+  label.s { display: grid; grid-template-columns: 70px 1fr 56px; align-items: center; gap: 6px; font-size: 13px; }
+  input[type=range] { width: 100%; }
+  button { font-size: 14px; padding: 4px 10px; margin: 2px; }
+  .note { font-size: 12px; color: #666; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="view"><div id="hud">불러오는 중…</div></div>
+  <div id="side">
+    <b>가짜 컨트롤러</b> <span class="note">(Quest 없이 시험 — Quest 와 동시에 켜지 말 것)</span><br>
+    <label><input type="checkbox" id="simOn"> 켜기 (50 Hz 로 보냄)</label>
+    <div class="note">슬라이더 = 그립을 누른 순간부터 손을 움직인 양 (로봇 기준: x 앞 · y 왼쪽 · z 위, RPY °).
+      그립을 끈 채로 슬라이더를 옮기고 그립을 켜면 그 자리가 새 기준.</div>
+    <div id="hands"></div>
+    <button onclick="fetch('/api/reset',{method:'POST'})">가상 팔 준비 자세로 리셋</button>
+    <p class="note">마우스: 끌기 = 돌리기 · 휠 = 확대. 회색 상자 = 몸통 (앞면 + 최소 거리 선) · 갈색 = 테이블 ·
+      손 상자 = 그리퍼 겉 범위 (색 = 상태) · 원 = 목표 TCP</p>
+  </div>
+</div>
+<script src="/vendor/three.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const NAME = { right: "오른손", left: "왼손" };
+const LCOL = { ok: 0x2e9e44, warn: 0xe0a800, stop: 0xd32f2f, idle: 0x888888 };
+
+// ---------- 장면 ----------
+const view = $("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf7f7f7);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 20);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(2, 3, 2); scene.add(dl);
+const root = new THREE.Group(); root.rotation.x = -Math.PI / 2; scene.add(root);   // 로봇 z 위 → three y 위
+root.add(new THREE.AxesHelper(0.2));
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+
+// 궤도 카메라 (로봇 좌표 기준)
+const orbit = { az: -0.6, el: 0.45, r: 2.0, tgt: [0.3, 0, 0.1] };
+function placeCam() {
+  const { az, el, r, tgt } = orbit;
+  const x = tgt[0] + r * Math.cos(el) * Math.cos(az), y = tgt[1] + r * Math.cos(el) * Math.sin(az), z = tgt[2] + r * Math.sin(el);
+  camera.position.set(x, z, -y); camera.lookAt(tgt[0], tgt[2], -tgt[1]);
+}
+let drag = null;
+renderer.domElement.addEventListener("pointerdown", e => { drag = [e.clientX, e.clientY]; });
+window.addEventListener("pointerup", () => { drag = null; });
+window.addEventListener("pointermove", e => {
+  if (!drag) return;
+  orbit.az -= (e.clientX - drag[0]) * 0.01;
+  orbit.el = Math.max(-1.4, Math.min(1.4, orbit.el + (e.clientY - drag[1]) * 0.01));
+  drag = [e.clientX, e.clientY];
+});
+renderer.domElement.addEventListener("wheel", e => { e.preventDefault(); orbit.r = Math.max(0.4, Math.min(6, orbit.r * (e.deltaY > 0 ? 1.1 : 0.9))); }, { passive: false });
+
+function parseSTL(buf) {
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  const geo = new THREE.BufferGeometry();
+  if (84 + n * 50 === buf.byteLength) {
+    const pos = new Float32Array(n * 9);
+    for (let i = 0; i < n; i++) {
+      const o = 84 + i * 50 + 12;
+      for (let k = 0; k < 9; k++) pos[i * 9 + k] = dv.getFloat32(o + k * 4, true);
+    }
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  } else {   // ASCII
+    const txt = new TextDecoder().decode(buf), v = [];
+    const re = /vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g; let m;
+    while ((m = re.exec(txt))) v.push(+m[1], +m[2], +m[3]);
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(v), 3));
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const linkGroups = {}, hands = {};
+let info = null;
+async function load() {
+  info = await (await fetch("/api/view/info")).json();
+  const geos = {};
+  let done = 0;
+  for (const v of info.visuals) {
+    if (!geos[v.mesh]) geos[v.mesh] = parseSTL(await (await fetch("/api/mesh/" + encodeURIComponent(v.mesh))).arrayBuffer());
+    let g = linkGroups[v.link];
+    if (!g) { g = new THREE.Group(); g.matrixAutoUpdate = false; root.add(g); linkGroups[v.link] = g; }
+    const col = new THREE.Color(v.rgba[0], v.rgba[1], v.rgba[2]);
+    const m = new THREE.Mesh(geos[v.mesh], new THREE.MeshLambertMaterial({ color: col }));
+    m.matrixAutoUpdate = false;
+    const o = new THREE.Matrix4().fromArray(v.origin);
+    o.multiply(new THREE.Matrix4().makeScale(v.scale[0], v.scale[1], v.scale[2]));
+    m.matrix.copy(o);
+    g.add(m);
+    $("hud").textContent = `메시 ${++done} / ${info.visuals.length}`;
+  }
+  // 몸통 (앞면까지) + 최소 거리 선
+  const b = info.body;
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(b.front_x + 0.15, 2 * b.half_y, 0.7 - b.z_min),
+    new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.18, depthWrite: false }));
+  torso.position.set((b.front_x - 0.15) / 2, 0, (0.7 + b.z_min) / 2); root.add(torso);
+  const cl = new THREE.Mesh(new THREE.PlaneGeometry(0.7 - b.z_min, 2 * b.half_y),
+    new THREE.MeshBasicMaterial({ color: 0xd32f2f, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+  cl.rotation.y = Math.PI / 2; cl.position.set(b.front_x + b.clear, 0, (0.7 + b.z_min) / 2); root.add(cl);
+  // 테이블
+  const tb = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.6),
+    new THREE.MeshBasicMaterial({ color: 0x8d6e63, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+  tb.position.set(0.15 + 0.425, 0, info.table_z); root.add(tb);
+  // 손: 그리퍼 겉 범위 상자 (TCP 프레임) + 목표 원
+  const e = info.envelope;
+  for (const s of ["right", "left"]) {
+    const g = new THREE.Group(); g.matrixAutoUpdate = false; root.add(g);
+    const box = new THREE.Mesh(new THREE.BoxGeometry(e.max[0] - e.min[0], e.max[1] - e.min[1], e.max[2] - e.min[2]),
+      new THREE.MeshLambertMaterial({ color: LCOL.idle, transparent: true, opacity: 0.55 }));
+    box.position.set((e.max[0] + e.min[0]) / 2, (e.max[1] + e.min[1]) / 2, (e.max[2] + e.min[2]) / 2);
+    g.add(box); g.add(new THREE.AxesHelper(0.06));
+    const tgt = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0x2e7d32 }));
+    tgt.visible = false; root.add(tgt);
+    hands[s] = { g, box, tgt };
+  }
+  resize();
+  poll();
+}
+
+async function poll() {
+  try {
+    const p = await (await fetch("/api/view/poses")).json();
+    for (const [n, m] of Object.entries(p.links)) if (linkGroups[n]) linkGroups[n].matrix.fromArray(m);
+    let hud = "";
+    for (const s of ["right", "left"]) {
+      const h = p.hands[s], o = hands[s];
+      o.g.matrix.fromArray(h.tcp);
+      o.box.material.color.setHex(LCOL[h.level] || LCOL.idle);
+      o.tgt.visible = !!h.target;
+      if (h.target) { o.tgt.position.set(...h.target); o.tgt.material.color.setHex(h.level === "stop" ? 0xd32f2f : 0x2e7d32); }
+      hud += `<div><b>${NAME[s]}</b> <span class="${h.level}">${h.state}</span> <span class="note">${h.reason || ""}</span></div>`;
+    }
+    $("hud").innerHTML = hud;
+  } catch (e) { $("hud").innerHTML = '<span class="stop">서버 응답 없음</span>'; }
+  setTimeout(poll, 50);
+}
+
+function loop() { requestAnimationFrame(loop); placeCam(); renderer.render(scene, camera); }
+loop();
+load().catch(e => { $("hud").textContent = "불러오기 실패: " + e; });
+
+// ---------- 가짜 컨트롤러 → /ws (Quest 페이지와 같은 메시지) ----------
+const SL = [["dx", -0.4, 0.4, 0.005, "m"], ["dy", -0.4, 0.4, 0.005, "m"], ["dz", -0.4, 0.4, 0.005, "m"],
+            ["roll", -90, 90, 1, "°"], ["pitch", -90, 90, 1, "°"], ["yaw", -90, 90, 1, "°"], ["trig", 0, 1, 0.05, ""]];
+const sim = {};
+for (const s of ["right", "left"]) {
+  sim[s] = { grip: false };
+  let h = `<fieldset><legend>${NAME[s]}</legend><label><input type="checkbox" id="${s}_grip"> 그립 (따라가기)</label>`;
+  for (const [k, lo, hi, st, u] of SL) {
+    sim[s][k] = 0;
+    h += `<label class="s">${k}<input type="range" id="${s}_${k}" min="${lo}" max="${hi}" step="${st}" value="0"><span id="${s}_${k}_v">0</span></label>`;
+  }
+  h += `<button id="${s}_zero">슬라이더 0</button></fieldset>`;
+  $("hands").insertAdjacentHTML("beforeend", h);
+}
+for (const s of ["right", "left"]) {
+  $(`${s}_grip`).onchange = e => { sim[s].grip = e.target.checked; };
+  for (const [k] of SL) {
+    $(`${s}_${k}`).oninput = e => { sim[s][k] = +e.target.value; $(`${s}_${k}_v`).textContent = e.target.value; };
+  }
+  $(`${s}_zero`).onclick = () => { for (const [k] of SL) { sim[s][k] = 0; $(`${s}_${k}`).value = 0; $(`${s}_${k}_v`).textContent = "0"; } };
+}
+
+// 로봇 RPY → 행렬 (Rz·Ry·Rx), WebXR 로: R_xr = Mᵀ R M, p_xr = 기준 + Mᵀ d
+const M = [[0, 0, -1], [-1, 0, 0], [0, 1, 0]];
+const T3 = A => A[0].map((_, i) => A.map(r => r[i]));
+const mm = (A, B) => A.map(r => B[0].map((_, j) => r.reduce((s, v, k) => s + v * B[k][j], 0)));
+function rpyMat(r, p, y) {
+  const [cr, sr, cp, sp, cy, sy] = [Math.cos(r), Math.sin(r), Math.cos(p), Math.sin(p), Math.cos(y), Math.sin(y)];
+  return [[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+          [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+          [-sp, cp * sr, cp * cr]];
+}
+function quat(R) {   // [x, y, z, w]
+  const tr = R[0][0] + R[1][1] + R[2][2];
+  if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; return [(R[2][1] - R[1][2]) / s, (R[0][2] - R[2][0]) / s, (R[1][0] - R[0][1]) / s, 0.25 * s]; }
+  if (R[0][0] > R[1][1] && R[0][0] > R[2][2]) { const s = Math.sqrt(1 + R[0][0] - R[1][1] - R[2][2]) * 2; return [0.25 * s, (R[0][1] + R[1][0]) / s, (R[0][2] + R[2][0]) / s, (R[2][1] - R[1][2]) / s]; }
+  if (R[1][1] > R[2][2]) { const s = Math.sqrt(1 + R[1][1] - R[0][0] - R[2][2]) * 2; return [(R[0][1] + R[1][0]) / s, 0.25 * s, (R[1][2] + R[2][1]) / s, (R[0][2] - R[2][0]) / s]; }
+  const s = Math.sqrt(1 + R[2][2] - R[0][0] - R[1][1]) * 2; return [(R[0][2] + R[2][0]) / s, (R[1][2] + R[2][1]) / s, 0.25 * s, (R[1][0] - R[0][1]) / s];
+}
+const BASE = { right: [0.2, 1.0, -0.3], left: [-0.2, 1.0, -0.3] };
+const D2R = Math.PI / 180;
+let ws = null;
+function ensureWs() {
+  if (ws && ws.readyState <= 1) return;
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
+  ws.onmessage = () => {};
+}
+setInterval(() => {
+  if (!$("simOn").checked) { if (ws) { ws.close(); ws = null; } return; }
+  ensureWs();
+  if (ws.readyState !== 1) return;
+  const msg = { t: performance.now(), head: { p: [0, 1.6, 0], q: [0, 0, 0, 1] }, hands: {}, recenter: false };
+  for (const s of ["right", "left"]) {
+    const v = sim[s];
+    const Rr = rpyMat(v.roll * D2R, v.pitch * D2R, v.yaw * D2R);
+    const Rx = mm(mm(T3(M), Rr), M);
+    const d = [-v.dy, v.dz, -v.dx];   // Mᵀ · (dx, dy, dz)
+    msg.hands[s] = { p: BASE[s].map((b, i) => b + d[i]), q: quat(Rx), grip: v.grip ? 1 : 0, trig: v.trig };
+  }
+  ws.send(JSON.stringify(msg));
+}, 20);
+</script>
+</body>
+</html>

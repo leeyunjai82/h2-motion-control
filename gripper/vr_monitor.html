@@ -23,7 +23,7 @@
 </style>
 </head>
 <body>
-<h2>H2 VR 모니터 <span class="ro">1단계 읽기 전용 — 로봇에 명령 안 보냄</span></h2>
+<h2>H2 VR 모니터 <span class="ro">1단계 읽기 전용 — 로봇에 명령 안 보냄</span> <a href="/view" target="_blank" style="font-size:16px">3D 보기 · 가짜 컨트롤러 ↗</a></h2>
 <div id="top" class="card" style="margin-bottom:12px">연결 중…</div>
 <div class="row">
   <div class="card hand" id="h_right"></div>
@@ -103,6 +103,7 @@ async function tick() {
     $("top").innerHTML = `Quest ${st.age_s == null ? '<span class="stop">아직 연결 안 됨</span>'
         : (st.age_s < 0.5 ? '<span class="ok">수신 중</span>' : `<span class="stop">${st.age_s} 초 전 마지막</span>`)}`
       + ` · ${st.rate_hz} Hz · 왕복 ${st.rtt_ms == null ? "-" : st.rtt_ms.toFixed(0) + " ms"}`
+      + (st.n_sock > 1 ? ` · <span class="stop">보내는 곳 ${st.n_sock} 개 — 섞임 (Quest 와 가짜 컨트롤러 중 하나만)</span>` : "")
       + ` · 방향 ${st.heading_deg}° · 배율 ${st.scale} · 목표 속도 상한 ${st.v_max} m/s · 테이블 z ${st.table_z}`;
     for (const s of ["right", "left"]) $("h_" + s).innerHTML = handHtml(s, st.hands[s]);
     draw(st);
