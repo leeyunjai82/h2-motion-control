@@ -811,6 +811,23 @@ def make_app(r: Runner):
                 time.sleep(1 / 15)
         return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
 
+    @app.get("/video_wrist/{name}")
+    def video_wrist(name: str):
+        if not r.wrist or name not in r.wrist.names():
+            raise HTTPException(404, f"손목 카메라 {name} 없음")
+
+        def gen():
+            while True:
+                img, _ = r.wrist.frame(name)
+                if img is not None:
+                    img = cv2.resize(img, (320, int(320 * img.shape[0] / img.shape[1])))
+                    cv2.putText(img, name, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if ok:
+                        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+                time.sleep(1 / 10)
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
     @app.post("/api/plan")
     def api_plan(q: PlanReq):
         if q.side not in pc.SIDES or len(q.rpy_deg) != 3 or not (10 <= q.width_mm <= 75) or not (15 <= q.height_mm <= 150):
@@ -938,6 +955,7 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 .bad{color:#f88}.ok{color:#8f8}.sim{background:#553;padding:4px 8px}
 </style></head><body>
 <div class="wrap"><div><img id="img" src="/video" width="__W__" height="__H__"><div id="simnote"></div>
+<div id="wristimgs" style="display:flex;gap:6px;margin-top:6px"></div>
 <div style="font-size:12px;margin-top:4px">노란 + 클릭 · 하늘 ○ 계획한 잡는 자리(진한)/접근 위치 · 초록 ● 왼 집게 · 분홍 ● 오른 집게 (FK 투영)</div></div>
 <div class="panel">
 <button id="stop">■ 정지</button>
@@ -1030,7 +1048,11 @@ async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
  const werr=Object.entries(j.wrist_err||{}).map(([k,v])=>`${k}: ${v}`).join(', ');
  $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
   j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
-let recInit=false;
+let recInit=false, wristInit=false;
+async function wristShow(){try{const j=await (await fetch('/api/datasets')).json(); const names=Object.keys(j.cameras_now).filter(k=>k!=='body');
+ $('wristimgs').innerHTML=names.map(n=>`<img src="/video_wrist/${n}" style="width:320px;border:1px solid #444" title="${n}">`).join('')+
+  Object.entries(j.wrist_err||{}).map(([k,v])=>`<span class="bad">${k}: ${v}</span>`).join(' ');}catch(e){}}
+wristShow();
 setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const r=s.rec; if(!r)return;
  if(!recInit){$('recon').checked=r.on;$('recname').value=r.name;recInit=true;dsList();}
  const l=r.last; $('recstat').innerHTML=(r.active?`<span class="bad">● 녹화 중 ${r.n} 프레임</span>`:(r.on?'켜짐 — 다음 실행을 녹화':'꺼짐'))+

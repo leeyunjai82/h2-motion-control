@@ -73,6 +73,8 @@ pick:
 # 손목 카메라 (녹화용, gripper/recorder.py) — USB UVC, 640×480 MJPEG 30 fps 요청. 이름: 장치 경로 (꽂는 순서가 바뀌어도 같은
 #   /dev/v4l/by-id/… 권장) 또는 번호. 비워 두면(null) 안 씀. 한 데이터셋 안에서는 카메라 구성이 같아야 함 (처음 에피소드가 정함)
 #   확인: v4l2-ctl --list-devices · ls -l /dev/v4l/by-id/
+#   이 PC (2026-11-06 v4l2): USB_Camera (일련번호 없음 → by-path, USB 포트 1 에 꽂을 것) · ZVCAI USB Camera zvcai231100001 (by-id).
+#   왼 · 오른 배정은 아직 확인 전 — 웹 손목 카메라 화면에서 렌즈를 가려 보고 바꿀 것
 wrist_cams:
-  wrist_left: null
-  wrist_right: null
+  wrist_left: /dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0
+  wrist_right: /dev/v4l/by-id/usb-ZVCAI_USB_Camera_zvcai231100001-video-index0
