@@ -31,10 +31,14 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
 
 
 # ---------------- 손목 카메라 (USB UVC, OpenCV) ----------------
+SIZES = ((640, 480), (800, 600), (640, 360), (320, 240))   # 손목 카메라 시도 순서 — 장치가 그 크기 · 25 fps 이상으로 연 첫 값
+
+
 class WristCams:
     """gripper.yaml wrist_cams {이름: 장치 경로 또는 번호} — 각 카메라를 스레드로 계속 읽어 최신 프레임만 둠.
-    못 연 카메라는 빠짐 (err 에 이유). 640×480 MJPEG 30 fps 요청 (실제 값은 장치가 정함 — info 에 기록)."""
-    def __init__(self, cfg, w=640, h=480, fps=30):
+    못 연 카메라는 빠짐 (err 에 이유). MJPEG 로 SIZES 를 차례로 시도 — 장치가 지원 안 하는 크기를 받으면 가장 가까운
+    크기(이 PC 의 USB_Camera 는 3264×2448 15 fps 일 수 있음)로 열려서, 실제로 열린 크기 · fps 를 보고 고름."""
+    def __init__(self, cfg, fps=30):
         self.lk = threading.Lock()
         self.frames, self.caps, self.err, self.size = {}, {}, {}, {}
         for name, dev in (cfg or {}).items():
@@ -44,12 +48,23 @@ class WristCams:
             if not cap.isOpened():
                 self.err[name] = f"못 엶: {dev}"
                 continue
-            cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
-            cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
-            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
-            cap.set(cv2.CAP_PROP_FPS, fps)
+            chosen = None
+            for w, h in SIZES:
+                cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)
+                cap.set(cv2.CAP_PROP_FPS, fps)
+                gw, gh, gf = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)), cap.get(cv2.CAP_PROP_FPS)
+                if (gw, gh) == (w, h) and gf >= 25:
+                    chosen = (gw, gh, gf)
+                    break
+            if chosen is None:
+                self.err[name] = f"{dev}: {SIZES} 중 25 fps 로 열리는 크기 없음 (지금 {gw}×{gh} {gf:.0f} fps)"
+                cap.release()
+                continue
+            print(f"[wrist] {name}: {chosen[0]}×{chosen[1]} {chosen[2]:.0f} fps MJPG ({dev})")
             self.caps[name] = cap
-            self.size[name] = (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)))
+            self.size[name] = (chosen[0], chosen[1])
             threading.Thread(target=self._loop, args=(name, cap), daemon=True).start()
 
     def _loop(self, name, cap):
