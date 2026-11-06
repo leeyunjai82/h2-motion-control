@@ -34,11 +34,13 @@ sys.path.insert(0, HERE)
 import pick_core as pc
 from pick_core import robot_env, P
 import recorder as rec
+import policy as pol
 
 import cv2
 import numpy as np
 import uvicorn
-from fastapi import FastAPI, HTTPException
+import zipfile
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
@@ -318,6 +320,7 @@ class Runner:
         self.rec_on = False             # 실행할 때 녹화
         self.rec_name = "pick_" + datetime.date.today().strftime("%Y%m%d")
         self.stage_idx = 0              # 녹화 stage (실행 순서 번호, 0 = 시작 전)
+        self.pol = pol.PolicyRunner(self, pc)   # ACT 정책 실행
         self.lk = threading.Lock()
         self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
         self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
@@ -358,7 +361,7 @@ class Runner:
             pass
 
     def busy(self):
-        return self.th is not None and self.th.is_alive()
+        return (self.th is not None and self.th.is_alive()) or (hasattr(self, "pol") and self.pol.running())
 
     # ----- 테이블 높이 -----
     def measure_table(self, u, v, reset=False):
@@ -855,6 +858,7 @@ def make_app(r: Runner):
     @app.post("/api/stop")
     def api_stop():
         r.stop_evt.set()
+        r.pol.stop()
         r.say("정지 요청")
         return {"ok": True}
 
@@ -880,6 +884,53 @@ def make_app(r: Runner):
             raise HTTPException(409, err)
         r.rec_on, r.rec_name = bool(q.enabled), q.name
         r.say(f"녹화 {'켬' if q.enabled else '끔'} — 데이터셋 {q.name} (카메라 {list(r.rec_cameras())})")
+        return {"ok": True}
+
+    @app.get("/api/models")
+    def api_models():
+        return {"models": pol.models(), "loaded": r.pol.info()}
+
+    @app.post("/api/model/upload")
+    async def api_model_upload(request: Request, filename: str = "model.zip"):
+        if r.pol.running():
+            raise HTTPException(409, "정책 실행 중")
+        os.makedirs(pol.MODEL_DIR, exist_ok=True)
+        tmp = os.path.join(pol.MODEL_DIR, ".upload.zip")
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+        try:
+            name = pol.install_zip(tmp)
+        except (ValueError, KeyError, zipfile.BadZipFile) as e:
+            raise HTTPException(400, f"모델 zip 이상: {e}")
+        finally:
+            os.remove(tmp)
+        r.say(f"모델 올림: {name} ({filename})")
+        return {"name": name}
+
+    @app.post("/api/model/load")
+    def api_model_load(body: dict):
+        name, dev = str(body.get("name", "")), str(body.get("device", "CPU"))
+        if not pol.NAME_RE.match(name) or dev not in ("CPU", "GPU", "NPU", "AUTO"):
+            raise HTTPException(400, "모델 이름 · 장치 (CPU/GPU/NPU/AUTO)")
+        try:
+            info = r.pol.load(name, dev)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(409, f"불러오기 실패: {type(e).__name__}: {e}")
+        r.say(f"모델 불러옴 {name} — {dev}, 컴파일 {info['compile_s']} 초, 추론 {info['infer_ms']} ms")
+        return info
+
+    @app.post("/api/policy/start")
+    def api_policy_start():
+        try:
+            r.pol.start()
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        return {"ok": True}
+
+    @app.post("/api/policy/stop")
+    def api_policy_stop():
+        r.pol.stop()
         return {"ok": True}
 
     @app.post("/api/rec/decide")
@@ -939,6 +990,8 @@ def make_app(r: Runner):
                   "cam_pitch": r.cam_pitch.read() if r.cam_pitch else None,
                   "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
                   "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX],
+                  "policy": {"loaded": r.pol.info(), **r.pol.state,
+                             "check": r.pol.check() if r.pol.policy is not None and not r.pol.running() else []},
                   "rec": {"on": r.rec_on, "name": r.rec_name, "active": r.rec.active, "n": r.rec.n, "last": r.rec.last,
                           "pending": None if r.rec.pending is None else {k: v for k, v in r.rec.pending.items()}}}
         g = r.grip.snapshot()
@@ -1000,6 +1053,16 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
  <button id="recdrop" style="background:#600;border-color:#c44;font-size:16px">버리기</button>
 </div>
 <span id="recstat" style="font-size:12px"></span><div id="dslist" style="font-size:12px"></div>
+</fieldset>
+<fieldset><legend>정책 실행 (ACT)</legend>
+<input type="file" id="mfile" accept=".zip" style="font-size:12px"> <button id="mup">모델 zip 올리기</button><br>
+모델 <select id="msel" style="background:#222;color:#eee;max-width:240px"></select>
+장치 <select id="mdev" style="background:#222;color:#eee"><option>CPU</option><option>GPU</option><option>NPU</option><option>AUTO</option></select>
+<button id="mload">불러오기</button>
+<div id="minfo" style="font-size:12px"></div>
+<div id="pcheck" style="font-size:12px"></div>
+<button id="pstart" style="background:#064;border-color:#3c8;font-size:16px" disabled>▶ 정책 시작</button>
+<div id="pstat" style="font-size:15px;margin-top:4px"></div>
 </fieldset>
 <div id="status"></div><pre id="plan"></pre><pre id="log"></pre></div></div>
 <script>
@@ -1071,6 +1134,24 @@ async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
  $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
   j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
 let recInit=false, wristInit=false;
+async function modelList(){try{const j=await (await fetch('/api/models')).json();
+ $('msel').innerHTML=j.models.map(m=>`<option value="${m.name}">${m.name} (${m.side}, ${m.episodes} 에피소드, 검증 ${m.val_err_deg==null?'-':m.val_err_deg.toFixed(1)+'°'})</option>`).join('');
+ if(j.loaded) $('msel').value=j.loaded.name;}catch(e){}}
+modelList();
+$('mup').onclick=async()=>{const f=$('mfile').files[0]; if(!f){alert('zip 파일을 고르세요');return;}
+ try{const r=await fetch('/api/model/upload?filename='+encodeURIComponent(f.name),{method:'POST',body:f}); const j=await r.json();
+  if(!r.ok) throw new Error(j.detail||r.status); await modelList(); $('msel').value=j.name;}catch(e){alert(e.message);}};
+$('mload').onclick=async()=>{ $('minfo').textContent='불러오는 중 (컴파일)…';
+ try{const i=await post('/api/model/load',{name:$('msel').value,device:$('mdev').value});
+  $('minfo').textContent=`${i.name} · ${i.side} · ${i.device} · 카메라 ${i.cameras.join(', ')} · 추론 ${i.infer_ms} ms (30 Hz 는 33 ms 안)`;}catch(e){$('minfo').textContent='';alert(e.message);}};
+$('pstart').onclick=async()=>{if(!confirm('정책이 팔과 그리퍼를 움직입니다. 비상정지를 손에 쥐었습니까?\n멈춤: 빨간 [정지] 또는 Esc'))return;
+ try{await post('/api/policy/start');}catch(e){alert(e.message);}};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')post('/api/stop').catch(()=>{});});
+setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const p=s.policy; if(!p)return;
+ if(p.loaded&&!$('minfo').textContent) $('minfo').textContent=`${p.loaded.name} · ${p.loaded.side} · ${p.loaded.device} · 추론 ${p.loaded.infer_ms} ms`;
+ $('pcheck').innerHTML=p.loaded&&!p.running?(p.check.length?p.check.map(x=>`<span class="bad">✗ ${x}</span>`).join('<br>'):'<span class="ok">시작 조건 OK</span>'):'';
+ $('pstart').disabled=!(p.loaded&&!p.running&&p.check.length===0);
+ $('pstat').innerHTML=p.running?`<span style="color:#f55">● 정책 실행 중 — ${p.phase} · ${p.step} 스텝 · 추론 ${p.infer_ms??'-'} ms</span>`:(p.why_end?`마지막: ${p.why_end}`:'');}catch(e){}},500);
 async function recDecide(keep){try{const r=await post('/api/rec/decide',{keep});dsList();}catch(e){alert(e.message);}}
 $('reckeep').onclick=()=>recDecide(true);
 $('recdrop').onclick=()=>{if(confirm('이 에피소드를 버립니다.'))recDecide(false);};

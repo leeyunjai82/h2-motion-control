@@ -110,3 +110,4 @@ third_party/
 physical_ai/data/
 trainer/data/
 gripper/data/
+gripper/models/
