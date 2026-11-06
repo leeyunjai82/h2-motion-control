@@ -188,9 +188,13 @@ def dds_init(interface=None):
           다시 만들 때 'create domain error' 로 실패하기 때문 (arm_server → robot_arm 이 두 번 부름).
     """
     global _dds_inited
+    from unitree_sdk2py.core import channel as _ch
     from unitree_sdk2py.core.channel import ChannelFactoryInitialize
     if SIM and _dds_inited is not None:
         return
+    # SDK 는 인터페이스를 주면 CycloneDDS 기록을 /tmp/cdds.LOG 한 파일에 씀 → 일반 사용자 프로그램이 만든 파일을
+    # sudo(root) 프로그램이 못 엶 (Ubuntu fs.protected_regular) → 'create domain error'. 사용자마다 다른 파일로 (2026-11-06)
+    _ch.ChannelConfigHasInterface = _ch.ChannelConfigHasInterface.replace("/tmp/cdds.LOG", f"/tmp/cdds_{os.getuid()}.LOG")
     if interface:
         ChannelFactoryInitialize(DDS_DOMAIN, interface)
     else:
