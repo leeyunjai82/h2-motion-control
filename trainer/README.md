@@ -1,6 +1,6 @@
 # trainer — 학습 PC (RTX 5090) ACT 학습 웹
 
-로봇 PC 웹(`physical_ai`, :50030)에서 받은 **데이터셋 zip** 을 올리면 ACT 를 학습하고, OpenVINO IR 로 바꿔
+미니 PC 잡기 웹(`gripper/pick_web.py`, :50030)에서 받은 **데이터셋 zip** 을 올리면 ACT 를 학습하고, OpenVINO IR 로 바꿔
 **model zip** 을 내려 줍니다. 그 zip 을 로봇 웹 Models 에 올리면 끝.
 
 ```

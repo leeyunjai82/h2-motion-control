@@ -35,7 +35,7 @@ robot_server   :50000   잡기 시퀀스 + 제어 웹 UI (CPU·GPU·NPU 사용�
 dashboard      :50003   3D URDF 뷰어 / 관절 상태 (rt/lowstate 읽기 전용)
 simulator      :8000    모션 에디터 (Joint + IK), arm_server 경유
 launcher       :80      FSM 버튼 + start_robot.sh 실행 웹
-policy_server  :50030   피지컬 AI — 에피소드 수집 · 데이터셋 zip · 모델 업로드 · ACT 정책 추론 (따로 실행, physical_ai/)
+pick_web       :50030   그리퍼 잡기 · 데이터 수집 · ACT 정책 실행 (start_gripper.sh, gripper/)
 trainer        :50100   학습 PC(RTX 5090) — 데이터셋 업로드 → ACT 학습 → OpenVINO model zip (trainer/)
 ```
 
@@ -106,21 +106,18 @@ Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위�
 - `sim/sim_server.py` 가 detect_box(50010) 자리를 대신 → **robot_server / arm_server 는 실기와 같은 코드** 로 잡기 시퀀스를 돕니다.
 - **안전**: `ROBOT_SIM=1` → DDS 도메인 1. 실기(도메인 0)와 섞이지 않고, 실기 스택이 떠 있으면(포트 사용 중) 시작을 거부합니다.
 
-## 피지컬 AI — ACT 모방학습 (`physical_ai/`, `trainer/`)
+## 그리퍼 잡기 · ACT (`gripper/`, `trainer/`)
 
-지금 잡기 시퀀스를 시연자로 써서 에피소드를 모으고(로봇 PC :50030), 학습 PC(RTX 5090, :50100)에서 ACT 를 학습해
-OpenVINO 로 로봇에서 돌립니다. 기존 잡기·제어 기능은 그대로입니다.
+Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기) 를 시연자로 써서 에피소드를 모으고 (미니 PC :50030),
+학습 PC (RTX 5090, :50100) 에서 ACT 를 학습해 OpenVINO 로 미니 PC 에서 돌립니다. 박스 양손 잡기와 따로.
 
 ```bash
-./physical_ai/start_policy.sh         # 로봇 PC (start_robot.sh 뒤, 다른 터미널) → http://<로봇 PC>:50030/
-./physical_ai/start_policy.sh sim     # 시뮬 (start_grab_sim.sh 뒤)
+./start_gripper.sh                    # 미니 PC: 그리퍼 서비스 · arm_server · 잡기 웹 → http://<미니 PC>:50030/
 ./trainer/start_trainer.sh            # 학습 PC → http://<학습 PC>:50100/ (접근 키는 터미널에)
 ```
 
-- 수집: 자동 반복(매 회 Box 대기 자세 → 잡기 → 쉬는 동안 박스 옮김) / 잡기 연동 / 수동. 성공 잡기만 저장.
-- 추론: 팔 지령은 arm_server `/stream/begin|cmd|end` (속도 제한·0.2 s 무지령 정지·2 s 세션 종료) + 안전 필터
-  (데이터셋 관절 범위·손 작업 공간·추종 오차·온도·토크). 잡기 모드 OFF 에서만 시작.
-- 자세한 것: `physical_ai/README.md` (수집·안전·데이터 형식), `trainer/README.md` (5090 설치·학습 설정).
+- 잡기 웹: 잡기 · 데이터 수집 (저장 / 버리기) · 데이터셋 zip · 모델 zip 올리기 · 정책 실행. 자세한 것: `gripper/README.md`
+- 박스용 ACT (`physical_ai/`) 는 2026-11-06 지움 (사용자 — 박스 잡기는 ACT 로 안 함). git 이력에 남아 있음
 
 ## 모션 에디터 (`start_editor.sh`)
 
@@ -160,7 +157,7 @@ h2-motion-control/
 ├── start_grab_sim.sh       # 잡기 시뮬레이터 (fake_robot + 서버 + 가상 박스, DDS 도메인 1)
 ├── launcher.sh / run_launcher.py   # 웹 런처 (:80)
 ├── sim/                    # fake_robot.py, sim_server.py
-├── physical_ai/            # 로봇 PC 피지컬 AI 웹 (policy_server.py :50030, 수집·추론, data/ 는 git 제외)
+├── gripper/                # Dex1-1 그리퍼 잡기 웹 (pick_web.py :50030, 수집 · 정책 실행, data/ · models/ 는 git 제외)
 ├── trainer/                # 학습 PC ACT 학습 웹 (trainer_server.py :50100, act_model.py, train_act.py)
 ├── common/
 │   ├── robot_env.py        # robots/h2/robot.yaml 읽기, SDK 경로

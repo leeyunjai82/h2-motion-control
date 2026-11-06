@@ -13,7 +13,7 @@ HTTP API 를 통해서만 지령한다. arm_sdk 직접 송신 프로세스는 �
   - /head  (GET/POST)     : 머리 [pitch, yaw] (deg, H2 29/30) — 목표만 바꾸고 바로 응답 (이동은 송신 루프가 속도 제한)
   - /park                 : 기본 자세 복귀 (허리 중립 + DEFAULT_ARM_DEG)
   - /freeze /stop_motion  : 현재 자세 동결 / 보간 중단 (스트림 세션도 끝냄)
-  - /stream/begin|cmd|end : 팔 14축 관절 목표 스트리밍 (physical_ai 정책 추론 30 Hz 용).
+  - /stream/begin|cmd|end : 팔 14축 관절 목표 스트리밍 (그리퍼 잡기 · ACT 정책 30 Hz, gripper/).
                             보간 없이 목표를 바로 바꾸되 세션 속도 제한(max_vel) 안에서만 움직이고,
                             중력 보상 토크(IK 와 같은 rnea)를 같이 보낸다. 세션 동안 팔 잠금(_arm_lock)을 쥐어
                             다른 팔 동작은 409. 0.2 초 지령이 없으면 마지막 목표에서 멈춰 있고(hold),
@@ -388,7 +388,7 @@ async def freeze():
     return {"ok": True}
 
 
-# ---------------- 관절 스트리밍 (physical_ai 정책 추론) ----------------
+# ---------------- 관절 스트리밍 (gripper/ 잡기 · ACT 정책) ----------------
 def _stream_info():
     with _stream_mx:
         if _stream["token"] is None:

@@ -1,5 +1,6 @@
 """
-dataset.py — 로봇 PC(physical_ai/policy_server.py)가 기록한 에피소드 → ACT 학습 샘플
+dataset.py — 기록한 에피소드 → ACT 학습 샘플 (h2-episodes-v1: 박스용 physical_ai, 2026-11-06 삭제 — 이력용으로 남김 /
+             h2-gripper-episodes-v1: gripper/recorder.py)
 
   <dataset>/info.json
   <dataset>/episodes/ep_000001/episode.npz   t, state(N,14), action(N,14), ee(N,6), stage, weight, img_t,
