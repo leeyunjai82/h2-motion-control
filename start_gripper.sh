@@ -5,6 +5,7 @@
 #   먼저 (한 번):  ROBOT_CHECK=1 ./start_fsm.sh stand        # 거치대 + FSM 703
 #   ./start_gripper.sh [인터페이스]       # 기본 enp45s0 — 실기: 팔·그리퍼가 움직임
 #   ./start_gripper.sh --sim             # 로봇 없이: fake_robot(DDS 도메인 1) + arm_server + 잡기 웹 (가짜 카메라 · 그리퍼)
+#   ./start_gripper.sh --no-cam-check    # 시작 때 카메라 숙임 재기 · 저장(check_rsimu --save, 5 초)을 건너뜀
 #
 #   그리퍼 서비스 실행 파일: DEX1_BIN (기본 ~/project/dex1_1_service/bin/dex1_1_gripper_server)
 #   종료: Ctrl+C — 잡기 웹(그리퍼 송신 멈춤 → 힘 풀림) → arm_server(팔 제어권 반납) → 그리퍼 서비스 순서.
@@ -12,10 +13,11 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-SIM=0; IFACE="enp45s0"
+SIM=0; IFACE="enp45s0"; CAMCHECK=1
 for a in "$@"; do
   case "$a" in
     --sim) SIM=1 ;;
+    --no-cam-check) CAMCHECK=0 ;;
     -h|--help) sed -n 2,11p "$0"; exit 0 ;;
     *) IFACE="$a" ;;
   esac
@@ -140,7 +142,19 @@ else
   wait_http "http://localhost:50022/status" 60 || exit 1
 fi
 
-# 3) 잡기 웹
+# 3) 카메라 숙임 확인 · 저장 (실기) — 거치대가 조금씩 움직여 숙임이 바뀜 (2026-11-06 하루에 65.4 → 61.5°)
+#    잡기 웹이 카메라를 열기 전에 check_rsimu --save (5 초, D435i IMU + 로봇 IMU). 흔들림이 크면 저장 안 하고 이전 값 사용
+if [ $SIM -eq 0 ] && [ $CAMCHECK -eq 1 ]; then
+  echo "[start] 카메라 숙임 확인 · 저장 (check_rsimu --save, 5 초 — 로봇을 건드리지 마세요) ..."
+  CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/utils/check_rsimu.py" --save "$IFACE" 2>&1)
+  echo "$CR" | stamp >> "$LOG_DIR/check_rsimu_$DAY.log"
+  echo "$CR" | grep -E "▶|지금 camera.pitch_deg|저장|❌|⚠|경고" | sed 's/^/          /'
+  if ! echo "$CR" | grep -q "▶"; then
+    echo "  ⚠ 카메라 숙임을 못 잼 — 이전 값으로 계속 (로그: $LOG_DIR/check_rsimu_$DAY.log)"
+  fi
+fi
+
+# 4) 잡기 웹
 cd "$ROOT"
 echo "[start] pick_web      (50030) ..."
 if [ $SIM -eq 1 ]; then
