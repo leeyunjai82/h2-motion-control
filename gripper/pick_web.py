@@ -495,6 +495,8 @@ class Runner:
         self.next_evt.clear()
         self.ctx = {"side": plan["side"], "floor_z": plan["floor_z"]}
         self.stage_idx = 0
+        if self.rec.pending is not None:
+            raise HTTPException(409, "앞 에피소드를 [저장] 또는 [버리기] 먼저")
         if self.rec_on:
             if pc.LAST_CMD["q"] is None:          # 이번 실행 전 스트림을 안 보냈으면 지금 목표에서 시작
                 pc.LAST_CMD.update(q=np.asarray(q_now, dtype=float), t=time.time())
@@ -627,10 +629,9 @@ class Runner:
         self._jsonl({"result": result})
         if self.rec.active:
             ok = result == "done" and bool(close_info and close_info.get("held"))
-            r = self.rec.stop(ok, result, {"close": close_info})
-            self.say(f"녹화 저장 {r.get('episode')} ({r['n']} 프레임, {r.get('mb')} MB, {'성공' if ok else '실패 — 학습에서 빠짐'})"
-                     if r and r.get("saved") else f"녹화 안 남김 ({(r or {}).get('why')})")
-            self._jsonl({"rec": r})
+            pnd = self.rec.finish(ok, result, {"close": close_info})
+            self.say(f"녹화 끝 ({pnd['n']} 프레임, 자동 판정 {'성공' if ok else '실패'}) — [저장] 또는 [버리기] 를 고르세요")
+            self._jsonl({"rec_pending": {k: v for k, v in pnd.items() if k != "extra"}})
 
     def _arrival(self, side, sg):
         """도착 0.4 초 뒤: 보낸 관절(경로 끝) 의 집게 가운데 vs 실측 관절의 집게 가운데 [mm] — 팔 추종 오차."""
@@ -881,6 +882,17 @@ def make_app(r: Runner):
         r.say(f"녹화 {'켬' if q.enabled else '끔'} — 데이터셋 {q.name} (카메라 {list(r.rec_cameras())})")
         return {"ok": True}
 
+    @app.post("/api/rec/decide")
+    def api_rec_decide(body: dict):
+        keep = bool(body.get("keep"))
+        try:
+            res = r.rec.decide(keep)
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        r.say(f"에피소드 저장 {res.get('episode')} ({res.get('n')} 프레임, {res.get('mb')} MB)" if res.get("saved") else "에피소드 버림")
+        r._jsonl({"rec": res})
+        return res
+
     @app.get("/api/datasets")
     def api_datasets():
         return {"datasets": r.rec.datasets(), "cameras_now": r.rec_cameras(),
@@ -927,7 +939,8 @@ def make_app(r: Runner):
                   "cam_pitch": r.cam_pitch.read() if r.cam_pitch else None,
                   "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
                   "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX],
-                  "rec": {"on": r.rec_on, "name": r.rec_name, "active": r.rec.active, "n": r.rec.n, "last": r.rec.last}}
+                  "rec": {"on": r.rec_on, "name": r.rec_name, "active": r.rec.active, "n": r.rec.n, "last": r.rec.last,
+                          "pending": None if r.rec.pending is None else {k: v for k, v in r.rec.pending.items()}}}
         g = r.grip.snapshot()
         st["gripper"] = {}
         for s in pc.SIDES:
@@ -977,8 +990,15 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 선택한 팔: <button id="pready">준비 자세로</button><button id="pdef">기본 자세로</button><br>
 그리퍼 (선택한 손): <button id="gopen">벌림</button><button id="gclose">닫힘</button>
 </fieldset>
-<fieldset><legend>녹화 (ACT 데이터)</legend>
-<label><input type="checkbox" id="recon">실행할 때 녹화</label> 데이터셋 <input id="recname" style="width:150px;background:#222;color:#eee;border:1px solid #555"><br>
+<fieldset><legend>데이터 수집 (ACT)</legend>
+<label><input type="checkbox" id="recon">수집 켬 — [실행] 하면 녹화 시작, 끝나면 저장 / 버리기</label><br>
+데이터셋 <input id="recname" style="width:150px;background:#222;color:#eee;border:1px solid #555">
+<div id="recbig" style="font-size:18px;font-weight:bold;margin:6px 0">수집 꺼짐</div>
+<div id="recdecide" style="display:none;border:1px solid #fa0;padding:6px;margin:4px 0">
+ <div id="recinfo" style="font-size:13px;margin-bottom:4px"></div>
+ <button id="reckeep" style="background:#064;border-color:#3c8;font-size:16px">저장 (학습에 씀)</button>
+ <button id="recdrop" style="background:#600;border-color:#c44;font-size:16px">버리기</button>
+</div>
 <span id="recstat" style="font-size:12px"></span><div id="dslist" style="font-size:12px"></div>
 </fieldset>
 <div id="status"></div><pre id="plan"></pre><pre id="log"></pre></div></div>
@@ -1051,14 +1071,23 @@ async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
  $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
   j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
 let recInit=false, wristInit=false;
+async function recDecide(keep){try{const r=await post('/api/rec/decide',{keep});dsList();}catch(e){alert(e.message);}}
+$('reckeep').onclick=()=>recDecide(true);
+$('recdrop').onclick=()=>{if(confirm('이 에피소드를 버립니다.'))recDecide(false);};
 async function wristShow(){try{const j=await (await fetch('/api/datasets')).json(); const names=Object.keys(j.cameras_now).filter(k=>k!=='body');
  $('wristimgs').innerHTML=names.map(n=>`<img src="/video_wrist/${n}" style="width:320px;border:1px solid #444" title="${n}">`).join('')+
   Object.entries(j.wrist_err||{}).map(([k,v])=>`<span class="bad">${k}: ${v}</span>`).join(' ');}catch(e){}}
 wristShow();
 setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const r=s.rec; if(!r)return;
  if(!recInit){$('recon').checked=r.on;$('recname').value=r.name;recInit=true;dsList();}
- const l=r.last; $('recstat').innerHTML=(r.active?`<span class="bad">● 녹화 중 ${r.n} 프레임</span>`:(r.on?'켜짐 — 다음 실행을 녹화':'꺼짐'))+
-  (l?` · 마지막: ${l.saved?`${l.episode} ${l.n} 프레임 ${l.mb} MB ${l.ok?'성공':'실패'}`:`안 남김 (${l.why})`}`:'');
+ const l=r.last, pd=r.pending;
+ $('recbig').innerHTML=r.active?`<span style="color:#f55">● 녹화 중 ${r.n} 프레임 (${(r.n/30).toFixed(0)} 초)</span>`:
+   pd?'<span style="color:#fa0">■ 녹화 끝 — 저장 / 버리기를 고르세요</span>':(r.on?'<span style="color:#8f8">○ 대기 — [실행] 하면 녹화 시작</span>':'수집 꺼짐');
+ $('recdecide').style.display=pd?'block':'none';
+ if(pd){const c=(pd.extra||{}).close; $('recinfo').innerHTML=`자동 판정 <b style="color:${pd.auto_ok?'#8f8':'#f88'}">${pd.auto_ok?'성공':'실패'}</b> (${pd.result}) · ${pd.n} 프레임 ${pd.duration_s} 초`+
+   (c?` · 닫은 간격 ${c.gap_mm} mm (목표 ${c.target_mm}) ${c.held?'잡음':'놓침'}`:'')+`<br>영상을 보고 제대로 잡아서 넣었으면 저장, 아니면 버리기`;}
+ $('run').title=pd?'앞 에피소드 저장 / 버리기 먼저':'';
+ $('recstat').innerHTML=(l?`마지막: ${l.saved?`${l.episode} 저장 (${l.n} 프레임 ${l.mb} MB)`:`${l.why}`}`:'');
  if(l&&l.saved&&l.episode!==window._lastEp){window._lastEp=l.episode;dsList();}}catch(e){}},700);
 poll();
 </script></body></html>"""

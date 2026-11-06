@@ -113,6 +113,7 @@ class Recorder:
         self.th = None
         self.n = 0
         self.last = None          # 마지막 저장 결과 (표시용)
+        self.pending = None       # 녹화가 끝나고 저장/버리기 결정을 기다리는 에피소드 (요약 dict) — 결정 전에는 다음 녹화 안 함
 
     # ----- 데이터셋 -----
     def ds_dir(self, name):
@@ -169,6 +170,8 @@ class Recorder:
         with self.lk:
             if self.active:
                 raise RuntimeError("이미 녹화 중")
+            if self.pending is not None:
+                raise RuntimeError("앞 에피소드 저장 / 버리기를 먼저 고르세요")
             err = self.check_cameras(name, cameras)
             if err:
                 raise ValueError(err)
@@ -213,14 +216,42 @@ class Recorder:
             if time.time() - nxt > 0.5:       # 많이 밀리면 다시 맞춤 (프레임을 몰아 찍지 않음)
                 nxt = time.time()
 
-    def stop(self, ok, result, extra=None, keep=True):
-        """녹화 끝 → 저장 (keep False 면 버림). → 저장 정보 dict 또는 None."""
+    def finish(self, ok, result, extra=None):
+        """녹화 끝 → 메모리에 둔 채 결정 기다림 (pending). 저장은 decide(True), 버리기는 decide(False). → 요약 dict"""
         with self.lk:
             if not self.active:
                 return None
             self.active = False
         self.stop_evt.set()
         self.th.join(timeout=3.0)
+        n = len(self.buf["t"])
+        self._fin = (bool(ok), result, dict(extra or {}))
+        self.pending = {"n": n, "auto_ok": bool(ok), "result": result, "extra": dict(extra or {}),
+                        "duration_s": round(self.buf["t"][-1], 1) if n else 0.0, "dataset": self.name}
+        return self.pending
+
+    def decide(self, keep):
+        """pending 에피소드 → keep True 면 저장 (ok = True, 사람이 확인), False 면 버림. → 결과 dict"""
+        if self.pending is None:
+            raise RuntimeError("결정할 에피소드 없음")
+        auto_ok, result, extra = self._fin
+        p, self.pending = self.pending, None
+        if not keep:
+            self.buf = None
+            self.last = {"saved": False, "n": p["n"], "why": "버림 (사람이 결정)"}
+            return self.last
+        extra = dict(extra, auto_ok=auto_ok, reviewed=True)
+        return self.stop(True, result, extra, _done=True)
+
+    def stop(self, ok, result, extra=None, keep=True, _done=False):
+        """녹화 끝 → 바로 저장 (keep False 면 버림). → 저장 정보 dict 또는 None. 웹 수집은 finish → decide 를 씀."""
+        if not _done:
+            with self.lk:
+                if not self.active:
+                    return None
+                self.active = False
+            self.stop_evt.set()
+            self.th.join(timeout=3.0)
         n = len(self.buf["t"])
         if not keep or n < 2:
             self.last = {"saved": False, "n": n, "why": "버림" if not keep else "프레임 부족"}
