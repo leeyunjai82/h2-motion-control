@@ -94,11 +94,11 @@ def ds_summary(name):
             ok += 1
             frames += int(m.get("n", 0))
             dur += float(m.get("duration", 0))
-        img = img or m.get("image")
+        img = img or m.get("image") or ({"cams": m.get("cameras"), "side": m.get("side")} if m.get("cameras") else None)
         npz = os.path.join(ep_dir, n, "episode.npz")
         size += os.path.getsize(npz) if os.path.exists(npz) else 0
     return {"name": name, "episodes": eps, "ok": ok, "frames": frames, "minutes": round(dur / 60, 1),
-            "size_mb": round(size / 1e6, 1), "image": img, "robot": info.get("robot"),
+            "size_mb": round(size / 1e6, 1), "image": img, "robot": info.get("robot"), "format": info.get("format"),
             "created": info.get("created"), "uploaded": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(p)))}
 
 

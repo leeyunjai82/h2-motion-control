@@ -12,6 +12,7 @@ SIGUSR1 → 지금까지 학습한 것으로 바로 변환·마무리 (웹의 '�
 결과 (--out 안)
   ckpt_last.pt            가중치·옵티마이저·통계 (이어 학습용)
   model/policy.xml|.bin   OpenVINO IR (FP16 가중치) — 입력 image [1,3,H,W] 0~1 RGB, state [1,14] rad → action [1,chunk,14] rad
+                          그리퍼 데이터셋: 입력 state [1,8] (side 손 7 관절 + 그리퍼 q), image_<카메라> [1,3,H,W] … → action [1,chunk,8]
   model/meta.json         관절 순서·통계·안전 범위·시작 자세 (로봇 policy_server 가 검사)
   <name>.zip              로봇 웹에 올릴 파일
 """
@@ -30,16 +31,19 @@ import torch.nn.functional as F
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-from act_model import ACT, ACTConfig, ACTExport, IMAGENET_MEAN, IMAGENET_STD   # noqa: E402
-from dataset import EpisodeDataset, compute_stats, load_episodes                 # noqa: E402
+from act_model import ACT, ACTConfig, ACTExport, ACTExportMulti, IMAGENET_MEAN, IMAGENET_STD   # noqa: E402
+from dataset import (EpisodeDataset, GRIP_FORMAT, GripperEpisodeDataset, compute_stats,          # noqa: E402
+                     compute_stats_gripper, dataset_format, load_episodes, load_gripper_episodes)
 
 MODEL_FORMAT = "h2-act-v1"
+MODEL_FORMAT_GRIP = "h2-gripper-act-v1"
 DEFAULT_TRAIN = {
     "name": "", "steps": 40000, "batch_size": 8, "lr": 1e-5, "lr_backbone": 1e-5, "weight_decay": 1e-4,
     "grad_clip": 10.0, "image": "auto", "chunk_size": 100, "kl_weight": 10.0, "dim_model": 512,
     "dim_feedforward": 3200, "n_heads": 8, "n_encoder_layers": 4, "augment": True, "val_frac": 0.1,
     "seed": 1, "num_workers": 8, "amp": True, "eval_every": 2000, "ckpt_every": 5000, "log_every": 50,
     "pretrained_backbone": True, "only_ok": True,
+    "side": "right",          # 그리퍼 데이터셋만: 학습할 손 left / right (그 손 7 관절 + 그리퍼 = 8) 또는 both (16)
 }
 _finish_now = False
 
@@ -82,6 +86,13 @@ def augment_batch(img_u8, aug, gen=None):
     return (x - mean) / std
 
 
+def batch_images(b, dev, aug):
+    """배치 → 정규화된 이미지 (한 장이면 텐서, 카메라 여러 대면 목록)."""
+    if "images" in b:
+        return [augment_batch(x.to(dev, non_blocking=True), aug) for x in b["images"]]
+    return augment_batch(b["image"].to(dev, non_blocking=True), aug)
+
+
 def split_episodes(eps, val_frac, seed):
     rng = np.random.default_rng(seed)
     order = rng.permutation(len(eps))
@@ -103,7 +114,7 @@ def evaluate(model, loader, a_std, dev, max_batches=20):
     for k, b in enumerate(loader):
         if k >= max_batches:
             break
-        img = augment_batch(b["image"].to(dev), False)
+        img = batch_images(b, dev, False)
         st, act, pad = b["state"].to(dev), b["action"].to(dev), b["is_pad"].to(dev)
         pred, _ = model(img, st)              # 추론과 같음 (VAE 없이 latent 0)
         m = (~pad).unsqueeze(-1).float()
@@ -123,16 +134,31 @@ def export(out_dir, ckpt_path, emit_progress=True):
     act = ACT(cfg)
     act.load_state_dict(ck["model"])
     act.eval()
-    wrap = ACTExport(act, ck["stats"]).eval()
     H, W, S = cfg.image_h, cfg.image_w, cfg.state_dim
     rng = np.random.default_rng(0)
-    ex_img = torch.from_numpy(rng.random((1, 3, H, W), dtype=np.float32))
     ex_st = torch.tensor(np.asarray(ck["stats"]["state_mean"], np.float32)[None])
-    with torch.no_grad():
-        ref = wrap(ex_img, ex_st).numpy()
-        ovm = ov.convert_model(wrap, example_input=(ex_img, ex_st))
-    ovm.inputs[0].get_tensor().set_names({"image"})
-    ovm.inputs[1].get_tensor().set_names({"state"})
+    if cfg.cameras:      # 그리퍼: state + 카메라마다 image_<이름>
+        wrap = ACTExportMulti(act, ck["stats"]).eval()
+        ex_imgs = [torch.from_numpy(rng.random((1, 3, int(c["h"]), int(c["w"])), dtype=np.float32)) for c in cfg.cameras]
+        with torch.no_grad():
+            ref = wrap(ex_st, *ex_imgs).numpy()
+            ovm = ov.convert_model(wrap, example_input=(ex_st, *ex_imgs))
+        ovm.inputs[0].get_tensor().set_names({"state"})
+        for k, c in enumerate(cfg.cameras):
+            ovm.inputs[1 + k].get_tensor().set_names({f"image_{c['name']}"})
+        feed = {"state": ex_st.numpy(), **{f"image_{c['name']}": im.numpy() for c, im in zip(cfg.cameras, ex_imgs)}}
+        in_desc = {"state": f"[1,{S}] float32 rad",
+                   **{f"image_{c['name']}": f"[1,3,{c['h']},{c['w']}] float32 0~1 RGB" for c in cfg.cameras}}
+    else:
+        wrap = ACTExport(act, ck["stats"]).eval()
+        ex_img = torch.from_numpy(rng.random((1, 3, H, W), dtype=np.float32))
+        with torch.no_grad():
+            ref = wrap(ex_img, ex_st).numpy()
+            ovm = ov.convert_model(wrap, example_input=(ex_img, ex_st))
+        ovm.inputs[0].get_tensor().set_names({"image"})
+        ovm.inputs[1].get_tensor().set_names({"state"})
+        feed = {"image": ex_img.numpy(), "state": ex_st.numpy()}
+        in_desc = {"image": f"[1,3,{H},{W}] float32 0~1 RGB", "state": f"[1,{S}] float32 rad"}
     ovm.outputs[0].get_tensor().set_names({"action"})
     mdir = os.path.join(out_dir, "model")
     os.makedirs(mdir, exist_ok=True)
@@ -140,13 +166,13 @@ def export(out_dir, ckpt_path, emit_progress=True):
     ov.save_model(ovm, xml, compress_to_fp16=True)
     # 변환 검사는 f32 로 (CPU 기본 정밀도가 bf16 인 CPU 도 있음 — 그 차이는 변환 오류가 아님)
     comp = ov.Core().compile_model(xml, "CPU", {"INFERENCE_PRECISION_HINT": "f32"})
-    got = comp({"image": ex_img.numpy(), "state": ex_st.numpy()})[comp.output(0)]
+    got = comp(feed)[comp.output(0)]
     diff = float(np.abs(got - ref).max())
     log(f"OpenVINO(CPU f32, FP16 가중치) vs torch 최대 차이 {diff:.2e} rad ({np.degrees(diff):.3f}°)")
     meta = dict(ck["meta"])
     meta.update(export_max_abs_diff=diff, export_max_abs_diff_deg=float(np.degrees(diff)),
                 openvino=ov.__version__, exported=time.strftime("%Y-%m-%d %H:%M:%S"),
-                inputs={"image": f"[1,3,{H},{W}] float32 0~1 RGB", "state": f"[1,{S}] float32 rad"},
+                inputs=in_desc,
                 outputs={"action": f"[1,{cfg.chunk_size},{cfg.action_dim}] float32 rad"})
     with open(os.path.join(mdir, "meta.json"), "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, indent=1)
@@ -187,25 +213,36 @@ def main():
     np.random.seed(int(tc["seed"]))
 
     emit(phase="load", msg="에피소드 읽는 중")
-    eps, info = load_episodes(a.dataset, only_ok=bool(tc["only_ok"]))
-    fps = int(eps[0]["meta"].get("fps", 30))
-    joint_names = list(eps[0]["meta"]["joint_names"])
-    if tc["image"] == "auto":
-        W, H = int(eps[0]["meta"]["image"]["w"]), int(eps[0]["meta"]["image"]["h"])
+    grip = dataset_format(a.dataset) == GRIP_FORMAT
+    cams = None
+    if grip:      # 그리퍼: side 손 8 개 (또는 both 16), 카메라 여러 대 (info.json 크기 그대로 — tc image 무시)
+        eps, info, cams, joint_names = load_gripper_episodes(a.dataset, str(tc["side"]), only_ok=bool(tc["only_ok"]))
+        H, W = cams[0]["h"], cams[0]["w"]
+        stat_fn = compute_stats_gripper
     else:
-        W, H = [int(v) for v in str(tc["image"]).lower().split("x")]
+        eps, info = load_episodes(a.dataset, only_ok=bool(tc["only_ok"]))
+        joint_names = list(eps[0]["meta"]["joint_names"])
+        if tc["image"] == "auto":
+            W, H = int(eps[0]["meta"]["image"]["w"]), int(eps[0]["meta"]["image"]["h"])
+        else:
+            W, H = [int(v) for v in str(tc["image"]).lower().split("x")]
+        stat_fn = compute_stats
+    fps = int(eps[0]["meta"].get("fps", 30))
+    SD = int(eps[0]["state"].shape[1])
     train_eps, val_eps = split_episodes(eps, float(tc["val_frac"]), int(tc["seed"]))
-    stats = compute_stats(train_eps, fps)
-    rng_stats = compute_stats(eps, fps)            # 안전 범위는 모든 에피소드 기준
+    stats = stat_fn(train_eps, fps)
+    rng_stats = stat_fn(eps, fps)                  # 안전 범위는 모든 에피소드 기준
     for k in ("action_min", "action_max", "state_min", "state_max", "ee_min", "ee_max", "hand_gap_min",
-              "hand_gap_max", "max_vel", "ee_cmd_min", "ee_cmd_max", "hand_gap_cmd_min", "hand_gap_cmd_max"):
+              "hand_gap_max", "max_vel", "ee_cmd_min", "ee_cmd_max", "hand_gap_cmd_min", "hand_gap_cmd_max",
+              "tcp_min", "tcp_max"):
         if k in rng_stats:
             stats[k] = rng_stats[k]
     start_pose = np.mean([e["action"][0] for e in eps], axis=0).tolist()
     end_pose = np.mean([e["action"][-1] for e in eps], axis=0).tolist()     # 로봇이 '한 회 끝' 판정에 씀
     n_frames = sum(e["n"] for e in eps)
     log(f"에피소드 {len(eps)} (학습 {len(train_eps)} · 검증 {len(val_eps)}), 프레임 {n_frames}, "
-        f"{fps} fps, 이미지 {W}x{H}")
+        f"{fps} fps, " + (f"그리퍼 side {tc['side']} · state {SD} · 카메라 {[(c['name'], c['w'], c['h']) for c in cams]}"
+                          if grip else f"이미지 {W}x{H}"))
 
     dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     dev_name = torch.cuda.get_device_name(0) if dev.type == "cuda" else "CPU"
@@ -215,13 +252,13 @@ def main():
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
         torch.backends.cudnn.allow_tf32 = True
-    cfg = ACTConfig(state_dim=14, action_dim=14, image_h=H, image_w=W, chunk_size=int(tc["chunk_size"]),
+    cfg = ACTConfig(state_dim=SD, action_dim=SD, image_h=H, image_w=W, chunk_size=int(tc["chunk_size"]), cameras=cams,
                     dim_model=int(tc["dim_model"]), dim_feedforward=int(tc["dim_feedforward"]),
                     n_heads=int(tc["n_heads"]), n_encoder_layers=int(tc["n_encoder_layers"]),
                     kl_weight=float(tc["kl_weight"]), pretrained_backbone=bool(tc["pretrained_backbone"]))
     model = ACT(cfg).to(dev)
     log(f"ACT {sum(p.numel() for p in model.parameters()) / 1e6:.1f} M 파라미터, 백본 {model.backbone_note}, "
-        f"특징맵 {model.feat_hw}, 장치 {dev_name}")
+        f"특징맵 {model.feat_hws}, 장치 {dev_name}")
     bb = [p for n, p in model.named_parameters() if n.startswith("backbone.") and p.requires_grad]
     rest = [p for n, p in model.named_parameters() if not n.startswith("backbone.") and p.requires_grad]
     opt = torch.optim.AdamW([{"params": rest, "lr": float(tc["lr"])},
@@ -230,22 +267,25 @@ def main():
     step = 0
     if a.resume:
         ck = torch.load(a.resume, map_location="cpu", weights_only=False)
-        if ck["config"]["image_h"] != H or ck["config"]["image_w"] != W or ck["config"]["chunk_size"] != cfg.chunk_size:
-            raise SystemExit("이어 학습: 이미지 크기·chunk 가 같아야 함")
+        if (ck["config"]["image_h"] != H or ck["config"]["image_w"] != W or ck["config"]["chunk_size"] != cfg.chunk_size
+                or ck["config"].get("cameras") != cams or ck["config"]["state_dim"] != SD):
+            raise SystemExit("이어 학습: 이미지 크기 · 카메라 · chunk · state 수가 같아야 함")
         model.load_state_dict(ck["model"])
         opt.load_state_dict(ck["opt"])
         stats = ck["stats"]                          # 같은 정규화를 써야 이어짐
         step = int(ck["step"])
         log(f"이어 학습 — {a.resume} step {step} 부터")
 
-    ds = EpisodeDataset(train_eps, cfg.chunk_size, H, W, stats)
+    mk_ds = (lambda e: GripperEpisodeDataset(e, cfg.chunk_size, cams, stats)) if grip else \
+        (lambda e: EpisodeDataset(e, cfg.chunk_size, H, W, stats))
+    ds = mk_ds(train_eps)
     nw = int(tc["num_workers"])
     loader = torch.utils.data.DataLoader(ds, batch_size=int(tc["batch_size"]), shuffle=True, drop_last=True,
                                          num_workers=nw, pin_memory=dev.type == "cuda",
                                          persistent_workers=nw > 0, worker_init_fn=_worker_init)
     vloader = None
     if val_eps:
-        vds = EpisodeDataset(val_eps, cfg.chunk_size, H, W, stats)
+        vds = mk_ds(val_eps)
         vloader = torch.utils.data.DataLoader(vds, batch_size=int(tc["batch_size"]), shuffle=True,
                                               num_workers=min(nw, 2), worker_init_fn=_worker_init)
     a_std = torch.tensor(stats["action_std"], device=dev)
@@ -254,10 +294,11 @@ def main():
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp and amp_dtype == torch.float16)
 
     name = tc["name"] or f"act_{os.path.basename(os.path.normpath(a.dataset))}_{time.strftime('%m%d_%H%M')}"
-    base_meta = {"format": MODEL_FORMAT, "name": name, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
+    base_meta = {"format": MODEL_FORMAT_GRIP if grip else MODEL_FORMAT, "name": name, "created": time.strftime("%Y-%m-%d %H:%M:%S"),
                  "dataset": info.get("name") or os.path.basename(os.path.normpath(a.dataset)),
                  "robot": info.get("robot"), "episodes": len(eps), "val_episodes": len(val_eps),
-                 "frames": n_frames, "fps": fps, "joint_names": joint_names, "state_dim": 14, "action_dim": 14,
+                 "frames": n_frames, "fps": fps, "joint_names": joint_names, "state_dim": SD, "action_dim": SD,
+                 "side": tc["side"] if grip else None, "cameras": cams,
                  "chunk_size": cfg.chunk_size, "image": {"h": H, "w": W}, "stats": stats, "start_pose": start_pose,
                  "end_pose": end_pose,
                  "config": cfg.to_dict(), "train": tc, "torch": torch.__version__, "device": dev_name}
@@ -282,7 +323,7 @@ def main():
         except StopIteration:
             it = iter(loader)
             b = next(it)
-        img = augment_batch(b["image"].to(dev, non_blocking=True), bool(tc["augment"]))
+        img = batch_images(b, dev, bool(tc["augment"]))
         st = b["state"].to(dev, non_blocking=True)
         act = b["action"].to(dev, non_blocking=True)
         pad = b["is_pad"].to(dev, non_blocking=True)

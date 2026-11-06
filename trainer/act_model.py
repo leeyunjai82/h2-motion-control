@@ -8,6 +8,10 @@ act_model.py — ACT (Action Chunking with Transformers, Zhao et al. 2023) 순�
   ACT        : 학습용 (forward(img, state, actions, is_pad) → 예측, (mu, logvar))
   ACTExport  : 추론용 래퍼 — 입력 image [B,3,H,W] 0~1 RGB, state [B,D] rad → action [B,chunk,D] rad
                (정규화 / 역정규화를 모델 안에 넣어 로봇 쪽은 OpenVINO infer 한 번이면 끝)
+  ACTExportMulti : 카메라 여러 대 (그리퍼 데이터셋) — 입력 state, image_<카메라> … (카메라마다 크기 다를 수 있음)
+
+  카메라 여러 대 (config.cameras = [{"name", "h", "w"}, …]): 같은 ResNet18 로 카메라마다 특징맵을 뽑아, 카메라마다 2D 위치
+  임베딩을 더해 토큰을 이어 붙임 (LeRobot ACT 의 다중 카메라와 같은 방식). cameras 가 없으면 예전과 똑같이 한 장.
 """
 import math
 from dataclasses import asdict, dataclass
@@ -40,6 +44,10 @@ class ACTConfig:
     kl_weight: float = 10.0
     pre_norm: bool = False
     pretrained_backbone: bool = True   # torchvision ResNet18 ImageNet 가중치 (처음 한 번 내려받음)
+    cameras: list = None               # [{"name", "h", "w"}, …] — 여러 대 (그리퍼). None = image_h × image_w 한 장 (박스)
+
+    def cam_list(self):
+        return self.cameras or [{"name": "image", "h": self.image_h, "w": self.image_w}]
 
     def to_dict(self):
         return asdict(self)
@@ -211,18 +219,22 @@ class ACT(nn.Module):
         self.encoder_1d_feature_pos_embed = nn.Embedding(2, D)          # latent, state
         self.decoder_pos_embed = nn.Embedding(c.chunk_size, D)
         self.action_head = nn.Linear(D, c.action_dim)
-        # 특징맵 크기는 입력 크기로 정해짐 → 2D 위치 임베딩을 상수로
-        with torch.no_grad():
-            fh, fw = self.backbone(torch.zeros(1, 3, c.image_h, c.image_w)).shape[-2:]
-        self.feat_hw = (int(fh), int(fw))
-        self.register_buffer("cam_pos", sinusoid_2d(self.feat_hw[0], self.feat_hw[1], D // 2))
+        # 특징맵 크기는 입력 크기로 정해짐 → 2D 위치 임베딩을 상수로 (카메라마다)
+        self.feat_hws = []
+        for k, cam in enumerate(c.cam_list()):
+            with torch.no_grad():
+                fh, fw = self.backbone(torch.zeros(1, 3, int(cam["h"]), int(cam["w"]))).shape[-2:]
+            self.feat_hws.append((int(fh), int(fw)))
+            self.register_buffer("cam_pos" if k == 0 else f"cam_pos_{k}", sinusoid_2d(int(fh), int(fw), D // 2))
+        self.feat_hw = self.feat_hws[0]
         for m in (self.encoder, self.decoder):
             for p in m.parameters():
                 if p.dim() > 1:
                     nn.init.xavier_uniform_(p)
 
     def forward(self, img, state, actions=None, is_pad=None):
-        """img (B,3,H,W) 정규화됨, state (B,S), actions (B,chunk,A) 정규화됨 (학습 때만), is_pad (B,chunk) bool."""
+        """img (B,3,H,W) 정규화됨 — 카메라 여러 대면 그 목록 (config.cameras 순서), state (B,S),
+        actions (B,chunk,A) 정규화됨 (학습 때만), is_pad (B,chunk) bool."""
         c = self.c
         B = state.shape[0]
         mu = logvar = None
@@ -240,9 +252,15 @@ class ACT(nn.Module):
         else:
             latent = torch.zeros(B, c.latent_dim, dtype=state.dtype, device=state.device)
 
-        feat = self.encoder_img_feat_input_proj(self.backbone(img))            # (B, D, h, w)
-        feat = feat.flatten(2).permute(2, 0, 1)                                 # (hw, B, D)
-        cam_pos = self.cam_pos.to(feat.dtype).flatten(2).permute(2, 0, 1).expand(-1, B, -1)
+        imgs = list(img) if isinstance(img, (list, tuple)) else [img]
+        feats, poss = [], []
+        for k, im in enumerate(imgs):
+            f = self.encoder_img_feat_input_proj(self.backbone(im))                # (B, D, h, w)
+            feats.append(f.flatten(2).permute(2, 0, 1))                         # (hw, B, D)
+            cp = getattr(self, "cam_pos" if k == 0 else f"cam_pos_{k}")
+            poss.append(cp.to(f.dtype).flatten(2).permute(2, 0, 1).expand(-1, B, -1))
+        feat = torch.cat(feats, dim=0)
+        cam_pos = torch.cat(poss, dim=0)
         tok = torch.stack([self.encoder_latent_input_proj(latent),
                            self.encoder_robot_state_input_proj(state)], dim=0)  # (2, B, D)
         pos1 = self.encoder_1d_feature_pos_embed.weight.unsqueeze(1).expand(-1, B, -1)
@@ -284,4 +302,26 @@ class ACTExport(nn.Module):
         x = (image - self.img_mean) / self.img_std
         s = (state - self.s_mean) / self.s_std
         a, _ = self.act(x, s)
+        return a * self.a_std + self.a_mean
+
+
+class ACTExportMulti(nn.Module):
+    """로봇 추론용 (카메라 여러 대) — 입력 state (B,S) rad, image_<카메라> (B,3,H,W) 0~1 RGB … (config.cameras 순서)
+    → action (B,chunk,A) rad."""
+
+    def __init__(self, act: ACT, stats):
+        super().__init__()
+        self.act = act
+        f = lambda k: torch.tensor(np.asarray(stats[k], dtype=np.float32))
+        self.register_buffer("img_mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1))
+        self.register_buffer("img_std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1))
+        self.register_buffer("s_mean", f("state_mean"))
+        self.register_buffer("s_std", f("state_std"))
+        self.register_buffer("a_mean", f("action_mean"))
+        self.register_buffer("a_std", f("action_std"))
+
+    def forward(self, state, *images):
+        xs = [(im - self.img_mean) / self.img_std for im in images]
+        s = (state - self.s_mean) / self.s_std
+        a, _ = self.act(xs, s)
         return a * self.a_std + self.a_mean

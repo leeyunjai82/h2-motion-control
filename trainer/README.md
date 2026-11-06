@@ -10,6 +10,14 @@
 
 이 폴더(`trainer/`)만 있으면 됩니다 — 로봇 SDK·URDF 는 필요 없음.
 
+## 그리퍼 데이터셋 (gripper/ 잡기 웹 녹화, format h2-gripper-episodes-v1)
+
+같은 웹에 올리면 형식을 보고 그리퍼로 학습합니다. **손 (그리퍼 데이터셋)** 에서 오른손 / 왼손 (그 손 7 관절 + 그리퍼 = 8) 또는
+양손 16 을 고릅니다 — 그 손으로 녹화한 에피소드만 씀. 카메라는 데이터셋의 카메라 전부 (body 424×240 + 손목 320×240 …,
+같은 ResNet18 로 카메라마다 특징을 뽑아 이어 붙임). 이미지 W×H 설정은 무시 (녹화 크기 그대로).
+model zip 의 meta.json `format: h2-gripper-act-v1`, 입력 `state [1,8]` · `image_<카메라> [1,3,H,W]` → `action [1,chunk,8]`.
+확인: CPU torch 2.15 · OpenVINO 2026.4.1 로 가짜 데이터셋 학습 → 변환 (OpenVINO vs torch 0.03°) (2026-11-06). 5090 · 실데이터는 아직.
+
 ## 설치 (Ubuntu, RTX 5090) — 처음 한 번
 
 ```bash

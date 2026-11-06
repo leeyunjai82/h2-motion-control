@@ -133,6 +133,7 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
           <div style="grid-column:1/-1"><span class="mini">모델 이름 (비우면 act_데이터셋_날짜)</span><input class="in" id="t-name"></div>
           <div><span class="mini">학습 step</span><input class="in" id="t-steps" type="number" step="1000"></div>
           <div><span class="mini">batch</span><input class="in" id="t-batch_size" type="number"></div>
+          <div><span class="mini">손 (그리퍼 데이터셋)</span><select class="in" id="t-side"><option value="right">오른손</option><option value="left">왼손</option><option value="both">양손 16</option></select></div>
           <div><span class="mini">이미지 W×H</span><select class="in" id="t-image">
             <option value="auto">데이터셋 그대로</option><option value="424x240">424×240</option>
             <option value="848x480">848×480</option><option value="320x240">320×240</option>
@@ -223,7 +224,7 @@ async function loadInfo(){
   if(!DEF){
     DEF = d.defaults;
     for(const k of ['steps','batch_size','chunk_size','kl_weight','lr','val_frac','num_workers','eval_every']) $('t-' + k).value = DEF[k];
-    $('t-image').value = DEF.image; $('t-augment').checked = DEF.augment; $('t-amp').checked = DEF.amp;
+    $('t-image').value = DEF.image; $('t-side').value = DEF.side || 'right'; $('t-augment').checked = DEF.augment; $('t-amp').checked = DEF.amp;
   }
 }
 
@@ -235,7 +236,7 @@ async function loadDs(){
   $('ds-tbl').innerHTML = '<tr><th>데이터셋</th><th class="num">성공/전체</th><th class="num">분</th><th class="num">MB</th><th>이미지</th><th></th></tr>' +
     d.map(x => `<tr class="${x.name === selDs ? 'cur' : ''}" onclick="pickDs('${x.name}')"><td>${esc(x.name)}</td>
       <td class="num">${x.ok}/${x.episodes}</td><td class="num">${x.minutes}</td><td class="num">${x.size_mb}</td>
-      <td>${x.image ? x.image.w + '×' + x.image.h : '-'}</td><td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
+      <td>${x.image ? (x.image.cams ? '그리퍼 ' + x.image.cams.length + '캠' : x.image.w + '×' + x.image.h) : '-'}</td><td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
   $('sel-ds').textContent = selDs || '데이터셋 선택';
 }
 function pickDs(n){ selDs = n; loadDs(); }
@@ -262,7 +263,7 @@ function uploadDs(){
 // ---------------- 작업 ----------------
 async function addJob(){
   if(!selDs){ toast('데이터셋을 고르세요', true); return; }
-  const p = {name: $('t-name').value.trim(), image: $('t-image').value, augment: $('t-augment').checked, amp: $('t-amp').checked};
+  const p = {name: $('t-name').value.trim(), image: $('t-image').value, side: $('t-side').value, augment: $('t-augment').checked, amp: $('t-amp').checked};
   for(const k of ['steps','batch_size','chunk_size','num_workers','eval_every']) p[k] = parseInt($('t-' + k).value);
   for(const k of ['kl_weight','lr','val_frac']) p[k] = parseFloat($('t-' + k).value);
   const d = await api('POST', '/api/jobs', {dataset: selDs, params: p});

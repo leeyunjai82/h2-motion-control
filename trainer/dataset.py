@@ -8,6 +8,11 @@ dataset.py — 로봇 PC(physical_ai/policy_server.py)가 기록한 에피소드
 
 샘플 (프레임 t):  image t, state t, action t … t+chunk−1 (끝을 넘으면 마지막 값으로 채우고 is_pad=True)
 npz 는 allow_pickle=False 로만 연다 (업로드 파일에서 코드 실행 방지).
+
+그리퍼 데이터셋 (gripper/recorder.py, info.json format h2-gripper-episodes-v1)
+  episode.npz  t · state(N,16) · action(N,16) · tcp(N,6) · stage · jpeg_<카메라> · jpeg_off_<카메라>
+  state/action 16 = [왼팔 7, 왼 그리퍼, 오른팔 7, 오른 그리퍼] → side 'left' / 'right' 는 그 손 8 개만, 'both' 는 16 개.
+  side 를 고르면 meta.side 가 그 손인 에피소드만 씀. 카메라는 info.json cameras 전부 (이름 순서 고정).
 """
 import json
 import os
@@ -18,6 +23,13 @@ import torch
 from torch.utils.data import Dataset
 
 EP_FORMAT = "h2-episodes-v1"
+GRIP_FORMAT = "h2-gripper-episodes-v1"
+GRIP_SIDE_IDX = {"left": list(range(0, 8)), "right": list(range(8, 16)), "both": list(range(16))}
+
+
+def dataset_format(root):
+    with open(os.path.join(root, "info.json"), encoding="utf-8") as f:
+        return json.load(f).get("format", EP_FORMAT)
 
 
 def load_episodes(root, only_ok=True):
@@ -120,6 +132,96 @@ class EpisodeDataset(Dataset):
         pad = idx >= e["n"]
         act = e["action"][np.minimum(idx, e["n"] - 1)]
         return {"image": torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1))),
+                "state": torch.from_numpy((e["state"][t] - self.s_mean) / self.s_std),
+                "action": torch.from_numpy((act - self.a_mean) / self.a_std),
+                "is_pad": torch.from_numpy(pad)}
+
+
+# =====================================================================
+# 그리퍼 (카메라 여러 대, 한 손 8 개)
+# =====================================================================
+def load_gripper_episodes(root, side="right", only_ok=True):
+    """→ (episodes, info, 카메라 목록 [{"name","h","w"}], state_names). 각 episode: state/action (그 손), tcp(그 손 3 또는 6),
+    jpeg{카메라}, off{카메라}, n, meta."""
+    with open(os.path.join(root, "info.json"), encoding="utf-8") as f:
+        info = json.load(f)
+    if info.get("format") != GRIP_FORMAT:
+        raise ValueError(f"그리퍼 데이터셋 아님 (format {info.get('format')})")
+    if side not in GRIP_SIDE_IDX:
+        raise ValueError(f"side 는 left / right / both (지금 {side})")
+    idx = GRIP_SIDE_IDX[side]
+    cams = [{"name": k, "h": int(v["h"]), "w": int(v["w"])} for k, v in sorted(info["cameras"].items())]
+    names = [info["state_names"][i] for i in idx]
+    eps = []
+    ep_dir = os.path.join(root, "episodes")
+    for n in sorted(os.listdir(ep_dir)):
+        d = os.path.join(ep_dir, n)
+        mp, npz = os.path.join(d, "meta.json"), os.path.join(d, "episode.npz")
+        if not (os.path.isfile(mp) and os.path.isfile(npz)):
+            continue
+        with open(mp, encoding="utf-8") as f:
+            meta = json.load(f)
+        if meta.get("format") != GRIP_FORMAT:
+            raise ValueError(f"{n}: format {meta.get('format')} ≠ {GRIP_FORMAT}")
+        if only_ok and not meta.get("ok"):
+            continue
+        if side != "both" and meta.get("side") != side:
+            continue
+        with np.load(npz, allow_pickle=False) as z:
+            tcp = z["tcp"].astype(np.float32)
+            e = {"id": n, "meta": meta, "state": z["state"][:, idx].astype(np.float32),
+                 "action": z["action"][:, idx].astype(np.float32),
+                 "tcp": tcp if side == "both" else (tcp[:, :3] if side == "left" else tcp[:, 3:]),
+                 "jpeg": {c["name"]: z[f"jpeg_{c['name']}"] for c in cams},
+                 "off": {c["name"]: z[f"jpeg_off_{c['name']}"].astype(np.int64) for c in cams},
+                 "stage": z["stage"]}
+        e["n"] = min([len(e["state"]), len(e["action"])] + [len(o) - 1 for o in e["off"].values()])
+        if e["n"] < 2:
+            print(f"[dataset] {n}: 프레임 {e['n']} 개 — 건너뜀", flush=True)
+            continue
+        eps.append(e)
+    if not eps:
+        raise ValueError(f"쓸 에피소드 없음 (side {side}, 성공만 {only_ok})")
+    return eps, info, cams, names
+
+
+def compute_stats_gripper(eps, fps):
+    S = np.concatenate([e["state"][:e["n"]] for e in eps])
+    A = np.concatenate([e["action"][:e["n"]] for e in eps])
+    T = np.concatenate([e["tcp"][:e["n"]] for e in eps])
+    vel = np.concatenate([np.abs(np.diff(e["action"][:e["n"]], axis=0)) * fps for e in eps])
+    return {"state_mean": S.mean(0).tolist(), "state_std": np.maximum(S.std(0), 1e-3).tolist(),
+            "action_mean": A.mean(0).tolist(), "action_std": np.maximum(A.std(0), 1e-3).tolist(),
+            "action_min": A.min(0).tolist(), "action_max": A.max(0).tolist(),
+            "state_min": S.min(0).tolist(), "state_max": S.max(0).tolist(),
+            "tcp_min": T.min(0).tolist(), "tcp_max": T.max(0).tolist(), "max_vel": vel.max(0).tolist()}
+
+
+class GripperEpisodeDataset(Dataset):
+    """images = 카메라 순서대로 uint8 (3,H,W) 목록. 정규화 · 증강은 학습 루프에서."""
+
+    def __init__(self, eps, chunk, cams, stats):
+        self.eps, self.chunk, self.cams = eps, chunk, cams
+        self.index = [(k, t) for k, e in enumerate(eps) for t in range(e["n"])]
+        self.s_mean = np.asarray(stats["state_mean"], np.float32)
+        self.s_std = np.asarray(stats["state_std"], np.float32)
+        self.a_mean = np.asarray(stats["action_mean"], np.float32)
+        self.a_std = np.asarray(stats["action_std"], np.float32)
+
+    def __len__(self):
+        return len(self.index)
+
+    def __getitem__(self, i):
+        k, t = self.index[i]
+        e = self.eps[k]
+        imgs = []
+        for c in self.cams:
+            img = decode(e["jpeg"][c["name"]], e["off"][c["name"]], t, c["h"], c["w"])
+            imgs.append(torch.from_numpy(np.ascontiguousarray(img.transpose(2, 0, 1))))
+        idx = np.arange(t, t + self.chunk)
+        pad = idx >= e["n"]
+        act = e["action"][np.minimum(idx, e["n"] - 1)]
+        return {"images": imgs,
                 "state": torch.from_numpy((e["state"][t] - self.s_mean) / self.s_std),
                 "action": torch.from_numpy((act - self.a_mean) / self.a_std),
                 "is_pad": torch.from_numpy(pad)}
