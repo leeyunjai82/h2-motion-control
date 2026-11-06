@@ -397,19 +397,32 @@ class Runner:
                         self.say(f"{name}: {err}")
                         result = "stopped"
                         break
-                    self.say(f"{name}: q {q:.2f} (≈ {pc.gap_mm(q):.0f} mm)")
+                    g = self.grip.snapshot().get(side) or {}
+                    self.say(f"{name}: q {q:.2f} (≈ {pc.gap_mm(q):.0f} mm, 목표 q {plan['q_open']:.2f}, 명령 {g.get('cmd')})")
+                    if abs(q - plan["q_open"]) > 0.3:
+                        self.say(f"{name}: 목표까지 안 벌어짐 — 그리퍼가 명령을 안 따름, 멈춤")
+                        result = "stopped"
+                        break
                 elif kind == "@close":
                     if self.sim and isinstance(self.grip, FakeGripper):
                         self.grip.block_mm = plan["width_mm"] - 1.0
+                    st0 = self.grip.state(side)
+                    q_before = None if st0 is None else st0["q"]
                     q, err = self._grip_to(side, plan["q_close"])
                     if err:
                         self.say(f"{name}: {err}")
                         result = "stopped"
                         break
                     gap = pc.gap_mm(q)
+                    g = self.grip.snapshot().get(side) or {}
+                    info = f"q {q_before if q_before is None else round(q_before, 2)} → {q:.2f} (≈ {gap:.0f} mm, 목표 {plan['close_mm']:.0f} mm, 명령 {g.get('cmd')})"
+                    # 잡음 = 박스 폭 근처(박스 + 6 mm 이하)까지 실제로 닫혔고, 목표(박스 − squeeze)까지는 못 감 (박스에 막힘)
+                    if gap > plan["width_mm"] + 6.0:
+                        self.say(f"{name}: {info} → 박스 폭까지 안 닫힘 (그리퍼가 안 움직였거나 박스 밖을 막음) — 멈춤, 들지 않음")
+                        result = "stopped"
+                        break
                     held = gap >= plan["close_mm"] + P["contact_min_mm"]
-                    self.say(f"{name}: q {q:.2f} (≈ {gap:.0f} mm, 목표 {plan['close_mm']:.0f} mm) → " +
-                             ("박스에 막힘 = 잡음" if held else "목표까지 닫힘 = 놓친 것으로 봄"))
+                    self.say(f"{name}: {info} → " + ("박스에 막힘 = 잡음" if held else "목표까지 닫힘 = 놓친 것으로 봄"))
                     if not held:
                         self._grip_to(side, plan["q_open"])
                         result = "missed"
