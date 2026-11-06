@@ -5,7 +5,7 @@
 #   먼저 (한 번):  ROBOT_CHECK=1 ./start_fsm.sh stand        # 거치대 + FSM 703
 #   ./start_gripper.sh [인터페이스]       # 기본 enp45s0 — 실기: 팔·그리퍼가 움직임
 #   ./start_gripper.sh --sim             # 로봇 없이: fake_robot(DDS 도메인 1) + arm_server + 잡기 웹 (가짜 카메라 · 그리퍼)
-#   ./start_gripper.sh --no-cam-check    # 시작 때 카메라 숙임 재기 · 저장(check_rsimu --save, 5 초)을 건너뜀
+#   ./start_gripper.sh --no-cam-check    # 시작 때 카메라 숙임 확인(check_rsimu 3 초, 저장 안 함 — 기준값과 1° 넘게 다르면 멈춤)을 건너뜀
 #
 #   그리퍼 서비스 실행 파일: DEX1_BIN (기본 ~/project/dex1_1_service/bin/dex1_1_gripper_server)
 #   종료: Ctrl+C — 잡기 웹(그리퍼 송신 멈춤 → 힘 풀림) → arm_server(팔 제어권 반납) → 그리퍼 서비스 순서.
@@ -142,15 +142,31 @@ else
   wait_http "http://localhost:50022/status" 60 || exit 1
 fi
 
-# 3) 카메라 숙임 확인 · 저장 (실기) — 거치대가 조금씩 움직여 숙임이 바뀜 (2026-11-06 하루에 65.4 → 61.5°)
-#    잡기 웹이 카메라를 열기 전에 check_rsimu --save (5 초, D435i IMU + 로봇 IMU). 흔들림이 크면 저장 안 하고 이전 값 사용
+# 3) 카메라 숙임 확인 (실기, 저장 안 함) — 기준값(calib_local.yaml / robot.yaml camera.pitch_deg)은 고정, 로봇 거치대를 거기에 맞춤.
+#    ACT 는 수집 · 실행 때 카메라 구도가 같아야 함 → 값을 새로 저장해 덮지 않음 (2026-11-06 사용자). 거치대가 하루에 65.4 → 61.5° 움직인 적 있음
+#    |차이| ≤ CAM_OK 진행 · ≤ CAM_MAX 경고 후 진행 · 넘으면 멈춤 (거치대를 맞춘 뒤 다시, 또는 --no-cam-check)
+CAM_OK=0.5; CAM_MAX=1.0
 if [ $SIM -eq 0 ] && [ $CAMCHECK -eq 1 ]; then
-  echo "[start] 카메라 숙임 확인 · 저장 (check_rsimu --save, 5 초 — 로봇을 건드리지 마세요) ..."
-  CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/utils/check_rsimu.py" --save "$IFACE" 2>&1)
+  echo "[start] 카메라 숙임 확인 (check_rsimu 3 초, 저장 안 함 — 로봇을 건드리지 마세요) ..."
+  CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/utils/check_rsimu.py" --sec 3 "$IFACE" 2>&1)
   echo "$CR" | stamp >> "$LOG_DIR/check_rsimu_$DAY.log"
-  echo "$CR" | grep -E "▶|지금 camera.pitch_deg|저장|❌|⚠|경고" | sed 's/^/          /'
-  if ! echo "$CR" | grep -q "▶"; then
-    echo "  ⚠ 카메라 숙임을 못 잼 — 이전 값으로 계속 (로그: $LOG_DIR/check_rsimu_$DAY.log)"
+  echo "$CR" | grep -E "▶|지금 camera.pitch_deg|❌" | sed 's/^/          /'
+  DIFF=$(echo "$CR" | grep "지금 camera.pitch_deg" | sed -n 's/.*(차이 \([-+0-9.]*\).*/\1/p')
+  if [ -z "$DIFF" ]; then
+    echo "  ⚠ 카메라 숙임을 못 잼 — 확인 없이 계속 (로그: $LOG_DIR/check_rsimu_$DAY.log)"
+  else
+    ABS=$(echo "$DIFF" | tr -d '+-')
+    DIR=$(awk -v d="$DIFF" 'BEGIN{print (d>0)?"덜 숙이게 (위로)":"더 숙이게 (아래로)"}')
+    if awk -v a="$ABS" -v m="$CAM_OK" 'BEGIN{exit !(a<=m)}'; then
+      echo "  ✓ 카메라 숙임 기준값과 ${DIFF}° — OK"
+    elif awk -v a="$ABS" -v m="$CAM_MAX" 'BEGIN{exit !(a<=m)}'; then
+      echo "  ⚠ 카메라 숙임 기준값과 ${DIFF}° — 진행하지만, 데이터 수집 전에 거치대를 ${ABS}° ${DIR} 맞추는 것을 권장"
+    else
+      echo "❌ 카메라 숙임이 기준값과 ${DIFF}° 다름 (허용 ±${CAM_MAX}°) — 거치대를 ${ABS}° ${DIR} 맞추세요." >&2
+      echo "   보면서 맞추기: sudo $TV_PY utils/check_rsimu.py   (diff 열이 0 근처가 되게, Ctrl+C 종료)" >&2
+      echo "   맞춘 뒤 ./start_gripper.sh 다시 (확인 없이: --no-cam-check)" >&2
+      exit 1
+    fi
   fi
 fi
 
