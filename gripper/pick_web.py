@@ -322,6 +322,7 @@ class Runner:
         self.stage_idx = 0              # 녹화 stage (실행 순서 번호, 0 = 시작 전)
         self.pol = pol.PolicyRunner(self, pc)   # ACT 정책 실행
         self.speed = 2.0                # 속도 배율 (웹) — 계획 · 자세 이동에 씀
+        self.place_yaw = None           # 통에 놓을 때 yaw 안쪽 [deg] — None = 자동
         self.lk = threading.Lock()
         self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
         self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
@@ -412,7 +413,11 @@ class Runner:
             if bin_pt is None:
                 raise HTTPException(400, "그 픽셀 시선이 통 테두리 높이와 만나지 않음")
         pc.set_speed(self.speed)
-        plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt=bin_pt, bin_h_mm=bin_h_mm)
+        if bin_pt is not None:
+            plan = pc.plan_pick_auto_place(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt, bin_h_mm,
+                                           place_yaw=self.place_yaw)
+        else:
+            plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy)
         plan["speed"] = self.speed
         plan["table_z"] = round(self.table_plane[0] + self.table_plane[1] * top[0] + self.table_plane[2] * top[1], 4)   # 박스 자리 테이블 높이
         if plan.get("grasp"):     # 자로 확인할 값: 테이블 면 → 집게 가운데 (두 패드 가운데)
@@ -438,7 +443,7 @@ class Runner:
     def summary(plan):
         if plan is None:
             return None
-        keys = ("ok", "side", "speed", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+        keys = ("ok", "side", "speed", "place_yaw_in", "place_rpy_deg", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
         return {k: plan.get(k) for k in keys if k in plan}
 
@@ -894,6 +899,15 @@ def make_app(r: Runner):
         r.say(f"녹화 {'켬' if q.enabled else '끔'} — 데이터셋 {q.name} (카메라 {list(r.rec_cameras())})")
         return {"ok": True}
 
+    @app.post("/api/place_yaw")
+    def api_place_yaw(body: dict):
+        v = body.get("yaw")
+        r.place_yaw = None if v in (None, "", "auto") else float(v)
+        with r.lk:
+            r.plan = None
+        r.say(f"놓을 때 yaw: {'자동' if r.place_yaw is None else f'안쪽 {r.place_yaw:.0f}°'} (다음 클릭부터)")
+        return {"ok": True}
+
     @app.post("/api/speed")
     def api_speed(body: dict):
         f = float(body.get("f", 1.0))
@@ -1052,6 +1066,8 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 잡는 폭 <input id="size" type="number" value="40" min="10" max="75"> mm (로봇 좌우 방향) · 높이 <input id="height" type="number" value="90" min="15" max="150"> mm<br>
 놓는 곳 <label><input type="radio" name="dest" value="bin" checked>통</label><label><input type="radio" name="dest" value="same">제자리</label>
 · 통 높이 <input id="binh" type="number" value="80" min="10" max="250"> mm (테이블 → 테두리)<br>
+놓을 때 yaw <select id="pyaw" style="background:#222;color:#eee"><option value="auto" selected>자동 (몸통 피함)</option><option value="0">0°</option><option value="15">안쪽 15°</option><option value="30">안쪽 30°</option><option value="45">안쪽 45°</option></select>
+<span style="font-size:12px">— 잡을 때 RPY 는 그대로, 통 위로 옮기며 돌림</span><br>
 RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><input id="y" type="number" step="5"> deg
 <button id="tbl">테이블 점 추가</button><button id="tblclr">테이블 지우기</button> <span id="tblz">테이블: 안 잼</span>
 <div style="font-size:12px">테이블 빈 곳을 앞 · 뒤 · 옆 2–3 곳 (점마다 [테이블 점 추가] → 클릭). 1 곳이면 수평으로 봄</div>
@@ -1119,6 +1135,7 @@ function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span clas
  s+=`윗면 가운데 (pelvis, 박스 자리 테이블 z ${p.table_z} + 높이) ${f3(p.top)}\n`;
  if(p.depth_diff_mm) s+=`  (참고: 깊이로 잰 점 − 평면 점 = 앞뒤 ${p.depth_diff_mm[0]} · 좌우 ${p.depth_diff_mm[1]} · 높이 ${p.depth_diff_mm[2]} mm, 흔들림 ${p.depth_spread_mm} mm)\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
  if(p.pre_above_table_mm!=null) s+=`자로 확인: 집게 가운데(두 패드 가운데)가 테이블 면 위 — 접근 위치 ${p.pre_above_table_mm} mm · 잡는 자리 ${p.grasp_above_table_mm} mm\n`;
+ if(p.bin&&p.place_yaw_in!=null) s+=`놓을 때 yaw 안쪽 ${p.place_yaw_in}° (자세 ${p.place_rpy_deg})\n`;
  if(p.bin) s+=`통 입구 (클릭) ${f3(p.bin)} · 테두리 z ${p.rim_z} · 놓는 자리 ${f3(p.release)}\n`;
  s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
  (p.reasons||[]).forEach(x=>s+='<span class="bad">✗ '+x+'</span>\n'); (p.notes||[]).forEach(x=>s+='⚠ '+x+'\n');
@@ -1157,6 +1174,7 @@ async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
  $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
   j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
 let recInit=false, wristInit=false, spdInit=false;
+$('pyaw').onchange=async()=>{try{await post('/api/place_yaw',{yaw:$('pyaw').value});planOk=false;$('plan').textContent='놓을 때 yaw 를 바꿈 — 다시 클릭';}catch(e){alert(e.message);}};
 $('spd').onchange=async()=>{try{await post('/api/speed',{f:+$('spd').value});planOk=false;$('plan').textContent='속도를 바꿈 — 박스를 다시 클릭';}catch(e){alert(e.message);}};
 setInterval(async()=>{if(spdInit)return;try{const s=await (await fetch('/api/state')).json(); if(s.speed){$('spd').value=String(s.speed);spdInit=true;}}catch(e){}},800);
 async function modelList(){try{const j=await (await fetch('/api/models')).json();

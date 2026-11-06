@@ -299,10 +299,11 @@ def cart_seg(mdl, name, side, q_from, T_to, v_lin):
 STEP_KO = {"@open": "그리퍼 벌림", "@close": "그리퍼 닫기", "@hold": "들고 있기"}
 
 
-def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=None, bin_h_mm=None):
+def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=None, bin_h_mm=None, place_rpy_deg=None):
     """박스 윗면 가운데 top (pelvis, m) · 잡는 폭(집게 방향 = 로봇 좌우) · 높이 → 계획 dict. 실패면 {'ok': False, 'reasons': [...]}.
     bin_pt (통 안쪽을 클릭한 점, xy 만 씀) · bin_h_mm (테이블에서 통 윗면 테두리까지) 를 주면 제자리 대신 통에 넣음:
-    들기(박스 아랫면이 테두리 3 cm 위) → 통 위로 → 박스 아랫면이 테두리 1 cm 위까지 내려 → 벌림 → 위로 → 준비 자세."""
+    들기(박스 아랫면이 테두리 3 cm 위) → 통 위로 → 박스 아랫면이 테두리 1 cm 위까지 내려 → 벌림 → 위로 → 준비 자세.
+    place_rpy_deg: 통에 놓을 때 자세 (None = 잡을 때와 같음) — '통 위로' 옮기는 동안 돌림 (통이 몸 가까이 있을 때 yaw 를 안쪽으로)."""
     reasons, notes = [], []
     top = np.asarray(top, dtype=float)
     width_mm, height_mm = float(width_mm), float(height_mm)
@@ -354,10 +355,12 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=N
     clear_bin = None
     if bin_pt is not None:
         bin_pt = np.asarray(bin_pt, dtype=float)
+        Rp = R if place_rpy_deg is None else rpy_matrix(place_rpy_deg)
+        low_off_p = float(np.min((ENVELOPE @ Rp.T)[:, 2]))
         rim_z = floor_z + float(bin_h_mm) / 1000.0
         d_b = z_g - floor_z                                           # 잡은 자리 TCP ↔ 박스 아랫면
-        carry_z = max(lift_p[2], rim_z + 0.03 + d_b, rim_z + 0.03 - low_off)
-        rel_z = max(rim_z + 0.01 + d_b, rim_z + 0.015 - low_off)
+        carry_z = max(lift_p[2], rim_z + 0.03 + d_b, rim_z + 0.03 - low_off, rim_z + 0.03 - low_off_p)
+        rel_z = max(rim_z + 0.01 + d_b, rim_z + 0.015 - low_off_p)
         bxy = bin_pt[:2]
         if not (CLICK_X[0] <= bxy[0] <= CLICK_X[1]) or abs(bxy[1]) > CLICK_Y_MAX:
             reasons.append(f"통 클릭 점 {np.round(bxy, 3).tolist()} 이 작업 범위 밖")
@@ -371,15 +374,16 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=N
         over_p = np.array([bxy[0], bxy[1], carry_z])
         rel_p = np.array([bxy[0], bxy[1], rel_z])
         clear_bin = rim_z + 0.012
-        out.update(bin=bin_pt.round(4).tolist(), rim_z=round(rim_z, 4), release=rel_p.round(4).tolist())
+        out.update(bin=bin_pt.round(4).tolist(), rim_z=round(rim_z, 4), release=rel_p.round(4).tolist(),
+                   place_rpy_deg=list(map(float, place_rpy_deg)) if place_rpy_deg is not None else list(map(float, rpy_deg)))
         steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
                  ("내려가기", T(cmd(grasp_p)), P["v_slow"], "grasp"),
                  ("@close", None, None, None),
                  ("들기", T(cmd(lift_p)), P["v_slow"], "grasp"),
-                 ("통 위로", T(cmd(over_p)), P["v_lin"], "bin"),
-                 ("통에 넣는 높이로", T(cmd(rel_p)), P["v_slow"], "bin"),
+                 ("통 위로", T(cmd(over_p), Rp), P["v_lin"], "bin"),
+                 ("통에 넣는 높이로", T(cmd(rel_p), Rp), P["v_slow"], "bin"),
                  ("@open", None, None, None),
-                 ("위로", T(cmd(over_p)), P["v_slow"], "bin"),
+                 ("위로", T(cmd(over_p), Rp), P["v_slow"], "bin"),
                  ("준비 자세로 복귀", T(READY_TCP[side], READY_R), P["v_lin"], "transit")]
     else:
       steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
@@ -515,3 +519,29 @@ def run_seg(mdl, sg, stop_evt, on_tick=None):
             call("/stream/end", {"token": tok}, timeout=2.0)
         except Exception:  # noqa: BLE001 — 서버가 2 초 뒤 세션을 닫음, 팔은 마지막 목표에서 멈춤
             pass
+
+
+PLACE_YAWS = (0, 15, 30, 45)   # 놓을 때 yaw 자동: 안쪽(오른손 +, 왼손 −) 으로 이 순서로 시도
+
+
+def plan_pick_auto_place(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt, bin_h_mm, place_yaw=None):
+    """통에 놓을 때 yaw 를 정해 계획. place_yaw None = 자동 (PLACE_YAWS 안쪽으로 차례로, 처음 되는 것), 숫자 = 그 값 (안쪽 + 기준).
+    → 계획 (place_yaw_in 에 고른 값, 다 안 되면 첫 시도의 이유)"""
+    sgn = 1.0 if side == "right" else -1.0
+    tries = PLACE_YAWS if place_yaw is None else (float(place_yaw),)
+    first = None
+    for yw in tries:
+        prpy = [rpy_deg[0], rpy_deg[1], rpy_deg[2] + sgn * yw]
+        p = plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=bin_pt, bin_h_mm=bin_h_mm,
+                      place_rpy_deg=prpy if yw else None)
+        p["place_yaw_in"] = yw
+        if p["ok"]:
+            if yw:
+                p["notes"].append(f"놓을 때 yaw 안쪽 {yw:.0f}° (통 위로 옮기며 돌림)")
+            return p
+        first = first or p
+        if not any(k in " ".join(p["reasons"]) for k in ("통 위로", "통에 넣는", "위로:", "몸통")):
+            return p        # 놓기와 상관없는 이유 (잡기 쪽) — yaw 를 바꿔도 같음
+    if place_yaw is None:
+        first["reasons"].append(f"놓을 때 yaw 안쪽 {list(PLACE_YAWS)}° 다 안 됨 — 통을 몸에서 더 멀리")
+    return first
