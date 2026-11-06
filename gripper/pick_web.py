@@ -697,7 +697,7 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 <button id="stop">■ 정지</button>
 <fieldset><legend>박스 · 손 · 자세</legend>
 <label><input type="radio" name="side" value="left">왼손</label><label><input type="radio" name="side" value="right" checked>오른손</label><br>
-잡는 폭 <input id="size" type="number" value="50" min="10" max="75"> mm (로봇 좌우 방향) · 높이 <input id="height" type="number" value="50" min="15" max="150"> mm<br>
+잡는 폭 <input id="size" type="number" value="40" min="10" max="75"> mm (로봇 좌우 방향) · 높이 <input id="height" type="number" value="90" min="15" max="150"> mm<br>
 놓는 곳 <label><input type="radio" name="dest" value="bin" checked>통</label><label><input type="radio" name="dest" value="same">제자리</label>
 · 통 높이 <input id="binh" type="number" value="80" min="10" max="250"> mm (테이블 → 테두리)<br>
 RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><input id="y" type="number" step="5"> deg
