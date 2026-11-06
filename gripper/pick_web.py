@@ -59,7 +59,7 @@ P2T = np.array(robot_env.CFG["frames"]["pelvis_to_torso"], dtype=float)
 W, H = robot_env.CAMERA_RES
 _cp, _sp = math.cos(CP), math.sin(CP)
 A_CT = np.array([[0.0, -_sp, _cp], [-1.0, 0.0, 0.0], [0.0, -_cp, -_sp]])   # 카메라 → torso 회전 (hand_to_marker 와 같은 식)
-B_CT = np.array([CX, CY, CZ])
+B_CT = np.array([CX, CY, CZ + float(P.get("camera_z_offset_m", 0.0))])   # 높이 보정 (gripper.yaml pick.camera_z_offset_m)
 
 
 def cam_to_pelvis(c):
@@ -412,6 +412,9 @@ class Runner:
                 raise HTTPException(400, "그 픽셀 시선이 통 테두리 높이와 만나지 않음")
         plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt=bin_pt, bin_h_mm=bin_h_mm)
         plan["table_z"] = round(self.table_plane[0] + self.table_plane[1] * top[0] + self.table_plane[2] * top[1], 4)   # 박스 자리 테이블 높이
+        if plan.get("grasp"):     # 자로 확인할 값: 테이블 면 → 집게 가운데 (두 패드 가운데)
+            plan["pre_above_table_mm"] = round((plan["pre"][2] - plan["table_z"]) * 1000)
+            plan["grasp_above_table_mm"] = round((plan["grasp"][2] - plan["table_z"]) * 1000)
         dp = self.cam.point(u, v)          # 비교용: 깊이로 잰 윗면 (계획에는 안 씀)
         if dp is not None:
             d = (dp[0] - top) * 1000
@@ -432,7 +435,7 @@ class Runner:
     def summary(plan):
         if plan is None:
             return None
-        keys = ("ok", "side", "top", "table_z", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+        keys = ("ok", "side", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
         return {k: plan.get(k) for k in keys if k in plan}
 
@@ -1096,6 +1099,7 @@ function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
 function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg}\n`;
  s+=`윗면 가운데 (pelvis, 박스 자리 테이블 z ${p.table_z} + 높이) ${f3(p.top)}\n`;
  if(p.depth_diff_mm) s+=`  (참고: 깊이로 잰 점 − 평면 점 = 앞뒤 ${p.depth_diff_mm[0]} · 좌우 ${p.depth_diff_mm[1]} · 높이 ${p.depth_diff_mm[2]} mm, 흔들림 ${p.depth_spread_mm} mm)\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
+ if(p.pre_above_table_mm!=null) s+=`자로 확인: 집게 가운데(두 패드 가운데)가 테이블 면 위 — 접근 위치 ${p.pre_above_table_mm} mm · 잡는 자리 ${p.grasp_above_table_mm} mm\n`;
  if(p.bin) s+=`통 입구 (클릭) ${f3(p.bin)} · 테두리 z ${p.rim_z} · 놓는 자리 ${f3(p.release)}\n`;
  s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
  (p.reasons||[]).forEach(x=>s+='<span class="bad">✗ '+x+'</span>\n'); (p.notes||[]).forEach(x=>s+='⚠ '+x+'\n');
