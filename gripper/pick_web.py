@@ -418,7 +418,10 @@ class Runner:
                         break
                     gap = pc.gap_mm(q)
                     g = self.grip.snapshot().get(side) or {}
-                    info = f"q {q_before if q_before is None else round(q_before, 2)} → {q:.2f} (≈ {gap:.0f} mm, 목표 {plan['close_mm']:.0f} mm, 명령 {g.get('cmd')})"
+                    info = (f"q {q_before if q_before is None else round(q_before, 2)} → {q:.2f} (≈ {gap:.0f} mm, 목표 {plan['close_mm']:.0f} mm, "
+                            f"명령 {g.get('cmd')}, 토크 {g.get('tau')}, dq {g.get('dq')})")
+                    self._jsonl({"close": {"side": side, "q": round(q, 3), "gap_mm": round(gap, 1), "target_mm": plan["close_mm"],
+                                           "width_mm": plan["width_mm"], "tau": g.get("tau"), "dq": g.get("dq"), "cmd": g.get("cmd")}})
                     # 잡음 = 박스 폭 근처(박스 + 6 mm 이하)까지 실제로 닫혔고, 목표(박스 − squeeze)까지는 못 감 (박스에 막힘)
                     if gap > plan["width_mm"] + 6.0:
                         self.say(f"{name}: {info} → 박스 폭까지 안 닫힘 (그리퍼가 안 움직였거나 박스 밖을 막음) — 멈춤, 들지 않음")

@@ -20,6 +20,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RE_CLOSE = re.compile(r"그리퍼 닫기: q (\S+) → ([\d.]+) \(≈ (\d+) mm, 목표 (\d+) mm")
+RE_TAU = re.compile(r"토크 ([-\d.]+|None)")
 
 
 def load(arg):
@@ -59,6 +60,8 @@ def main():
         m = RE_CLOSE.search(ev)
         if m:
             cur["close"] = (float(m.group(3)), float(m.group(4)))
+            mt = RE_TAU.search(ev)
+            cur["tau"] = mt.group(1) if mt else None
         if "arrival" in r:
             cur["arrivals"].append((r["arrival"], r.get("err_mm")))
         if "result" in r:
@@ -87,7 +90,7 @@ def main():
         arr = [e for name, e in run["arrivals"] if e and name in ("접근 위치로", "내려가기", "통 위로", "통에 넣는 높이로")]
         worst = max((max(abs(v) for v in e) for e in arr), default=None)
         print(f"#{i:2d} {when} {p.get('side', '?'):5s} 박스 {top and [round(v, 3) for v in top]}  폭 {w}  "
-              f"→ {res:5s} | 닫은 간격 {run['close'][0] if run['close'] else '-'} mm {verdict:12s} | "
+              f"→ {res:5s} | 닫은 간격 {run['close'][0] if run['close'] else '-'} mm 토크 {run.get('tau', '-')} {verdict:12s} | "
               f"도착 오차 최대 {worst if worst is not None else '-'} mm {'✓' if good else ''}")
     if runs:
         print(f"\n제대로 끝난 실행 (끝까지 + 똑바로 쥠): {n_ok} / {len(runs)}")
