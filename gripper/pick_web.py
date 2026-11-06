@@ -439,8 +439,8 @@ class Runner:
         cams = {"body": {"w": W // 2, "h": H // 2}}
         if self.wrist:
             for n in self.wrist.names():
-                w0, h0 = self.wrist.size.get(n, (640, 480))
-                cams[n] = {"w": w0 // 2, "h": h0 // 2}
+                w0, h0 = self.wrist.size.get(n, (320, 240))
+                cams[n] = {"w": w0, "h": h0} if w0 <= 320 else {"w": w0 // 2, "h": h0 // 2}   # 320 폭 이하면 그대로
         return cams
 
     def rec_sample(self):
@@ -1078,7 +1078,7 @@ def main():
         wrist = rec.FakeWristCams()
     elif a.cam_only:
         cam, grip = RealCamera(), FakeGripper()
-        wrist = rec.WristCams(pc.CFG.get("wrist_cams"))
+        wrist = rec.WristCams(pc.CFG.get("wrist_cams"), size=pc.CFG.get("wrist_cam_size"))
         print(f"[pick] 카메라만 — 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
     else:
         robot_env.dds_init(a.iface)
@@ -1087,7 +1087,7 @@ def main():
         camp = CamPitchMonitor()
         if camp.err:
             print(f"[pick] ⚠ 카메라 숙임 확인 못 함: {camp.err}")
-        wrist = rec.WristCams(pc.CFG.get("wrist_cams"))
+        wrist = rec.WristCams(pc.CFG.get("wrist_cams"), size=pc.CFG.get("wrist_cam_size"))
         print(f"[pick] 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
     r = Runner(mdl, cam, grip, a.sim or a.cam_only, cam_pitch=None if (a.sim or a.cam_only) else camp, wrist=wrist)
     r.cam_only = a.cam_only

@@ -75,6 +75,8 @@ pick:
 #   확인: v4l2-ctl --list-devices · ls -l /dev/v4l/by-id/
 #   이 PC (2026-11-06 v4l2): USB_Camera (일련번호 없음 → by-path, USB 포트 1 에 꽂을 것) · ZVCAI USB Camera zvcai231100001 (by-id).
 #   왼 · 오른 배정은 아직 확인 전 — 웹 손목 카메라 화면에서 렌즈를 가려 보고 바꿀 것
+wrist_cam_size: [320, 240]    # 손목 카메라를 이 크기로 열고 그대로 저장 (MJPG 30 fps 지원 — v4l2 2026-11-06). 안 되면 640×480 등 차례로
+                              #   ⚠ 320×240 이 전체 화각을 줄인 것인지 가운데를 자른 것인지는 확인 필요 (--cam-only 로 640×480 과 비교)
 wrist_cams:
   wrist_left: /dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0
   wrist_right: /dev/v4l/by-id/usb-ZVCAI_USB_Camera_zvcai231100001-video-index0

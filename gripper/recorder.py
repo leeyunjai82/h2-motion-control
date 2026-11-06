@@ -31,14 +31,14 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
 
 
 # ---------------- 손목 카메라 (USB UVC, OpenCV) ----------------
-SIZES = ((640, 480), (800, 600), (640, 360), (320, 240))   # 손목 카메라 시도 순서 — 장치가 그 크기 · 25 fps 이상으로 연 첫 값
+SIZES = ((320, 240), (640, 480), (800, 600), (640, 360))   # 손목 카메라 시도 순서 (size 를 주면 그 크기 먼저) — 그 크기 · 25 fps 이상으로 연 첫 값
 
 
 class WristCams:
     """gripper.yaml wrist_cams {이름: 장치 경로 또는 번호} — 각 카메라를 스레드로 계속 읽어 최신 프레임만 둠.
     못 연 카메라는 빠짐 (err 에 이유). MJPEG 로 SIZES 를 차례로 시도 — 장치가 지원 안 하는 크기를 받으면 가장 가까운
     크기(이 PC 의 USB_Camera 는 3264×2448 15 fps 일 수 있음)로 열려서, 실제로 열린 크기 · fps 를 보고 고름."""
-    def __init__(self, cfg, fps=30):
+    def __init__(self, cfg, fps=30, size=None):
         self.lk = threading.Lock()
         self.frames, self.caps, self.err, self.size = {}, {}, {}, {}
         for name, dev in (cfg or {}).items():
@@ -49,7 +49,7 @@ class WristCams:
                 self.err[name] = f"못 엶: {dev}"
                 continue
             chosen = None
-            for w, h in SIZES:
+            for w, h in ([tuple(size)] if size else []) + [sz for sz in SIZES if not size or sz != tuple(size)]:
                 cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, w)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, h)

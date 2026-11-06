@@ -51,7 +51,7 @@ gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side
 
 - state = [왼팔 7 실측, 왼 그리퍼 q, 오른팔 7 실측, 오른 그리퍼 q] (rt/lowstate 500 Hz 의 최신값) — 한 손 학습은 학습기에서 골라 씀
 - action = [왼팔 7 지령, 왼 그리퍼 목표, 오른팔 7 지령, 오른 그리퍼 목표] (지령 = arm_server /stream 으로 실제 보낸 값)
-- 카메라: body = D435i 컬러 424×240 + 손목 카메라 (`gripper.yaml wrist_cams`, 장치 크기의 반 — 640×480 이면 320×240).
+- 카메라: body = D435i 컬러 424×240 + 손목 카메라 (`gripper.yaml wrist_cams`, `wrist_cam_size` 320×240 으로 열어 그대로 저장).
   데이터셋 안에서는 카메라 구성 · 크기가 같아야 함 (다르면 녹화를 켤 때 거부)
 - 크기: 잡기 한 번 ≈ 38 초 · 1100 프레임 · 약 16 MB (가짜 카메라 기준, 실제 영상은 JPEG 가 더 클 수 있음)
 - 확인: 가짜 로봇 · 가짜 카메라로 녹화 → npz · meta · zip 까지 (2026-11-06). 실기 녹화 · 학습기 읽기는 아직
