@@ -30,7 +30,8 @@ P = CFG.get("pick") or {}
 _need = ("mm_per_rad", "open_margin_mm", "squeeze_mm", "contact_min_mm", "pad_len_half_mm", "pad_h_half_mm", "tip_beyond_mm",
          "body_back_mm", "body_h_half_mm", "min_overlap_mm", "tip_clear_mm",
          "transit_clear_mm", "approach_m", "lift_m", "hold_s", "rpy_deg", "v_lin", "v_slow", "v_joint",
-         "server_max_vel", "track_abort_deg", "tcp_bias_m", "ready_tcp_m", "ready_rpy_deg", "via_tcp_m", "via_rpy_deg")
+         "server_max_vel", "track_abort_deg", "tcp_bias_m", "ready_tcp_m", "ready_rpy_deg", "via_tcp_m", "via_rpy_deg",
+         "body_front_x", "body_half_y", "body_z_min", "body_clear_m")
 _miss = [k for k in _need if k not in P]
 if _miss:
     sys.exit(f"[pick] gripper.yaml pick: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
@@ -104,6 +105,7 @@ class Model:
             self.fid[side] = m.getFrameId(f"{side}_tcp")
         self.q_slot = [ARM.index(int(J["map"][m.names[j]])) for j in range(1, m.njoints)]
         self.qname = {m.joints[j].idx_q: m.names[j] for j in range(1, m.njoints)}
+        self.jid = {s: {n: m.getJointId(f"{s}_{n}_joint") for n in ("elbow", "wrist_roll", "wrist_yaw")} for s in SIDES}
         self.idx = {s: [m.joints[j].idx_q for j in range(1, m.njoints) if m.names[j].startswith(s + "_")] for s in SIDES}
         if m.nq != 14 or sorted(self.q_slot) != list(range(14)) or any(len(v) != 7 for v in self.idx.values()):
             sys.exit(f"[pick] 축소 모델이 팔 14 축이 아님 (nq {m.nq})")
@@ -138,6 +140,15 @@ class Model:
             qm[ix] = np.clip(qm[ix] + np.clip(dq, -0.1, 0.1), self.lo[ix], self.hi[ix])
         M = self.tcp(qm, side)
         return qm, float(np.linalg.norm(p - M.translation)), float(np.linalg.norm(pin.log3(R @ M.rotation.T)))
+
+    def body_gap(self, qm, side):
+        """몸 앞 영역(|y| < body_half_y, z > body_z_min) 에 있는 팔꿈치 · 손목 · 그리퍼 겉 점의 x − 몸통 앞면 x [m]. 없으면 None."""
+        pin.forwardKinematics(self.m, self.d, qm)
+        pts = [self.d.oMi[self.jid[side][n]].translation for n in ("elbow", "wrist_roll", "wrist_yaw")]
+        T = self.tcp(qm, side)
+        pts += list(ENVELOPE @ T.rotation.T + T.translation)
+        xs = [p[0] for p in pts if abs(p[1]) < float(P["body_half_y"]) and p[2] > float(P["body_z_min"])]
+        return (min(xs) - float(P["body_front_x"])) if xs else None
 
     def lowest(self, qm, side):
         """그리퍼 겉 점 중 가장 낮은 z (pelvis)."""
@@ -399,6 +410,10 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=N
         if kind != "arm":
             continue
         cmin = sg.clear_min if sg.clear_min is not None else floor_z + P["transit_clear_mm"] / 1000.0
+        gaps = [g for g in (mdl.body_gap(qq, side) for qq in sg.qs[::3]) if g is not None]
+        if gaps and min(gaps) < float(P["body_clear_m"]):
+            reasons.append(f"{sg.name}: 팔 · 그리퍼가 몸통 앞면에 {max(0.0, min(gaps)) * 100:.0f} cm 까지 (최소 {float(P['body_clear_m']) * 100:.0f} cm)"
+                           " — 통 · 박스를 몸에서 더 멀리 (통 가운데 pelvis 앞 0.40 m 이상)")
         low = min(mdl.lowest(qq, side) for qq in sg.qs)
         if low < cmin - 1e-4:
             ref, what = ((out["rim_z"], "통 테두리") if sg.clear_min == clear_bin and clear_bin is not None else (floor_z, "바닥(박스 아랫면)"))
