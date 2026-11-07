@@ -372,11 +372,57 @@ class View:
                 rgba = [float(v) for v in col.get("rgba").split()] if col is not None and col.get("rgba") else [0.75, 0.75, 0.78, 1.0]
                 self.visuals.append({"link": name, "mesh": fn, "origin": Tm.T.flatten().round(6).tolist(), "scale": sc, "rgba": rgba})
                 self.fids[name] = self.full.getFrameId(name, pin.BODY)
-        self.mesh_ok = set(v["mesh"] for v in self.visuals)
+        self.mesh_path = {v["mesh"]: os.path.join(self.mesh_dir, v["mesh"]) for v in self.visuals}
+        self.dex1 = self._dex1()
+        if self.dex1:       # H2 URDF 의 wrist_yaw 메시에는 기본 다섯 손가락 손이 붙어 있음 — 어댑터 시작보다 앞쪽 삼각형은 안 그림
+            for v in self.visuals:
+                if v["link"].endswith("_wrist_yaw_link"):
+                    v["cut_x"] = self.dex1["adapter"][0]
+
+    def _dex1(self):
+        """Dex1-1 (Unitree 공식 URDF) — 몸체 + 손가락 2 (직선 관절). 손목 wrist_yaw 기준 장착 자세. 없으면 None (상자만 그림)."""
+        dv = V.get("dex1_view") or {}
+        path = os.path.join(HERE, str(dv.get("urdf", "")))
+        if not dv or not os.path.isfile(path):
+            print(f"[vr] Dex1 URDF 없음 ({path}) — 3D 보기에서 그리퍼를 상자로만 그림", flush=True)
+            return None
+        mdir = os.path.dirname(path)
+        root = ET.parse(path).getroot()
+        links = {}
+        for link in root.findall("link"):
+            vis = link.find("visual")
+            mesh = None if vis is None else vis.find("geometry/mesh")
+            if mesh is None:
+                continue
+            fn = os.path.basename(mesh.get("filename", ""))
+            fp = os.path.join(mdir, "meshes", fn)
+            if not os.path.isfile(fp):
+                continue                      # Camera.STL 등 안 가져온 메시
+            col = vis.find("material/color")
+            key = "dex1_" + fn
+            self.mesh_path[key] = fp
+            links[link.get("name")] = {"mesh": key, "rgba": [float(v) for v in col.get("rgba").split()] if col is not None else [0.8, 0.8, 0.85, 1]}
+        base = next((j.find("parent").get("link") for j in root.findall("joint")), None)
+        fingers = []
+        for j in root.findall("joint"):
+            c = j.find("child").get("link")
+            if j.get("type") != "prismatic" or c not in links or j.find("parent").get("link") != base:
+                continue
+            fingers.append({**links[c], "xyz": [float(v) for v in j.find("origin").get("xyz").split()],
+                            "axis": [float(v) for v in j.find("axis").get("xyz").split()],
+                            "upper": float(j.find("limit").get("upper"))})
+        if base not in links or len(fingers) != 2:
+            print("[vr] Dex1 URDF 구조가 예상과 다름 (몸체 + 직선 손가락 2) — 상자로만 그림", flush=True)
+            return None
+        Tm = np.eye(4)
+        Tm[:3, :3] = pin.rpy.rpyToMatrix(*[math.radians(float(v)) for v in dv["mount_rpy_deg"]])
+        Tm[0, 3] = float(pc.TCP_OFF[0]) - float(dv["origin_to_tcp_m"])
+        return {"base": links[base], "fingers": fingers, "mount": Tm.T.flatten().round(6).tolist(),
+                "adapter": [float(v) for v in dv["adapter_m"]]}
 
     def info(self):
         e = pc.ENVELOPE
-        return {"visuals": self.visuals, "table_z": self.t.table_z,
+        return {"visuals": self.visuals, "dex1": self.dex1, "table_z": self.t.table_z,
                 "body": {"front_x": float(P["body_front_x"]), "half_y": float(P["body_half_y"]), "z_min": float(P["body_z_min"]),
                          "clear": float(P["body_clear_m"])},
                 "envelope": {"min": e.min(axis=0).round(4).tolist(), "max": e.max(axis=0).round(4).tolist()}}
@@ -394,6 +440,7 @@ class View:
                 h = t.hands[s]
                 T = t.mdl.tcp(t.q, s)
                 hands[s] = {"tcp": T.homogeneous.T.flatten().round(5).tolist(), "level": h.st["level"],
+                            "open": round(min(1.0, max(0.0, 1.0 - h.trig)), 3),     # 벌림 비율 (0 닫힘 ~ 1 최대) — 손가락 그림용
                             "target": None if h.tgt is None else r3(h.tgt[0]), "state": h.st["state"], "reason": h.st.get("reason", "")}
             return {"links": links, "hands": hands}
 
@@ -429,9 +476,9 @@ def make_app(t):
 
     @app.get("/api/mesh/{name}")
     def api_mesh(name: str):
-        if name not in view.mesh_ok:
+        if name not in view.mesh_path:
             raise HTTPException(404, "mesh 없음")
-        return FileResponse(os.path.join(view.mesh_dir, name), media_type="application/octet-stream")
+        return FileResponse(view.mesh_path[name], media_type="application/octet-stream")
 
     @app.get("/vendor/three.min.js")
     def three_js():
