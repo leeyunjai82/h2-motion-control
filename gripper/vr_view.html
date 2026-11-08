@@ -136,7 +136,7 @@ async function load() {
   // 손: Dex1-1 (Unitree URDF 메시, 손목에 장착) + 어댑터 원통 + 그리퍼 겉 범위 (안전 검사용, 선 = 상태 색) + 목표 원
   const e = info.envelope, dx = info.dex1;
   const dexGeo = {};
-  if (dx) for (const k of [dx.base.mesh, ...dx.fingers.map(f => f.mesh)])
+  if (dx) for (const k of [dx.base.mesh, ...dx.fingers.map(f => f.mesh), ...(dx.adapter_mesh ? [dx.adapter_mesh] : [])])
     if (!dexGeo[k]) dexGeo[k] = parseSTL(await (await fetch("/api/mesh/" + encodeURIComponent(k))).arrayBuffer());
   const lam = rgba => new THREE.MeshLambertMaterial({ color: new THREE.Color(rgba[0], rgba[1], rgba[2]) });
   for (const s of ["right", "left"]) {
@@ -151,9 +151,13 @@ async function load() {
     let dex = null;
     if (dx) {
       const wg = new THREE.Group(); wg.matrixAutoUpdate = false; root.add(wg);          // 손목 (wrist_yaw_link)
-      const a = dx.adapter;
-      const cyl = new THREE.Mesh(new THREE.CylinderGeometry(a[2] / 2, a[2] / 2, a[1] - a[0], 24), lam([0.35, 0.35, 0.38]));
-      cyl.rotation.z = -Math.PI / 2; cyl.position.x = (a[0] + a[1]) / 2; wg.add(cyl);
+      if (dx.adapter_mesh) {                 // 사용자 어댑터 STL (서버가 손목 기준 m 로 바꿔 줌)
+        wg.add(new THREE.Mesh(dexGeo[dx.adapter_mesh], lam([0.30, 0.30, 0.33])));
+      } else {                               // 파일 없으면 원통 (어림)
+        const a = dx.adapter;
+        const cyl = new THREE.Mesh(new THREE.CylinderGeometry(a[2] / 2, a[2] / 2, a[1] - a[0], 24), lam([0.35, 0.35, 0.38]));
+        cyl.rotation.z = -Math.PI / 2; cyl.position.x = (a[0] + a[1]) / 2; wg.add(cyl);
+      }
       const dg = new THREE.Group(); dg.matrixAutoUpdate = false; dg.matrix.fromArray(dx.mount); wg.add(dg);
       dg.add(new THREE.Mesh(dexGeo[dx.base.mesh], lam(dx.base.rgba)));
       const fingers = dx.fingers.map(f => { const m = new THREE.Mesh(dexGeo[f.mesh], lam(f.rgba)); dg.add(m); return m; });

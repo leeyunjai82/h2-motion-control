@@ -31,7 +31,7 @@ import pinocchio as pin
 import uvicorn
 import xml.etree.ElementTree as ET
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 
 READ_ONLY = True            # 1단계 — 이 파일에는 arm_server / 그리퍼로 보내는 코드가 없음
 
@@ -373,6 +373,7 @@ class View:
                 self.visuals.append({"link": name, "mesh": fn, "origin": Tm.T.flatten().round(6).tolist(), "scale": sc, "rgba": rgba})
                 self.fids[name] = self.full.getFrameId(name, pin.BODY)
         self.mesh_path = {v["mesh"]: os.path.join(self.mesh_dir, v["mesh"]) for v in self.visuals}
+        self.mesh_bytes = {}        # 메모리에서 만든 메시 (어댑터)
         self.dex1 = self._dex1()
         if self.dex1:       # H2 URDF 의 wrist_yaw 메시에는 기본 다섯 손가락 손이 붙어 있음 — 어댑터 시작보다 앞쪽 삼각형은 안 그림
             for v in self.visuals:
@@ -417,8 +418,43 @@ class View:
         Tm = np.eye(4)
         Tm[:3, :3] = pin.rpy.rpyToMatrix(*[math.radians(float(v)) for v in dv["mount_rpy_deg"]])
         Tm[0, 3] = float(pc.TCP_OFF[0]) - float(dv["origin_to_tcp_m"])
-        return {"base": links[base], "fingers": fingers, "mount": Tm.T.flatten().round(6).tolist(),
-                "adapter": [float(v) for v in dv["adapter_m"]]}
+        out = {"base": links[base], "fingers": fingers, "mount": Tm.T.flatten().round(6).tolist(),
+               "adapter": [float(v) for v in dv["adapter_m"]], "adapter_mesh": None}
+        stl = self._adapter_stl(dv.get("adapter_stl"))
+        if stl is not None:
+            self.mesh_bytes["adapter"] = stl
+            out["adapter_mesh"] = "adapter"
+        return out
+
+    def _adapter_stl(self, a):
+        """사용자 어댑터 STL (mm, 원본 좌표) → 손목 wrist_yaw 기준 (m) 이진 STL. 파일이 없으면 None (원통으로 그림)."""
+        if not a:
+            return None
+        path = os.path.join(HERE, str(a["path"]))
+        if not os.path.isfile(path):
+            print(f"[vr] 어댑터 STL 없음 ({path}) — 원통으로 그림", flush=True)
+            return None
+        raw = open(path, "rb").read()
+        n = int.from_bytes(raw[80:84], "little") if len(raw) >= 84 else 0
+        if len(raw) == 84 + n * 50:
+            v = np.frombuffer(raw[84:], dtype=np.dtype([("n", "<f4", 3), ("v", "<f4", 9), ("a", "<u2")]))["v"].reshape(-1, 3).astype(float)
+        else:
+            import re
+            v = np.array(re.findall(rb"vertex\s+(\S+)\s+(\S+)\s+(\S+)", raw), dtype=float)
+        if len(v) < 3 or len(v) % 3:
+            print(f"[vr] 어댑터 STL 을 못 읽음 ({path}) — 원통으로 그림", flush=True)
+            return None
+        R = np.asarray(a["rot"], dtype=float)
+        w = (v - np.asarray(a["origin_mm"], dtype=float)) @ R.T * float(a["scale"]) + np.asarray(a["at_m"], dtype=float)
+        tri = w.reshape(-1, 3, 3)
+        nrm = np.cross(tri[:, 1] - tri[:, 0], tri[:, 2] - tri[:, 0])
+        nrm /= np.maximum(np.linalg.norm(nrm, axis=1, keepdims=True), 1e-12)
+        rec = np.zeros(len(tri), dtype=np.dtype([("n", "<f4", 3), ("v", "<f4", 9), ("a", "<u2")]))
+        rec["n"], rec["v"] = nrm, tri.reshape(-1, 9)
+        lo, hi = w.min(axis=0), w.max(axis=0)
+        print(f"[vr] 어댑터 STL {len(tri)} 삼각형 — 손목 기준 x {lo[0] * 1000:.1f}~{hi[0] * 1000:.1f} mm · "
+              f"y ±{max(abs(lo[1]), hi[1]) * 1000:.1f} · z ±{max(abs(lo[2]), hi[2]) * 1000:.1f}", flush=True)
+        return b"\0" * 80 + len(tri).to_bytes(4, "little") + rec.tobytes()
 
     def info(self):
         e = pc.ENVELOPE
@@ -476,6 +512,8 @@ def make_app(t):
 
     @app.get("/api/mesh/{name}")
     def api_mesh(name: str):
+        if name in view.mesh_bytes:
+            return Response(view.mesh_bytes[name], media_type="application/octet-stream")
         if name not in view.mesh_path:
             raise HTTPException(404, "mesh 없음")
         return FileResponse(view.mesh_path[name], media_type="application/octet-stream")
