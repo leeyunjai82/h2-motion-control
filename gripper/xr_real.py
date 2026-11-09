@@ -36,6 +36,8 @@ if _miss:
 MAX_VEL_CAP = 1.0           # VR 실기 스트림 max_vel 상한 [rad/s]
 JUMP_RAD = 0.5              # 한 명령에서 관절 목표가 이보다 크게 바뀌면 버림 (IK 튐)
 IDLE_END_S = 1.5            # 이 시간 넘게 명령이 없으면 세션 끝
+SQUEEZE_Q = float(P["squeeze_mm"]) / pc.MM_PER_RAD   # 그리퍼를 지금 손가락 위치보다 이만큼만 더 조임 (≈ 8 mm) — 물건에 막혀도
+                                                      #   완전 닫힘까지 억지로 조이지 않음 (계속 힘이 걸리면 과열). 자동 잡기의 squeeze_mm 와 같음
 
 
 class XRTeleop:
@@ -241,16 +243,27 @@ class XRTeleop:
             raise HTTPException(409, "명령 · 실측 차이 — 세션 끝")
         # 그리퍼: 트리거만 따름 (그립과 상관없이 — 당기면 닫힘, 놓으면 벌림). Quest 입력이 없으면 그대로
         for side in pc.SIDES:
-            if grip.get(side) is None:
-                continue
-            closing = min(max(float(grip[side]), 0.0), 1.0)
-            gq = pc.q_for_gap(pc.gap_mm(pc.Q_HI) * (1.0 - closing))
-            if self.grip_last[side] is None or abs(gq - self.grip_last[side]) > 0.03:
-                if r.grip.set(side, gq):
-                    self.grip_last[side] = gq
+            if grip.get(side) is not None:
+                self._grip(side, grip[side])
         qm = mdl.to_model(tgt)
         return {"ok": True, "hands": self.hands, "vel_clip": bool(res.get("vel_clip")), "lag_deg": round(lag, 1),
                 "q": {mdl.qname[i]: float(qm[i]) for s in pc.SIDES for i in mdl.idx[s]}}
+
+    def grip_target(self, closing, q_meas):
+        """트리거 닫힘 비율 · 지금 손가락 q → 보낼 목표 q. 닫는 쪽은 지금 위치보다 SQUEEZE_Q 까지만 (물건에 막히면 거기서 멈춤)."""
+        want = pc.q_for_gap(pc.gap_mm(pc.Q_HI) * (1.0 - min(max(float(closing), 0.0), 1.0)))
+        if q_meas is None:
+            return None                     # 그리퍼 상태를 모르면 안 보냄
+        return min(max(max(want, float(q_meas) - SQUEEZE_Q), pc.Q_LO), pc.Q_HI)
+
+    def _grip(self, side, closing):
+        st = self.r.grip.state(side)
+        gq = self.grip_target(closing, None if st is None else st.get("q"))
+        if gq is None:
+            return
+        if self.grip_last[side] is None or abs(gq - self.grip_last[side]) > 0.03:
+            if self.r.grip.set(side, gq):
+                self.grip_last[side] = gq
 
     def state(self):
         with self.lk:
