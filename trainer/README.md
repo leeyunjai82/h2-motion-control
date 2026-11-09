@@ -45,7 +45,6 @@ ResNet18 ImageNet 가중치(45 MB)는 설치 ⑦ 에서 미리 받습니다 (`~/
 # → http://<학습 PC IP>:50100/   (접근 키 없음)
 ```
 
-- 보여주기만 (학습 · 업로드 · 지우기 막음, 그래프 · model zip 받기만): `./trainer/start_trainer_view.sh`
 - 데이터 위치: `TRAINER_DATA=/mnt/ssd/trainer ./trainer/start_trainer.sh` (기본 `trainer/data/`, git 에 안 올라감)
 - LAN 전용. 접근 키가 없으니 인터넷에 열지 마세요.
 
