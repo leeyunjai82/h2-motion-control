@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>데이터 수집 (VR)</title>
+<style>
+  :root { --bg:#14161a; --panel:#1d2026; --line:#2c3038; --fg:#e8eaed; --sub:#9aa0a6; --ok:#3ccf6b; --warn:#f0b429; --bad:#ef5350; --acc:#4da3ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font-family: system-ui, "Noto Sans KR", sans-serif; }
+  header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0 8px 0 0; }
+  header a { color: var(--acc); text-decoration: none; margin-left: auto; font-size: 14px; }
+  input, select { background: #111317; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 5px 8px; font-size: 14px; }
+  label { font-size: 14px; color: var(--sub); }
+  main { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(320px, 1fr); gap: 14px; padding: 14px 16px; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .card h2 { font-size: 13px; color: var(--sub); font-weight: 600; margin: 0 0 8px; letter-spacing: .02em; }
+  .cams img { width: 100%; display: block; border-radius: 8px; background: #000; }
+  .wrists { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px; }
+  .camlbl { font-size: 12px; color: var(--sub); margin: 4px 2px 0; }
+  .next { font-size: 22px; font-weight: 700; line-height: 1.35; }
+  .next small { display: block; font-size: 13px; font-weight: 400; color: var(--sub); margin-top: 4px; }
+  .bar { height: 10px; background: #111317; border-radius: 5px; overflow: hidden; margin: 4px 0 10px; }
+  .bar i { display: block; height: 100%; background: var(--acc); }
+  .row { display: flex; justify-content: space-between; font-size: 14px; }
+  .btns { display: flex; gap: 10px; margin: 10px 0 6px; }
+  button { font-size: 17px; font-weight: 700; border: 0; border-radius: 8px; padding: 12px 16px; cursor: pointer; color: #fff; flex: 1; }
+  button:disabled { opacity: .35; cursor: default; }
+  .b-start { background: #1f7a3f; } .b-stop { background: #8a2b2b; }
+  .b-keep { background: #1f7a3f; } .b-drop { background: #5a5f69; }
+  .kbd { font-size: 11px; font-weight: 400; opacity: .8; margin-left: 4px; }
+  .rec { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: var(--bad); animation: blink 1s infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 6px; }
+  .chip { font-size: 13px; padding: 4px 8px; border-radius: 6px; background: #111317; border: 1px solid var(--line); }
+  .ok { color: var(--ok); } .warn { color: var(--warn); } .bad { color: var(--bad); } .sub { color: var(--sub); font-size: 13px; }
+  .pending { border-color: var(--warn); }
+  .msg { font-size: 14px; min-height: 20px; }
+  .btnlink { display: block; text-align: center; background: #1f4f8a; color: #fff; text-decoration: none; font-weight: 700; border-radius: 8px; padding: 12px; }
+  .btnlink.off { opacity: .35; pointer-events: none; }
+  .linkbtn { background: none; border: 1px solid var(--line); color: var(--acc); font-size: 14px; font-weight: 600; padding: 8px 10px; margin-top: 8px; width: 100%; }
+  #epm { position: fixed; inset: 0; background: rgba(0,0,0,.7); display: none; z-index: 10; }
+  #epm .box { position: absolute; inset: 24px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; display: grid; grid-template-columns: 280px minmax(0,1fr); grid-template-rows: auto minmax(0,1fr); }
+  @media (max-width: 900px) { #epm .box { inset: 6px; grid-template-columns: 1fr; grid-template-rows: auto 30vh minmax(0,1fr); } }
+  #epm .top { grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+  #epm .top b { font-size: 16px; } #epm .top .x { margin-left: auto; flex: none; white-space: nowrap; padding: 6px 14px; background: #5a5f69; font-size: 15px; }
+  #eplist { overflow-y: auto; border-right: 1px solid var(--line); }
+  .ep { padding: 8px 12px; border-bottom: 1px solid var(--line); cursor: pointer; font-size: 14px; display: flex; gap: 8px; align-items: baseline; }
+  .ep:hover { background: #262a31; } .ep.sel { background: #1f3550; }
+  .ep .t { margin-left: auto; color: var(--sub); font-size: 12px; }
+  #epview { overflow-y: auto; padding: 12px 14px; }
+  #epcams { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
+  #epcams img { width: 100%; background: #000; border-radius: 6px; display: block; }
+  .ctlrow { display: flex; gap: 10px; align-items: center; margin: 10px 0; }
+  .ctlrow button { flex: none; white-space: nowrap; padding: 8px 14px; font-size: 15px; }
+  .ctlrow input[type=range] { flex: 1; }
+</style>
+</head>
+<body>
+<header>
+  <h1>데이터 수집 (VR)</h1>
+  <label>데이터셋 <input id="ds" size="16"></label>
+  <label><input type="checkbox" id="recon"> 수집 켬</label>
+  <label>목표 <input id="goal" type="number" value="30" min="1" style="width:60px"> 개씩</label>
+</header>
+<main>
+  <section>
+    <div class="card cams">
+      <img id="vhead" src="/video" alt="머리 카메라">
+      <div class="camlbl">머리 카메라 (body)</div>
+      <div class="wrists">
+        <div><img id="vwl" src="/video_wrist/wrist_left" alt="왼손 카메라"><div class="camlbl">왼손 (wrist_left)</div></div>
+        <div><img id="vwr" src="/video_wrist/wrist_right" alt="오른손 카메라"><div class="camlbl">오른손 (wrist_right)</div></div>
+      </div>
+    </div>
+  </section>
+  <section>
+    <div class="card">
+      <h2>다음 할 일</h2>
+      <div class="next" id="next">—</div>
+    </div>
+    <div class="card">
+      <h2>진행 (저장된 성공 에피소드)</h2>
+      <div class="row"><span>오른쪽 큐브 → 오른칸 (오른손)</span><b id="nr">0</b></div><div class="bar"><i id="br" style="width:0"></i></div>
+      <div class="row"><span>왼쪽 큐브 → 왼칸 (왼손)</span><b id="nl">0</b></div><div class="bar"><i id="bl" style="width:0"></i></div>
+      <div class="sub" id="dsinfo"></div>
+      <button class="linkbtn" id="epopen">수집 데이터 보기 (에피소드별) ▸</button>
+    </div>
+    <div class="card" id="ctl">
+      <h2>VR 조작</h2>
+      <label>관절 속도 <select id="vel"><option>0.2</option><option selected>0.3</option><option>0.5</option></select> rad/s</label>
+      <label style="margin-left:10px"><input type="checkbox" id="notable"> 테이블 검사 끔</label>
+      <div class="btns">
+        <button class="b-start" id="start">● 시작<span class="kbd">Space</span></button>
+        <button class="b-stop" id="stop" disabled>■ 끝<span class="kbd">Space</span></button>
+      </div>
+      <div class="msg" id="xrmsg">꺼짐</div>
+      <div class="chips"><span class="chip" id="hr">오른손 —</span><span class="chip" id="hl">왼손 —</span></div>
+      <div id="recline" class="sub" style="margin-top:8px"></div>
+    </div>
+    <div class="card pending" id="pend" style="display:none">
+      <h2>방금 에피소드</h2>
+      <div id="pinfo" class="msg"></div>
+      <div class="btns">
+        <button class="b-keep" id="keep">저장<span class="kbd">S</span></button>
+        <button class="b-drop" id="drop">버리기<span class="kbd">D</span></button>
+      </div>
+    </div>
+    <div class="card">
+      <h2>데이터 내려받기 → 학습 PC 로</h2>
+      <a id="dl" class="btnlink" href="#">데이터셋 zip 받기 (저장한 성공 에피소드만)</a>
+      <div class="sub" style="margin-top:6px">받은 zip 을 학습 화면 (<code>./trainer/start_trainer_xpu.sh</code>, :50100) 에 올리면 됨</div>
+    </div>
+    <div class="card">
+      <h2>모델 올려서 추론 (ACT 정책)</h2>
+      <input type="file" id="mfile" accept=".zip" style="max-width:100%">
+      <label>장치 <select id="mdev"><option>GPU</option><option>CPU</option><option>NPU</option></select></label>
+      <div class="btns"><button class="b-keep" id="mup">올리고 불러오기</button></div>
+      <div class="msg" id="minfo">불러온 모델 없음</div>
+      <div class="sub" id="mcheck"></div>
+      <div class="btns">
+        <button class="b-start" id="pstart" disabled>▶ 정책 시작</button>
+        <button class="b-stop" id="pstop" disabled>■ 정지</button>
+      </div>
+      <div class="msg" id="pstate"></div>
+    </div>
+    <div class="card">
+      <h2>로봇</h2>
+      <div class="sub" id="robot">—</div>
+    </div>
+  </section>
+</main>
+<div id="epm"><div class="box">
+  <div class="top"><b id="eptitle">에피소드</b><span class="sub" id="epsum"></span><button class="x" id="epclose">닫기 (Esc)</button></div>
+  <div id="eplist"></div>
+  <div id="epview"><div class="sub">왼쪽에서 에피소드를 고르세요</div></div>
+</div></div>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const post = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b || {}) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.status); return j; };
+let st = null, ds = null, busy = false;
+const SIDE_KO = { right: "오른손", left: "왼손", both: "양손" };
+
+async function recSet() {
+  try { await post("/api/rec", { enabled: $("recon").checked, name: $("ds").value.trim() }); refreshDs(); }
+  catch (e) { $("recon").checked = false; alert(e.message); }
+}
+$("recon").onchange = recSet;
+$("ds").onchange = () => { if ($("recon").checked) recSet(); else refreshDs(); };
+$("goal").onchange = render;
+
+async function start() {
+  if (busy || !st || st.xr.active || st.rec.pending) return;
+  if (!$("recon").checked && !confirm("수집이 꺼져 있습니다 (녹화 안 됨). 그래도 시작할까요?")) return;
+  busy = true;
+  try { await post("/api/xr/start", { max_vel: +$("vel").value, no_table: $("notable").checked }); }
+  catch (e) { alert(e.message); } finally { busy = false; }
+}
+async function stop() { if (busy) return; busy = true; try { await post("/api/xr/stop"); } catch (e) { alert(e.message); } finally { busy = false; } }
+async function decide(keep) {
+  if (busy || !st || !st.rec.pending) return;
+  busy = true;
+  try { await post("/api/rec/decide", { keep }); refreshDs(); } catch (e) { alert(e.message); } finally { busy = false; }
+}
+$("start").onclick = start; $("stop").onclick = stop;
+$("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
+document.addEventListener("keydown", e => {
+  if (epOpen) { epKey(e); return; }          // 에피소드 보기 중에는 VR 단축키 (Space = 시작) 안 받음
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
+  if (e.code === "Space") { e.preventDefault(); if (st && st.xr.active) stop(); else start(); }
+  else if (e.key === "s" || e.key === "S" || e.key === "ㄴ") decide(true);
+  else if (e.key === "d" || e.key === "D" || e.key === "ㅇ") decide(false);
+});
+
+async function refreshDs() {
+  try {
+    const j = await (await fetch("/api/datasets")).json();
+    const name = $("ds").value.trim();
+    ds = (j.datasets || []).find(d => d.name === name) || null;
+    const cams = Object.entries(j.cameras_now || {}).map(([k, v]) => `${k} ${v.w}×${v.h}`).join(" · ");
+    $("dsinfo").textContent = (ds ? `전체 ${ds.episodes} 개 (성공 ${ds.ok}) · ${ds.size_mb} MB` : "새 데이터셋 (아직 에피소드 없음)") + (cams ? ` — 카메라 ${cams}` : "");
+    render();
+  } catch (e) {}
+}
+
+function render() {
+  if (!st) return;
+  const goal = Math.max(1, +$("goal").value || 30);
+  const sides = (ds && ds.sides) || {};
+  const nr = sides.right || 0, nl = sides.left || 0;
+  $("nr").textContent = `${nr} / ${goal}`; $("nl").textContent = `${nl} / ${goal}`;
+  $("br").style.width = `${Math.min(100, nr / goal * 100)}%`; $("bl").style.width = `${Math.min(100, nl / goal * 100)}%`;
+  // 다음 할 일: 마지막 저장이 오른손이면 왼쪽, 아니면 오른쪽 (오른쪽 → 왼쪽 순서)
+  const last = ds && ds.last_side;
+  const nextRight = last !== "right";
+  $("next").innerHTML = st.rec.pending ? "방금 에피소드를 <span class='warn'>저장 / 버리기</span>"
+    : st.xr.active ? `${nextRight ? "오른쪽 큐브 → 오른칸 (오른손)" : "왼쪽 큐브 → 왼칸 (왼손)"} <small>그립(중지) 누른 채 팔 이동 · 트리거(검지) = 잡기 · 넣고 나서 [■ 끝]</small>`
+    : nextRight ? `오른쪽 큐브 → 오른칸 (오른손)<small>통 비우고 큐브 2 개를 양옆에 (위치 조금씩 바꿔서) → [● 시작]</small>`
+                : `왼쪽 큐브 → 왼칸 (왼손)<small>오른칸 큐브는 그대로 두고 → [● 시작]</small>`;
+  // 조작
+  const x = st.xr, r = st.rec;
+  $("start").disabled = x.active || !!r.pending || st.busy && !x.active;
+  $("stop").disabled = !x.active;
+  $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}` : `<span class="sub">${x.msg}</span>`;
+  const chip = (k, ko) => { const h = (x.hands || {})[k] || {}; const c = h.level === "stop" ? "bad" : h.level === "ok" ? "ok" : "sub";
+    return `${ko} <span class="${c}">${h.state || "—"}</span>${h.reason ? ` <span class="sub">${h.reason}</span>` : ""}`; };
+  $("hr").innerHTML = chip("right", "오른손"); $("hl").innerHTML = chip("left", "왼손");
+  $("recline").innerHTML = r.active ? `<span class="rec"><span class="dot"></span>녹화 중 ${r.n} 프레임 (${(r.n / 30).toFixed(1)} 초) → ${r.name}</span>`
+    : r.on ? `수집 켬 → ${r.name} ([● 시작] 부터 [■ 끝] 까지 한 에피소드)` : `<span class="warn">수집 꺼짐 — 녹화 안 됨</span>`;
+  // 결정 대기
+  $("pend").style.display = r.pending ? "" : "none";
+  if (r.pending) {
+    const p = r.pending, ex = p.extra || {};
+    $("pinfo").innerHTML = `${p.n} 프레임 · ${p.duration_s} 초 · 쓴 손 <b>${SIDE_KO[ex.side] || ex.side || "-"}</b>` +
+      (ex.why ? ` · <span class="sub">${ex.why}</span>` : "") + (ex.side === "both" ? ` <span class="warn">— 양손이 다 움직임 (한 손만 쓰는 규칙이면 버리기)</span>` : "");
+  }
+  // 로봇
+  const g = st.gripper || {}; const gm = k => g[k] ? `${g[k].mm} mm` : "상태 없음";
+  $("robot").innerHTML = `팔: ${st.arm} · 그리퍼 L ${gm("left")} · R ${gm("right")} · 테이블 ${st.table_z == null ? "<span class='warn'>안 잼</span>" : `z ${st.table_z.toFixed(3)}`}` +
+    (st.cam_pitch ? ` · 카메라 숙임 차이 ${st.cam_pitch.diff > 0 ? "+" : ""}${st.cam_pitch.diff.toFixed(2)}°` : "");
+}
+
+$("mup").onclick = async () => {
+  const f = $("mfile").files[0];
+  if (!f) { alert("모델 zip 을 고르세요"); return; }
+  $("minfo").textContent = "올리는 중…";
+  try {
+    const r = await fetch("/api/model/upload?filename=" + encodeURIComponent(f.name), { method: "POST", body: f });
+    const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
+    $("minfo").textContent = `불러오는 중 (${j.name}, 컴파일 몇 초)…`;
+    await post("/api/model/load", { name: j.name, device: $("mdev").value });
+  } catch (e) { alert(e.message); $("minfo").textContent = "실패: " + e.message; }
+};
+$("pstart").onclick = async () => {
+  if (!confirm("실제 팔이 정책대로 움직입니다. 주변을 비우고 E-stop 을 손에 두세요. 시작할까요?")) return;
+  try { await post("/api/policy/start"); } catch (e) { alert(e.message); }
+};
+$("pstop").onclick = () => post("/api/policy/stop").catch(e => alert(e.message));
+
+function renderModel() {
+  const p = st.policy || {}, m = p.loaded;
+  $("minfo").innerHTML = m ? `<b>${m.name}</b> · ${m.device} · ${SIDE_KO[m.side] || m.side} · 추론 ${m.infer_ms} ms · 에피소드 ${m.episodes ?? "-"} · 스텝 ${m.steps ?? "-"}`
+                           : ($("minfo").textContent.startsWith("올리는") || $("minfo").textContent.startsWith("불러오는") ? $("minfo").textContent : "불러온 모델 없음");
+  const bad = p.check || [];
+  $("mcheck").innerHTML = m && !p.running ? (bad.length ? bad.map(b => `<div class="warn">· ${b}</div>`).join("") : '<span class="ok">시작 조건 OK</span>') : "";
+  $("pstart").disabled = !m || p.running || bad.length > 0;
+  $("pstop").disabled = !p.running;
+  $("pstate").innerHTML = p.running ? `<span class="ok">● 실행 중</span> ${p.phase || ""} · ${p.step} 스텝 · 추론 ${p.infer_ms ?? "-"} ms`
+                                    : (p.why_end ? `<span class="sub">끝: ${p.why_end}</span>` : "");
+  const name = $("ds").value.trim();
+  $("dl").href = name ? `/api/dataset/zip?name=${encodeURIComponent(name)}&only_ok=true` : "#";
+  $("dl").classList.toggle("off", !(ds && ds.ok > 0) || !!(st.rec && st.rec.active));
+}
+
+// ---------------- 에피소드 보기 ----------------
+let epOpen = false, epName = "", epCur = null, epI = 0, epPlay = null, epList = [];
+const SIDE_SHORT = { right: "오른손", left: "왼손", both: "양손", none: "안 씀" };
+const hhmm = s => (s || "").replace(/^\d{4}-(\d\d)-(\d\d)T(\d\d:\d\d).*$/, "$1/$2 $3");
+$("epopen").onclick = () => openEp($("ds").value.trim());
+$("epclose").onclick = closeEp;
+$("epm").onclick = e => { if (e.target.id === "epm") closeEp(); };
+
+async function openEp(name) {
+  if (!name) { alert("데이터셋 이름을 넣으세요"); return; }
+  epName = name; epOpen = true; $("epm").style.display = "block";
+  $("eptitle").textContent = `수집 데이터 — ${name}`;
+  await loadEpList();
+}
+function closeEp() { epOpen = false; stopPlay(); $("epm").style.display = "none"; refreshDs(); }
+
+async function loadEpList() {
+  try {
+    const j = await (await fetch(`/api/dataset/episodes?name=${encodeURIComponent(epName)}`)).json();
+    epList = j.episodes || [];
+  } catch (e) { epList = []; }
+  const nok = epList.filter(x => x.ok).length;
+  $("epsum").textContent = `${epList.length} 개 (성공 ${nok})`;
+  $("eplist").innerHTML = epList.length ? epList.map(x =>
+    `<div class="ep${epCur && epCur.ep === x.ep ? " sel" : ""}" data-ep="${x.ep}">
+       <span class="${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"}</span><b>${x.ep.replace(/^ep_0*/, "#")}</b>
+       <span>${SIDE_SHORT[x.side] || x.side || "-"}</span><span class="sub">${x.duration_s ?? "-"} 초</span>
+       <span class="t">${hhmm(x.created)}</span></div>`).join("")
+    : '<div class="sub" style="padding:12px">저장된 에피소드 없음</div>';
+  document.querySelectorAll("#eplist .ep").forEach(el => el.onclick = () => showEp(el.dataset.ep));
+}
+
+async function showEp(ep) {
+  stopPlay();
+  $("epview").innerHTML = '<div class="sub">불러오는 중…</div>';
+  try {
+    const r = await fetch(`/api/dataset/episode?name=${encodeURIComponent(epName)}&ep=${ep}`);
+    const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
+    epCur = j; epI = 0;
+  } catch (e) { $("epview").innerHTML = `<div class="bad">못 불러옴: ${e.message}</div>`; return; }
+  document.querySelectorAll("#eplist .ep").forEach(el => el.classList.toggle("sel", el.dataset.ep === ep));
+  const m = epCur.meta;
+  $("epview").innerHTML = `
+    <div style="margin-bottom:8px"><b>${ep}</b> · <span class="${m.ok ? "ok" : "bad"}">${m.ok ? "성공" : "실패"}</span>
+      · 쓴 손 <b>${SIDE_SHORT[m.side] || m.side || "-"}</b> · ${epCur.n} 프레임 · ${m.duration_s} 초 · ${hhmm(m.created)}
+      ${m.why ? `<span class="sub"> · 끝난 이유: ${m.why}</span>` : ""}</div>
+    <div id="epcams">${epCur.cameras.map(c => `<div><img data-cam="${c}" alt="${c}"><div class="camlbl">${c}</div></div>`).join("")}</div>
+    <div class="ctlrow">
+      <button class="b-start" id="epplay">▶ 재생</button>
+      <input type="range" id="epslider" min="0" max="${epCur.n - 1}" value="0">
+      <span id="eppos" class="sub" style="min-width:130px"></span>
+    </div>
+    <div class="sub" id="epgrip"></div>
+    <div class="sub" style="margin-top:4px">Space 재생/멈춤 · ← → 한 프레임 · Shift+← → 1 초 · Esc 닫기</div>
+    <div class="btns" style="margin-top:16px"><button class="b-drop" id="epdel" style="flex:none;white-space:nowrap">이 에피소드 지우기</button></div>`;
+  $("epplay").onclick = togglePlay;
+  $("epslider").oninput = e => { stopPlay(); setFrame(+e.target.value); };
+  $("epdel").onclick = delEp;
+  setFrame(0);
+}
+
+function setFrame(i) {
+  if (!epCur) return;
+  epI = Math.max(0, Math.min(epCur.n - 1, i | 0));
+  const q = `name=${encodeURIComponent(epName)}&ep=${epCur.ep}&i=${epI}`;
+  document.querySelectorAll("#epcams img").forEach(img => { img.src = `/api/dataset/frame?${q}&cam=${img.dataset.cam}`; });
+  $("epslider").value = epI;
+  $("eppos").textContent = `${epI + 1} / ${epCur.n} · ${epCur.t[epI].toFixed(1)} 초`;
+  const g = epCur.grip_q;
+  $("epgrip").textContent = `그리퍼 q (실측) — 왼 ${g.left[epI].toFixed(2)} · 오른 ${g.right[epI].toFixed(2)} rad`;
+}
+function togglePlay() { if (epPlay) stopPlay(); else startPlay(); }
+function startPlay() {
+  if (!epCur) return;
+  if (epI >= epCur.n - 1) setFrame(0);
+  let t0 = performance.now() - epCur.t[epI] * 1000;
+  $("epplay").textContent = "⏸ 멈춤";
+  const tick = () => {
+    if (!epPlay) return;
+    const imgs = [...document.querySelectorAll("#epcams img")];
+    if (imgs.every(im => im.complete)) {           // 앞 프레임 다 받은 뒤에 다음 (느린 PC 에서 밀리지 않게 — 시간 기준으로 건너뜀)
+      const tt = (performance.now() - t0) / 1000;
+      let j = epI; while (j < epCur.n - 1 && epCur.t[j + 1] <= tt) j++;
+      if (j !== epI) setFrame(j);
+      if (epI >= epCur.n - 1) { stopPlay(); return; }
+    }
+    epPlay = requestAnimationFrame(tick);
+  };
+  epPlay = requestAnimationFrame(tick);
+}
+function stopPlay() { if (epPlay) cancelAnimationFrame(epPlay); epPlay = null; const b = $("epplay"); if (b) b.textContent = "▶ 재생"; }
+function epKey(e) {
+  if (e.key === "Escape") { closeEp(); return; }
+  if (!epCur || e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); stopPlay(); setFrame(epI + (e.shiftKey ? 30 : 1)); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); stopPlay(); setFrame(epI - (e.shiftKey ? 30 : 1)); }
+}
+async function delEp() {
+  if (!epCur || !confirm(`${epCur.ep} 를 지울까요? (되돌릴 수 없음)`)) return;
+  try { await post("/api/dataset/episode/delete", { name: epName, ep: epCur.ep }); }
+  catch (e) { alert(e.message); return; }
+  stopPlay(); epCur = null;
+  $("epview").innerHTML = '<div class="sub">지웠습니다. 왼쪽에서 다른 에피소드를 고르세요</div>';
+  loadEpList();
+}
+
+async function poll() {
+  try {
+    st = await (await fetch("/api/state")).json();
+    if ($("ds").value === "" && st.rec.name) { $("ds").value = st.rec.name; refreshDs(); }
+    $("recon").checked = !!st.rec.on;
+    if ($("notable").dataset.init !== "1" && st.table_z == null) { $("notable").checked = true; }
+    $("notable").dataset.init = "1";
+    render(); renderModel();
+  } catch (e) { $("xrmsg").innerHTML = '<span class="bad">잡기 웹 응답 없음</span>'; }
+  setTimeout(poll, 300);
+}
+poll();
+setInterval(refreshDs, 3000);
+</script>
+</body>
+</html>

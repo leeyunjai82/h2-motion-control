@@ -5,6 +5,8 @@
 #   먼저 (한 번):  ROBOT_CHECK=1 ./start_fsm.sh stand        # 거치대 + FSM 703
 #   ./start_gripper.sh [인터페이스]       # 기본 enp45s0 — 실기: 팔·그리퍼가 움직임
 #   ./start_gripper.sh --sim             # 로봇 없이: fake_robot(DDS 도메인 1) + arm_server + 잡기 웹 (가짜 카메라 · 그리퍼)
+#   ./start_gripper.sh --vr              # VR 수집까지: + xr_virtual --real (Quest 입력) + Quest 페이지 열기 → 수집 화면 /collect
+#                                          (보통 ./start_collect.sh 로 실행. xr_teleoperate 경로: XR_DIR, 기본 ~/xr_teleoperate)
 #   ./start_gripper.sh --no-cam-check    # 시작 때 카메라 숙임 확인(check_rsimu 3 초, 저장 안 함 — 기준값과 1° 넘게 다르면 멈춤)을 건너뜀
 #
 #   그리퍼 서비스 실행 파일: DEX1_BIN (기본 ~/project/dex1_1_service/bin/dex1_1_gripper_server)
@@ -13,11 +15,12 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-SIM=0; IFACE="enp45s0"; CAMCHECK=1
+SIM=0; IFACE="enp45s0"; CAMCHECK=1; VR=0
 for a in "$@"; do
   case "$a" in
     --sim) SIM=1 ;;
     --no-cam-check) CAMCHECK=0 ;;
+    --vr) VR=1 ;;
     -h|--help) sed -n 2,11p "$0"; exit 0 ;;
     *) IFACE="$a" ;;
   esac
@@ -181,11 +184,32 @@ fi
 PIDS+=($!); NAMES+=("pick_web")
 wait_http "http://localhost:50030/" 60 || exit 1
 
+# 5) VR 수집 (--vr): Quest 입력 (xr_teleoperate + H2 IK) → 잡기 웹, Quest 페이지 열기
+if [ $VR -eq 1 ]; then
+  XR_DIR="${XR_DIR:-$HOME/xr_teleoperate}"
+  [ -d "$XR_DIR/teleop" ] || { echo "❌ xr_teleoperate 없음: $XR_DIR (XR_DIR 로 지정)" >&2; exit 1; }
+  echo "[start] xr_virtual    (Vuer 8012, Quest 입력 → 잡기 웹) ..."
+  python -u gripper/xr_virtual.py --xr "$XR_DIR" --real --display pass-through > >(stamp >> "$LOG_DIR/${TAG}xr_virtual_$DAY.log") 2>&1 &
+  PIDS+=($!); NAMES+=("xr_virtual")
+  for _ in $(seq 1 60); do curl -sk -m 1 -o /dev/null https://localhost:8012/ && break; sleep 1; done
+  curl -sk -m 1 -o /dev/null https://localhost:8012/ || { echo "❌ Vuer (8012) 가 안 뜸 — 로그: $LOG_DIR/${TAG}xr_virtual_$DAY.log" >&2; exit 1; }
+  if command -v adb >/dev/null && [ "$(adb get-state 2>/dev/null)" = "device" ]; then
+    adb shell am broadcast -a com.oculus.vrpowermanager.prox_close >/dev/null 2>&1
+    adb reverse tcp:8012 tcp:8012 >/dev/null
+    adb shell am start -a android.intent.action.VIEW -d "https://localhost:8012/?ws=wss://localhost:8012" com.oculus.browser >/dev/null
+    echo "  ✓ Quest: 페이지 열음 — 컨트롤러로 왼쪽 아래 'pass-through'"
+  else
+    echo "  ⚠ Quest 가 adb 에 안 잡힘 (USB · 디버깅 허용 확인) — 연결 뒤:"
+    echo "     adb reverse tcp:8012 tcp:8012 && adb shell am start -a android.intent.action.VIEW -d \"https://localhost:8012/?ws=wss://localhost:8012\" com.oculus.browser"
+  fi
+fi
+
 echo ""
 echo "  ✓ 그리퍼 잡기 실행 중 ($([ $SIM -eq 1 ] && echo 'SIM — 가짜 로봇 · 카메라 · 그리퍼' || echo "실기, $IFACE"))"
 echo "    - 잡기 웹     : http://$(hostname -I 2>/dev/null | awk '{print $1}'):50030/  (이 PC: http://localhost:50030/)"
+[ $VR -eq 1 ] && echo "    - 수집 화면   : http://$(hostname -I 2>/dev/null | awk '{print $1}'):50030/collect  (이 PC: http://localhost:50030/collect)"
 echo "    - arm_server  : http://localhost:50022/status"
-echo "    - 로그         : $LOG_DIR/${TAG}{dex1_service,arm_server,pick_web}_$DAY.log"
+echo "    - 로그         : $LOG_DIR/${TAG}{dex1_service,arm_server,pick_web$([ $VR -eq 1 ] && echo ',xr_virtual')}_$DAY.log"
 echo "    - 종료         : Ctrl+C"
 echo ""
 # 띄운 것이 죽으면 바로 알림 (다시 띄우지는 않음 — 그리퍼 서비스가 죽으면 그리퍼 힘이 풀림)

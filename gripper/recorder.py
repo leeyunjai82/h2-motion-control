@@ -28,6 +28,7 @@ FPS = 30.0
 JPEG_Q = 90
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")   # .gitignore
 NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
+EP_RE = re.compile(r"^ep_\d{6}$")
 
 
 # ---------------- 손목 카메라 (USB UVC, OpenCV) ----------------
@@ -131,6 +132,7 @@ class Recorder:
     def summary(self, name):
         d = os.path.join(self.ds_dir(name), "episodes")
         n_ok = n_all = 0
+        sides, last_side = {}, None          # 손별 성공 수 · 마지막 성공 에피소드의 손 (수집 화면 '다음 할 일')
         if os.path.isdir(d):
             for e in sorted(os.listdir(d)):
                 mp = os.path.join(d, e, "meta.json")
@@ -138,11 +140,16 @@ class Recorder:
                     n_all += 1
                     try:
                         with open(mp, encoding="utf-8") as f:
-                            n_ok += bool(json.load(f).get("ok"))
+                            m = json.load(f)
+                        if m.get("ok"):
+                            n_ok += 1
+                            sd = str(m.get("side") or "?")
+                            sides[sd] = sides.get(sd, 0) + 1
+                            last_side = sd
                     except (OSError, json.JSONDecodeError):
                         pass
         inf = self.info(name)
-        return {"name": name, "episodes": n_all, "ok": n_ok, "cameras": (inf or {}).get("cameras"),
+        return {"name": name, "episodes": n_all, "ok": n_ok, "sides": sides, "last_side": last_side, "cameras": (inf or {}).get("cameras"),
                 "size_mb": round(sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(self.ds_dir(name)) for f in fs) / 1e6, 1)
                 if os.path.isdir(self.ds_dir(name)) else 0.0}
 
@@ -284,6 +291,76 @@ class Recorder:
             json.dump(meta, f, ensure_ascii=False, indent=1, default=lambda o: o.tolist() if hasattr(o, "tolist") else str(o))
         self.last = {"saved": True, "episode": ep, "n": n, "ok": bool(ok), "mb": round(sum(a.nbytes for a in arrs.values()) / 1e6, 1)}
         return self.last
+
+    # ----- 에피소드 보기 (수집 화면) -----
+    def episodes(self, name):
+        """데이터셋 에피소드 목록 (새 것 먼저) → [{ep, ok, side, n, duration_s, created, result}]"""
+        d = os.path.join(self.ds_dir(name), "episodes")
+        out = []
+        if os.path.isdir(d):
+            for e in sorted(os.listdir(d), reverse=True):
+                mp = os.path.join(d, e, "meta.json")
+                if not (EP_RE.match(e) and os.path.isfile(mp)):
+                    continue
+                try:
+                    with open(mp, encoding="utf-8") as f:
+                        m = json.load(f)
+                except (OSError, json.JSONDecodeError):
+                    continue
+                out.append({"ep": e, "ok": bool(m.get("ok")), "side": m.get("side"), "n": m.get("n"),
+                            "duration_s": m.get("duration_s"), "created": m.get("created"), "result": m.get("result"),
+                            "why": m.get("why")})
+        return out
+
+    def ep_dir(self, name, ep):
+        if not EP_RE.match(ep or ""):
+            raise ValueError("에피소드 이름 이상")
+        d = os.path.join(self.ds_dir(name), "episodes", ep)
+        if not os.path.isfile(os.path.join(d, "meta.json")):
+            raise FileNotFoundError(ep)
+        return d
+
+    def load_ep(self, name, ep):
+        """episode.npz 를 메모리에 (마지막 1 개만 캐시 — 프레임 넘겨 볼 때 매번 다시 안 읽게)"""
+        key = (name, ep)
+        with self.lk:
+            c = getattr(self, "_ep_cache", None)
+            if c and c[0] == key:
+                return c[1]
+        d = self.ep_dir(name, ep)
+        with np.load(os.path.join(d, "episode.npz"), allow_pickle=False) as z:
+            arrs = {k: z[k] for k in z.files}
+        with open(os.path.join(d, "meta.json"), encoding="utf-8") as f:
+            arrs["_meta"] = json.load(f)
+        with self.lk:
+            self._ep_cache = (key, arrs)
+        return arrs
+
+    def ep_detail(self, name, ep):
+        a = self.load_ep(name, ep)
+        m = a["_meta"]
+        cams = [k[len("jpeg_off_"):] for k in a if k.startswith("jpeg_off_")]
+        st = a["state"]
+        return {"ep": ep, "meta": {k: m.get(k) for k in ("ok", "side", "n", "duration_s", "created", "result", "why", "auto_ok")},
+                "cameras": sorted(cams), "n": int(len(a["t"])), "t": [round(float(x), 3) for x in a["t"]],
+                "grip_q": {"left": [round(float(x), 3) for x in st[:, 7]], "right": [round(float(x), 3) for x in st[:, 15]]}}
+
+    def ep_frame(self, name, ep, cam, i):
+        a = self.load_ep(name, ep)
+        off = a.get(f"jpeg_off_{cam}")
+        if off is None:
+            raise KeyError(cam)
+        i = max(0, min(int(i), len(off) - 2))
+        return a[f"jpeg_{cam}"][off[i]:off[i + 1]].tobytes()
+
+    def delete_ep(self, name, ep):
+        import shutil
+        if self.active:
+            raise RuntimeError("녹화 중")
+        d = self.ep_dir(name, ep)
+        with self.lk:
+            self._ep_cache = None
+        shutil.rmtree(d)
 
     # ----- 내보내기 -----
     def make_zip(self, name, only_ok=False):

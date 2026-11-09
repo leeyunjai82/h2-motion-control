@@ -42,7 +42,7 @@ import numpy as np
 import uvicorn
 import zipfile
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -809,6 +809,11 @@ class GripReq(BaseModel):
 def make_app(r: Runner):
     app = FastAPI()
 
+    @app.get("/collect", response_class=HTMLResponse)
+    def collect_page():
+        with open(os.path.join(HERE, "collect.html"), encoding="utf-8") as f:
+            return f.read()
+
     @app.get("/", response_class=HTMLResponse)
     def index():
         return PAGE.replace("__W__", str(W)).replace("__H__", str(H)).replace(
@@ -998,6 +1003,41 @@ def make_app(r: Runner):
         from fastapi.responses import FileResponse
         return FileResponse(path, filename=os.path.basename(path), media_type="application/zip")
 
+    @app.get("/api/dataset/episodes")
+    def api_dataset_episodes(name: str):
+        try:
+            return {"name": name, "episodes": r.rec.episodes(name)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/dataset/episode")
+    def api_dataset_episode(name: str, ep: str):
+        try:
+            return r.rec.ep_detail(name, ep)
+        except (ValueError, FileNotFoundError, KeyError) as e:
+            raise HTTPException(404, f"에피소드 없음: {e}")
+
+    @app.get("/api/dataset/frame")
+    def api_dataset_frame(name: str, ep: str, cam: str, i: int = 0):
+        try:
+            b = r.rec.ep_frame(name, ep, cam, i)
+        except (ValueError, FileNotFoundError, KeyError) as e:
+            raise HTTPException(404, f"프레임 없음: {e}")
+        return Response(content=b, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+    @app.post("/api/dataset/episode/delete")
+    def api_dataset_episode_delete(body: dict):
+        name, ep = str(body.get("name", "")), str(body.get("ep", ""))
+        try:
+            r.rec.delete_ep(name, ep)
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(404, f"에피소드 없음: {e}")
+        r.say(f"에피소드 지움: {name}/{ep}")
+        r._jsonl({"rec_delete": {"name": name, "ep": ep}})
+        return {"ok": True}
+
     @app.post("/api/table/clear")
     def api_table_clear():
         with r.lk:
@@ -1103,7 +1143,7 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 선택한 팔: <button id="pready">준비 자세로</button><button id="pdef">기본 자세로</button><br>
 그리퍼 (선택한 손): <button id="gopen">벌림</button><button id="gclose">닫힘</button>
 </fieldset>
-<fieldset><legend>VR 조작 (Quest · xr_teleoperate)</legend>
+<fieldset><legend>VR 조작 (Quest · xr_teleoperate) — <a href="/collect" style="color:#8cf">수집 화면 ↗</a></legend>
 관절 속도 <select id="xrvel" style="background:#222;color:#eee"><option value="0.2">0.2</option><option value="0.3" selected>0.3</option><option value="0.5">0.5</option></select> rad/s
 <label><input type="checkbox" id="xrnotable">테이블 검사 끔 (테이블 없이 시험)</label><br>
 <button id="xrstart">VR 시작</button><button id="xrstop" disabled>VR 끝</button>
