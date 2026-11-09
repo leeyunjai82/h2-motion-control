@@ -92,3 +92,13 @@ ACT 구조·기본값은 LeRobot `modeling_act.py` 와 같게 `act_model.py` 에
 - 정규화를 모델 안에 넣어 OpenVINO 변환·로봇 추론을 단순하게
 
 필요하면 나중에 데이터셋을 LeRobot 형식으로 바꾸는 변환기를 따로 만들 수 있습니다.
+
+
+## Intel GPU (로봇 PC 내장 그래픽) 로 학습 — 5090 없이 해 볼 때
+
+```bash
+./trainer/install_trainer_xpu.sh <openvino 버전>        # conda env act_xpu (로봇 tv 환경과 별개), torch XPU 빌드
+```
+- 장치 고르기: `train_act.py --device auto` (기본: CUDA → Intel XPU → CPU) · `--device xpu` 로 강제. XPU 는 fp32 (amp 는 CUDA 만)
+- 로봇 PC GPU (lspci `Intel Device b082`, 2026-11-09) 가 torch.xpu 에서 잡히는지 · 속도는 **확인 전** — 설치 ⑥ 에서 행렬곱 TFLOPS 출력
+- 학습하는 동안 GPU · CPU 를 같이 쓰므로 로봇 서버 · 수집과 동시에 돌리지 말 것

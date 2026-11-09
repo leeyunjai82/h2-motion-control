@@ -41,7 +41,7 @@ DEFAULT_TRAIN = {
     "name": "", "steps": 40000, "batch_size": 8, "lr": 1e-5, "lr_backbone": 1e-5, "weight_decay": 1e-4,
     "grad_clip": 10.0, "image": "auto", "chunk_size": 100, "kl_weight": 10.0, "dim_model": 512,
     "dim_feedforward": 3200, "n_heads": 8, "n_encoder_layers": 4, "augment": True, "val_frac": 0.1,
-    "seed": 1, "num_workers": 8, "amp": True, "eval_every": 2000, "ckpt_every": 5000, "log_every": 50,
+    "seed": 1, "num_workers": 8, "amp": True, "device": "auto", "eval_every": 2000, "ckpt_every": 5000, "log_every": 50,
     "pretrained_backbone": True, "only_ok": True,
     "side": "right",          # 그리퍼 데이터셋만: 학습할 손 left / right (그 손 7 관절 + 그리퍼 = 8) 또는 both (16)
 }
@@ -187,12 +187,25 @@ def export(out_dir, ckpt_path, emit_progress=True):
     return zpath
 
 
+def pick_device(pref="auto"):
+    """학습 장치: auto = NVIDIA CUDA → Intel GPU (XPU, 내장 그래픽 포함) → CPU. pref 로 강제 (cuda / xpu / cpu)."""
+    if pref in ("auto", "cuda") and torch.cuda.is_available():
+        return torch.device("cuda"), torch.cuda.get_device_name(0)
+    xpu = getattr(torch, "xpu", None)
+    if pref in ("auto", "xpu") and xpu is not None and xpu.is_available():
+        return torch.device("xpu"), f"Intel XPU {xpu.get_device_name(0)}"
+    if pref not in ("auto", "cpu"):
+        raise SystemExit(f"장치 {pref} 를 못 씀 (torch {torch.__version__}) — Intel GPU 는 XPU 용 torch 가 필요")
+    return torch.device("cpu"), "CPU"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dataset")
     ap.add_argument("--out", required=True)
     ap.add_argument("--config", help="학습 설정 json 파일 (DEFAULT_TRAIN 키)")
     ap.add_argument("--steps", type=int)
+    ap.add_argument("--device", choices=("auto", "cuda", "xpu", "cpu"), help="학습 장치 (기본 auto: CUDA → Intel XPU → CPU)")
     ap.add_argument("--resume")
     ap.add_argument("--export-only", action="store_true")
     a = ap.parse_args()
@@ -208,6 +221,8 @@ def main():
             tc.update({k: v for k, v in json.load(f).items() if k in DEFAULT_TRAIN})
     if a.steps:
         tc["steps"] = a.steps
+    if a.device:
+        tc["device"] = a.device
     signal.signal(signal.SIGUSR1, _on_usr1)
     torch.manual_seed(int(tc["seed"]))
     np.random.seed(int(tc["seed"]))
@@ -244,10 +259,9 @@ def main():
         f"{fps} fps, " + (f"그리퍼 side {tc['side']} · state {SD} · 카메라 {[(c['name'], c['w'], c['h']) for c in cams]}"
                           if grip else f"이미지 {W}x{H}"))
 
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    dev_name = torch.cuda.get_device_name(0) if dev.type == "cuda" else "CPU"
-    if dev.type != "cuda":
-        log("⚠ CUDA 없음 — CPU 학습 (매우 느림)")
+    dev, dev_name = pick_device(str(tc["device"]))
+    if dev.type == "cpu":
+        log("⚠ GPU 없음 (CUDA · Intel XPU) — CPU 학습 (매우 느림)")
     if dev.type == "cuda":
         torch.backends.cudnn.benchmark = True
         torch.backends.cuda.matmul.allow_tf32 = True
@@ -289,7 +303,7 @@ def main():
         vloader = torch.utils.data.DataLoader(vds, batch_size=int(tc["batch_size"]), shuffle=True,
                                               num_workers=min(nw, 2), worker_init_fn=_worker_init)
     a_std = torch.tensor(stats["action_std"], device=dev)
-    use_amp = bool(tc["amp"]) and dev.type == "cuda"
+    use_amp = bool(tc["amp"]) and dev.type == "cuda"     # Intel XPU 는 fp32 (bf16 autocast 는 칩마다 달라 확인 전)
     amp_dtype = torch.bfloat16 if (use_amp and torch.cuda.is_bf16_supported()) else torch.float16
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp and amp_dtype == torch.float16)
 
