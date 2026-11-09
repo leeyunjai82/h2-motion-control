@@ -84,12 +84,12 @@ class Hand:
 
 
 class Teleop:
-    def __init__(self, table_z, scale, v_max, start="default", mapping="abs"):
+    def __init__(self, table_z, scale, v_max, start="default", mapping="abs", joint_vmax=None):
         self.mdl = pc.Model()
         self.table_z = float(table_z)
         self.scale, self.v_max = float(scale), float(v_max)
         self.w_max = math.radians(float(V["w_max_deg"]))
-        self.jv = float(V["joint_vmax"])
+        self.jv = float(V["joint_vmax"] if joint_vmax is None else joint_vmax)
         self.ws = V["workspace"]
         self.q_rest = self._ready_q()          # IK 남는 자유도가 끌려가는 자세 (준비 자세)
         if start == "default":                 # 로봇을 켰을 때 자세 (robot.yaml default_arm_deg — 팔 내림)
@@ -339,8 +339,7 @@ class Teleop:
                 break
         ix = mdl.idx[side]
         reasons = []
-        if ep * 1000 > float(V["unreach_mm"]):
-            reasons.append(f"닿지 않음 (IK {ep * 1000:.0f} mm)")
+        far = ep * 1000 > float(V["unreach_mm"])   # 팔 길이 · 관절 한계 밖 — 멈추지 않고 닿는 데까지만 감 (안전 검사는 그대로)
         q_new = self.q.copy()
         lim_q = self.jv * dt
         dq = qik[ix] - self.q[ix]
@@ -381,10 +380,10 @@ class Teleop:
             state, level = "따라가는 중 (관절 속도)", "ok"
         elif e_p <= float(V["follow_mm"]):
             state, level = f"자세 일부만 ({e_r:.0f}° 못 따라감)", "warn"
-            h.haptic = 0.2
+        elif far:
+            state, level = f"팔이 안 닿음 — 닿는 데까지 ({ep * 1000:.0f} mm 모자람)", "warn"
         else:
             state, level = f"위치 {e_p:.0f} mm 못 따라감", "warn"
-            h.haptic = 0.3
         h.st = {"state": state, "reason": " · ".join(notes), "level": level, "err_mm": round(e_p, 1),
                 "err_deg": round(e_r, 1)}
         h.st.update(vals)
@@ -649,15 +648,17 @@ def main():
     ap.add_argument("--table-z", type=float, default=float(V["table_z_m"]), help="테이블 높이 [m, pelvis]")
     ap.add_argument("--scale", type=float, default=float(V["scale"]))
     ap.add_argument("--v-max", type=float, default=float(V["v_max"]), help="목표 TCP 최고 속도 [m/s]")
+    ap.add_argument("--joint-vmax", type=float, default=float(V["joint_vmax"]), help="관절 속도 상한 [rad/s] (1단계에서만 키워 볼 것)")
     ap.add_argument("--start", choices=("default", "ready"), default="default",
                     help="시작 가상 자세: default = 로봇 켰을 때 (팔 내림, 기본) · ready = 잡기 웹 준비 자세 (팔 앞으로)")
     ap.add_argument("--mapping", choices=("abs", "rel"), default=str(V["mapping"]),
                     help="abs = 손 절대 위치 (팔 모양이 사람 팔을 따라감, B/Y 로 자세 맞춤) · rel = 그립 순간부터 상대 이동")
     ap.add_argument("--https", nargs=2, metavar=("CERT", "KEY"), help="Wi-Fi 로 쓸 때 (WebXR 는 localhost 아니면 HTTPS 필요)")
     a = ap.parse_args()
-    if not (0 < a.v_max <= 0.3) or not (0.2 <= a.scale <= 3.0):
-        sys.exit("[vr] --v-max 0~0.3 m/s, --scale 0.2~3.0")
-    t = Teleop(a.table_z, a.scale, a.v_max, a.start, a.mapping)
+    # 1단계 (읽기 전용, 로봇 명령 없음) 라서 속도를 넉넉히 허용. 실제 로봇 단계에서는 gripper.yaml 값 (v_max 0.1 · joint_vmax ≤ server_max_vel) 부터
+    if not (0 < a.v_max <= 1.0) or not (0.2 <= a.scale <= 3.0) or not (0 < a.joint_vmax <= 3.0):
+        sys.exit("[vr] --v-max 0~1.0 m/s, --joint-vmax 0~3.0 rad/s, --scale 0.2~3.0")
+    t = Teleop(a.table_z, a.scale, a.v_max, a.start, a.mapping, a.joint_vmax)
     print(f"[vr] 읽기 전용 — 로봇에 명령 안 보냄. 모니터 http://localhost:{a.port}/  ·  Quest: adb reverse tcp:{a.port} tcp:{a.port} 후 "
           f"http://localhost:{a.port}/vrurdf (URDF 가상 로봇) 또는 /vr", flush=True)
     kw = {"ssl_certfile": a.https[0], "ssl_keyfile": a.https[1]} if a.https else {}
