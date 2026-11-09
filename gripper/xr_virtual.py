@@ -18,6 +18,7 @@ xr_virtual.py — Unitree xr_teleoperate 를 로봇 없이 (가상) 돌려 봄
     Quest (USB): adb reverse tcp:8012 tcp:8012 → Quest 브라우저 https://localhost:8012/?ws=wss://localhost:8012
                  (자체 서명 경고 → 계속) → 'Enter VR' (pass-through)
   조작은 xr_teleoperate 와 같음: 헤드셋을 머리에 쓰고 컨트롤러를 쥔 손 = 로봇 손 (머리 기준 절대 위치), 트리거 = 그리퍼.
+  다른 점 (안전): 그립(중지)을 누른 손만 따라감 (떼면 멈춤) · 관절 속도 상한 1 rad/s (원본은 버튼 없이 계속 · 30 rad/s)
 """
 import argparse
 import json
@@ -29,6 +30,7 @@ import urllib.request
 
 import cv2
 import numpy as np
+import pinocchio as pin
 
 
 def placeholder(msg):
@@ -84,6 +86,8 @@ def main():
     ap.add_argument("--viewer", default="http://localhost:50040", help="gripper/xr_viewer.py 주소")
     ap.add_argument("--hand", action="store_true", help="컨트롤러 대신 손 추적 입력")
     ap.add_argument("--hz", type=float, default=30.0, help="IK · 전송 주기 (xr_teleoperate 기본 30)")
+    ap.add_argument("--joint-vmax", type=float, default=1.0, help="가상 팔 관절 속도 상한 [rad/s] (xr_teleoperate H2 기본 30)")
+    ap.add_argument("--no-deadman", action="store_true", help="그립 안 눌러도 계속 따라감 (xr_teleoperate 원본 동작)")
     ap.add_argument("--video", default="http://localhost:50030/video", help="immersive 에서 Quest 에 보여 줄 영상 (잡기 웹 머리 카메라 MJPEG)")
     ap.add_argument("--display", choices=("pass-through", "immersive"), default="pass-through",
                     help="Vuer 화면 모드: pass-through = 실제 주변 (Vuer 왼쪽 아래 'pass-through' 버튼) · "
@@ -139,8 +143,20 @@ def main():
             t0 = time.monotonic()
             d = tv.get_tele_data()
             if d.motion_data_ready:
-                q_sol, _ = arm_ik.solve_ik(d.left_wrist_pose, d.right_wrist_pose, q_last, None)
-                q_last = np.asarray(q_sol, dtype=float)
+                # 데드맨: 그립(중지) 누른 손만 그 손 자세를 목표로, 뗀 손은 지금 가상 손목 자세 그대로 (xr_teleoperate 원본은 버튼 없이 계속 따라감)
+                pin.framesForwardKinematics(m, arm_ik.reduced_robot.data, q_last)
+                now = {"left": arm_ik.reduced_robot.data.oMf[arm_ik.L_hand_id].homogeneous.copy(),
+                       "right": arm_ik.reduced_robot.data.oMf[arm_ik.R_hand_id].homogeneous.copy()}
+                press = {"left": a.no_deadman or float(d.left_ctrl_squeezeValue) > 0.5,
+                         "right": a.no_deadman or float(d.right_ctrl_squeezeValue) > 0.5}
+                tgt = {"left": d.left_wrist_pose if press["left"] else now["left"],
+                       "right": d.right_wrist_pose if press["right"] else now["right"]}
+                if press["left"] or press["right"]:
+                    q_sol, _ = arm_ik.solve_ik(tgt["left"], tgt["right"], q_last, None)
+                    dq = np.asarray(q_sol, dtype=float) - q_last
+                    big = float(np.max(np.abs(dq)))
+                    lim = a.joint_vmax * dt                 # 관절 속도 제한 (방향 유지, 같은 비율로 줄임)
+                    q_last = q_last + (dq * (lim / big) if big > lim else dq)
                 if a.hand:
                     grip = {"left": min(1.0, d.left_hand_pinchValue / 100.0), "right": min(1.0, d.right_hand_pinchValue / 100.0)}
                     grip = {k: 1.0 - v for k, v in grip.items()}   # 집게 벌림 (pinch 클수록 벌림 — xr_teleoperate 와 같은 방향인지 확인 필요)
