@@ -3,7 +3,7 @@
 """
 trainer_server.py — 학습 PC (RTX 5090, Ubuntu) ACT 학습 웹 (포트 50100)
 
-  ./trainer/start_trainer.sh        → http://<학습 PC>:50100/   (처음 띄울 때 접근 키를 출력 — 웹에서 한 번 입력)
+  ./trainer/start_trainer.sh        → http://<학습 PC>:50100/   (접근 키 없음 — 혼자 쓰는 LAN 용)
 
 흐름
   1) 로봇 웹(50030)에서 받은 데이터셋 zip 업로드 → data/datasets/<이름>/ 에 풀고 검사
@@ -11,13 +11,12 @@ trainer_server.py — 학습 PC (RTX 5090, Ubuntu) ACT 학습 웹 (포트 50100)
   3) train_act.py 서브프로세스: 학습 → OpenVINO IR 변환 → model zip  (진행·loss·로그는 웹에 실시간)
   4) model zip 다운로드 → 로봇 웹 Models 에 업로드
 
-보안: LAN 전용. /api/* 는 접근 키(X-Key 헤더 또는 ?key=) 필요. 키 = 환경변수 TRAINER_KEY 또는 data/key.txt (자동 생성).
+보안: LAN 전용, 접근 키 없음 (혼자 쓰는 PC). 바깥 망에 열지 말 것.
 업로드 zip 은 경로 검사 후 정해진 파일(info.json, episode.npz, meta.json, thumb.jpg)만 풀고, npz 는 pickle 없이 연다.
 """
 import json
 import os
 import re
-import secrets
 import shutil
 import signal
 import subprocess
@@ -30,7 +29,7 @@ from importlib import metadata
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("TRAINER_PORT", "50100"))
@@ -45,22 +44,6 @@ EP_FILE_RE = re.compile(r"^episodes/ep_\d{6}/(episode\.npz|meta\.json|thumb\.jpg
 sys.path.insert(0, HERE)
 from train_act import DEFAULT_TRAIN   # noqa: E402 — 학습 설정 기본값 (torch import 는 train_act 안에서 하므로 여기서도 로드됨)
 
-
-def _key():
-    k = os.environ.get("TRAINER_KEY", "").strip()
-    if k:
-        return k
-    p = os.path.join(DATA, "key.txt")
-    if os.path.exists(p):
-        return open(p).read().strip()
-    k = secrets.token_urlsafe(6)
-    with open(p, "w") as f:
-        f.write(k)
-    os.chmod(p, 0o600)
-    return k
-
-
-KEY = _key()
 
 
 def log(msg):
@@ -318,14 +301,6 @@ jobs = Jobs()
 app = FastAPI(title="ACT trainer")
 
 
-@app.middleware("http")
-async def auth(request: Request, call_next):
-    if request.url.path.startswith("/api/"):
-        k = request.headers.get("x-key") or request.query_params.get("key")
-        if not k or not secrets.compare_digest(k, KEY):
-            return JSONResponse({"detail": "접근 키 필요"}, status_code=401)
-    return await call_next(request)
-
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -478,5 +453,4 @@ def api_job_zip(jid: str):
 
 if __name__ == "__main__":
     log(f"시작 — http://0.0.0.0:{PORT}/   데이터 {DATA}")
-    log(f"접근 키: {KEY}   (웹에서 처음 한 번 입력. 바꾸려면 {os.path.join(DATA, 'key.txt')} 삭제 후 재시작 또는 TRAINER_KEY=...)")
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 학습 PC: ACT 학습 웹 → http://<학습 PC>:50100/   (처음 띄우면 접근 키를 출력 — 웹에서 한 번 입력)
+# 학습 PC: ACT 학습 웹 → http://<학습 PC>:50100/
 # 사용: ./trainer/start_trainer.sh        (처음이면 먼저 ./trainer/install_trainer.sh <openvino 버전>)
 #   python 찾는 순서: TRAINER_PY=<python 경로> → conda env TRAINER_ENV → act (CUDA) → act_xpu (Intel GPU) → python3
 #   데이터 위치 바꾸기: TRAINER_DATA=/mnt/ssd/trainer ./trainer/start_trainer.sh

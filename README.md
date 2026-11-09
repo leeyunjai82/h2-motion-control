@@ -113,7 +113,7 @@ Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기
 
 ```bash
 ./start_gripper.sh                    # 미니 PC: 그리퍼 서비스 · arm_server · 잡기 웹 → http://<미니 PC>:50030/
-./trainer/start_trainer.sh            # 학습 PC → http://<학습 PC>:50100/ (접근 키는 터미널에)
+./trainer/start_trainer.sh            # 학습 PC → http://<학습 PC>:50100/
 ```
 
 - 잡기 웹: 잡기 · 데이터 수집 (저장 / 버리기) · 데이터셋 zip · 모델 zip 올리기 · 정책 실행. 자세한 것: `gripper/README.md`

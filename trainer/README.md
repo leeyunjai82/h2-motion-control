@@ -42,12 +42,11 @@ ResNet18 ImageNet 가중치(45 MB)는 설치 ⑦ 에서 미리 받습니다 (`~/
 
 ```bash
 ./trainer/start_trainer.sh
-# → http://<학습 PC IP>:50100/   처음 뜰 때 터미널에 '접근 키' 출력 → 웹에서 한 번 입력 (브라우저에 저장)
+# → http://<학습 PC IP>:50100/   (접근 키 없음)
 ```
 
-- 키 바꾸기: `trainer/data/key.txt` 삭제 후 재시작, 또는 `TRAINER_KEY=원하는키 ./trainer/start_trainer.sh`
 - 데이터 위치: `TRAINER_DATA=/mnt/ssd/trainer ./trainer/start_trainer.sh` (기본 `trainer/data/`, git 에 안 올라감)
-- LAN 전용. 인터넷에 열지 마세요 (키는 간단한 잠금일 뿐).
+- LAN 전용. 접근 키가 없으니 인터넷에 열지 마세요.
 
 ## 웹 사용
 

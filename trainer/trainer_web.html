@@ -100,7 +100,6 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
       <span class="chip" id="chip-ver">torch <b>-</b></span>
       <span class="chip" id="chip-disk">Disk <b>-</b></span>
     </div>
-    <a href="#" onclick="setKey();return false" style="color:var(--accent2)">key</a>
   </div>
 </div>
 
@@ -189,15 +188,13 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 
 <script>
 const $ = id => document.getElementById(id);
-let KEY = localStorage.getItem('trainer_key') || '', selDs = '', selJob = '', DEF = null, jobsCache = [];
-function setKey(){ const k = prompt('접근 키 (trainer 서버를 띄울 때 터미널에 나옴)', KEY); if(k !== null){ KEY = k.trim(); localStorage.setItem('trainer_key', KEY); refresh(); } }
+let selDs = '', selJob = '', DEF = null, jobsCache = [];
 function toast(m, err){ const t = $('toast'); t.textContent = m; t.className = 'show' + (err ? ' err' : ''); clearTimeout(t._h); t._h = setTimeout(() => t.className = '', err ? 5000 : 2500); }
 function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 async function api(method, url, body, text){
   try{
-    const r = await fetch(url, {method, headers: Object.assign({'X-Key': KEY}, body ? {'Content-Type': 'application/json'} : {}),
+    const r = await fetch(url, {method, headers: body ? {'Content-Type': 'application/json'} : {},
                                 body: body ? JSON.stringify(body) : undefined});
-    if(r.status === 401){ $('livedot').className = 'dot err'; if(!api._asked){ api._asked = 1; setKey(); api._asked = 0; } return null; }
     $('livedot').className = 'dot live';
     if(text) return await r.text();
     const d = await r.json().catch(() => ({}));
@@ -246,7 +243,6 @@ function uploadDs(){
   const f = $('ds-file').files[0]; if(!f){ toast('zip 을 고르세요', true); return; }
   const x = new XMLHttpRequest();
   x.open('PUT', `/api/datasets/upload?filename=${encodeURIComponent(f.name)}`);
-  x.setRequestHeader('X-Key', KEY);
   $('up-prog').style.display = '';
   x.upload.onprogress = e => { if(e.lengthComputable){ $('up-bar').style.width = (e.loaded / e.total * 100) + '%';
     $('up-text').textContent = `업로드 ${(e.loaded/1e6).toFixed(0)} / ${(e.total/1e6).toFixed(0)} MB${e.loaded === e.total ? ' — 푸는 중...' : ''}`; } };
@@ -290,7 +286,7 @@ async function jobAct(a){
   if(await api('POST', `/api/jobs/${selJob}/${a}`)) toast(a === 'finish' ? '지금까지 학습한 것으로 변환합니다' : '취소 요청');
   loadJobs();
 }
-function dlZip(){ if(selJob) location.href = `/api/jobs/${selJob}/model.zip?key=${encodeURIComponent(KEY)}`; }
+function dlZip(){ if(selJob) location.href = `/api/jobs/${selJob}/model.zip`; }
 
 function draw(j){
   const cv = $('cv'), c = cv.getContext('2d'), W = cv.width, H = cv.height, P = 34;
