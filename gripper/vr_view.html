@@ -28,7 +28,8 @@
     <div class="note">슬라이더 = 그립을 누른 순간부터 손을 움직인 양 (로봇 기준: x 앞 · y 왼쪽 · z 위, RPY °).
       그립을 끈 채로 슬라이더를 옮기고 그립을 켜면 그 자리가 새 기준.</div>
     <div id="hands"></div>
-    <button onclick="fetch('/api/reset',{method:'POST'})">가상 팔 준비 자세로 리셋</button>
+    <button onclick="simRecenter = true">자세 맞춤 (B/Y) — 슬라이더 0 에서</button>
+    <button onclick="fetch('/api/reset',{method:'POST'})">가상 팔 시작 자세로 리셋</button>
     <p class="note">마우스: 끌기 = 돌리기 · 휠 = 확대. 회색 상자 = 몸통 (앞면 + 최소 거리 선) · 갈색 = 테이블 ·
       Dex1-1 = Unitree 공식 메시 (트리거로 벌림) · 손 상자 선 = 안전 검사에 쓰는 그리퍼 겉 범위 (색 = 상태) · 원 = 목표 TCP</p>
   </div>
@@ -240,7 +241,7 @@ function quat(R) {   // [x, y, z, w]
 }
 const BASE = { right: [0.2, 1.0, -0.3], left: [-0.2, 1.0, -0.3] };
 const D2R = Math.PI / 180;
-let ws = null;
+let ws = null, simRecenter = false;
 function ensureWs() {
   if (ws && ws.readyState <= 1) return;
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
@@ -250,7 +251,8 @@ setInterval(() => {
   if (!$("simOn").checked) { if (ws) { ws.close(); ws = null; } return; }
   ensureWs();
   if (ws.readyState !== 1) return;
-  const msg = { t: performance.now(), head: { p: [0, 1.6, 0], q: [0, 0, 0, 1] }, hands: {}, recenter: false };
+  const msg = { t: performance.now(), head: { p: [0, 1.6, 0], q: [0, 0, 0, 1] }, hands: {}, recenter: simRecenter };
+  simRecenter = false;
   for (const s of ["right", "left"]) {
     const v = sim[s];
     const Rr = rpyMat(v.roll * D2R, v.pitch * D2R, v.yaw * D2R);

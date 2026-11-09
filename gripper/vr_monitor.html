@@ -104,6 +104,7 @@ async function tick() {
         : (st.age_s < 0.5 ? '<span class="ok">수신 중</span>' : `<span class="stop">${st.age_s} 초 전 마지막</span>`)}`
       + ` · ${st.rate_hz} Hz · 왕복 ${st.rtt_ms == null ? "-" : st.rtt_ms.toFixed(0) + " ms"}`
       + (st.n_sock > 1 ? ` · <span class="stop">보내는 곳 ${st.n_sock} 개 — 섞임 (Quest 와 가짜 컨트롤러 중 하나만)</span>` : "")
+      + ` · 매핑 ${st.mapping === "abs" ? (st.calibrated ? "절대 (맞춤 됨)" : '<span class="stop">절대 — B/Y 자세 맞춤 필요</span>') : "상대"}`
       + ` · 방향 ${st.heading_deg}° · 배율 ${st.scale} · 목표 속도 상한 ${st.v_max} m/s · 테이블 z ${st.table_z}`;
     for (const s of ["right", "left"]) $("h_" + s).innerHTML = handHtml(s, st.hands[s]);
     draw(st);
