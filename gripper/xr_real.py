@@ -115,9 +115,14 @@ class XRTeleop:
                 raise HTTPException(409, "테이블을 먼저 재세요 ([테이블 점 추가]) — 또는 [테이블 검사 끔] 체크 (테이블 없이 시험)")
             if not (0.0 < float(max_vel) <= MAX_VEL_CAP):
                 raise HTTPException(400, f"속도 0 ~ {MAX_VEL_CAP} rad/s")
-            ok, msg, _ = pc.arm_ready_check()
+            ok, msg, q_now = pc.arm_ready_check()
             if not ok:
                 raise HTTPException(409, msg)
+            qm0 = self.mdl.to_model(q_now)
+            off = [f"{'오른팔' if s == 'right' else '왼팔'} {pc.ready_info(self.mdl, qm0, s)['dist_cm']} cm"
+                   for s in pc.SIDES if not pc.at_ready(self.mdl, qm0, s)]
+            if off:                      # 에피소드는 항상 같은 시작 자세 (학습 · 정책 시작 검사)
+                raise HTTPException(409, f"준비 자세가 아님 ({', '.join(off)}) — 먼저 [준비 자세로]")
             cp = r.cam_pitch.read() if r.cam_pitch else None
             if cp is not None and abs(cp["diff"]) > cam_pitch_max:
                 raise HTTPException(409, f"카메라 숙임 기준과 {cp['diff']:+.2f}° — 거치대를 맞추세요")

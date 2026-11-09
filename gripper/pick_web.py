@@ -1100,6 +1100,7 @@ def make_app(r: Runner):
         if r.arm_q is not None:
             qm = r.mdl.to_model(r.arm_q)
             st["tcp"] = {s: np.round(r.mdl.tcp(qm, s).translation + pc.TCP_BIAS[s], 3).tolist() for s in pc.SIDES}
+            st["ready"] = {s: pc.ready_info(r.mdl, qm, s) for s in pc.SIDES}
         return st
 
     return app

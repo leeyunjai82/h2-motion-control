@@ -100,6 +100,10 @@
       <div class="msg" id="xrmsg">꺼짐</div>
       <div class="chips"><span class="chip" id="hr">오른손 —</span><span class="chip" id="hl">왼손 —</span></div>
       <div id="recline" class="sub" style="margin-top:8px"></div>
+      <div class="row" style="margin-top:12px;align-items:center;gap:10px">
+        <span>시작 자세 <span id="rdy">—</span></span>
+        <button class="b-drop" id="rdybtn" style="flex:none;font-size:14px;padding:8px 12px">준비 자세로</button>
+      </div>
     </div>
     <div class="card pending" id="pend" style="display:none">
       <h2>방금 에피소드</h2>
@@ -167,6 +171,24 @@ async function decide(keep) {
   busy = true;
   try { await post("/api/rec/decide", { keep }); refreshDs(); } catch (e) { alert(e.message); } finally { busy = false; }
 }
+async function toReady() {
+  if (busy || !st || st.busy || st.xr.active || !st.ready) return;
+  const sides = ["right", "left"].filter(s => !st.ready[s].at);
+  if (!sides.length) return;
+  if (!confirm("준비 자세로 옮깁니다 (" + sides.map(s => s === "right" ? "오른팔" : "왼팔").join(" → ") + "). 주변을 확인했나요?")) return;
+  busy = true;
+  try {
+    for (const s of sides) {
+      await post("/api/pose", { side: s, which: "ready", confirm: true });
+      for (let i = 0; i < 200; i++) {                     // 그 팔이 끝날 때까지 (최대 60 초)
+        await new Promise(res => setTimeout(res, 300));
+        const j = await (await fetch("/api/state")).json();
+        if (!j.busy) { if (j.phase === "stopped") throw new Error("자세 이동 중 멈춤 — " + j.stage); break; }
+      }
+    }
+  } catch (e) { alert(e.message); } finally { busy = false; }
+}
+$("rdybtn").onclick = toReady;
 $("start").onclick = start; $("stop").onclick = stop;
 $("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
 document.addEventListener("keydown", e => {
@@ -199,13 +221,22 @@ function render() {
   const last = ds && ds.last_side;
   const nextRight = last !== "right";
   $("next").innerHTML = st.rec.pending ? "방금 에피소드를 <span class='warn'>저장 / 버리기</span>"
-    : st.xr.active ? `${nextRight ? "오른쪽 큐브 → 오른칸 (오른손)" : "왼쪽 큐브 → 왼칸 (왼손)"} <small>그립(중지) 누른 채 팔 이동 · 트리거(검지) = 잡기 · 통에 넣고 놓은 뒤 팔을 처음 자세로 돌려놓고 [■ 끝]</small>`
+    : st.xr.active ? `${nextRight ? "오른쪽 큐브 → 오른칸 (오른손)" : "왼쪽 큐브 → 왼칸 (왼손)"} <small>그립(중지) 누른 채 팔 이동 · 트리거(검지) = 잡기 · 통에 넣고 놓은 뒤 팔을 준비 자세 근처로 돌려놓고 [■ 끝]</small>`
     : nextRight ? `오른쪽 큐브 → 오른칸 (오른손)<small>통 비우고 큐브 2 개를 양옆에 (위치 조금씩 바꿔서) → [● 시작]</small>`
                 : `왼쪽 큐브 → 왼칸 (왼손)<small>오른칸 큐브는 그대로 두고 → [● 시작]</small>`;
   // 조작
   const x = st.xr, r = st.rec;
   $("start").disabled = x.active || !!r.pending || st.busy && !x.active;
   $("stop").disabled = !x.active;
+  const rd = st.ready, ko = { right: "오른팔", left: "왼팔" };
+  if (rd) {
+    const allAt = rd.right.at && rd.left.at, okBtn = ["right", "left"].every(s => rd[s].at || rd[s].ok_btn);
+    $("rdy").innerHTML = allAt ? '<span class="ok">✓ 양팔 준비 자세</span>'
+      : ["right", "left"].map(s => rd[s].at ? `${ko[s]} <span class="ok">✓</span>` : `${ko[s]} <span class="warn">${rd[s].dist_cm} cm</span>`).join(" · ") +
+        (okBtn ? "" : ' <span class="bad">— 손이 통 · 테이블 쪽: VR 로 준비 자세 근처까지 가져온 뒤</span>');
+    $("rdybtn").disabled = allAt || !okBtn || x.active || st.busy || r.active;
+    if (!x.active && !r.pending && !allAt) $("start").disabled = true;
+  } else { $("rdy").innerHTML = '<span class="sub">팔 상태 없음</span>'; $("rdybtn").disabled = true; }
   $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}` : `<span class="sub">${x.msg}</span>`;
   const chip = (k, ko) => { const h = (x.hands || {})[k] || {}; const c = h.level === "stop" ? "bad" : h.level === "ok" ? "ok" : "sub";
     return `${ko} <span class="${c}">${h.state || "—"}</span>${h.reason ? ` <span class="sub">${h.reason}</span>` : ""}`; };

@@ -162,6 +162,17 @@ def at_ready(mdl, qm, side):
             np.linalg.norm(pin.log3(READY_R @ T.rotation.T)) < AT_READY_ROT)
 
 
+READY_BTN_NEAR_M = 0.15   # 수집 화면 [준비 자세로]: 손이 준비 자세에서 이만큼 안 이거나 몸 가까이(x < FRONT_X)일 때만 (통 · 테이블 위에서는 안 됨)
+
+
+def ready_info(mdl, qm, side):
+    """→ {at: 준비 자세인지, dist_cm, ok_btn: [준비 자세로] 눌러도 되는 위치인지}"""
+    T = mdl.tcp(qm, side)
+    d = float(np.linalg.norm(T.translation - READY_TCP[side]))
+    return {"at": bool(at_ready(mdl, qm, side)), "dist_cm": round(d * 100, 1),
+            "ok_btn": bool(d < READY_BTN_NEAR_M or float(T.translation[0]) < FRONT_X)}
+
+
 def default_q_ctrl():
     if robot_env.CFG.get("default_arm_deg") is None:
         return None
