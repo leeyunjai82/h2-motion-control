@@ -99,6 +99,7 @@ ACT 구조·기본값은 LeRobot `modeling_act.py` 와 같게 `act_model.py` 에
 ```bash
 ./trainer/install_trainer_xpu.sh <openvino 버전>        # conda env act_xpu (로봇 tv 환경과 별개), torch XPU 빌드
 ```
+- 학습 웹: `./trainer/start_trainer_xpu.sh` (act_xpu 환경만 씀) — `./trainer/start_trainer.sh` 도 act 가 없으면 act_xpu 를 찾음
 - 장치 고르기: `train_act.py --device auto` (기본: CUDA → Intel XPU → CPU) · `--device xpu` 로 강제. XPU 는 fp32 (amp 는 CUDA 만)
 - 로봇 PC GPU (lspci `Intel Device b082`, 2026-11-09) 가 torch.xpu 에서 잡히는지 · 속도는 **확인 전** — 설치 ⑥ 에서 행렬곱 TFLOPS 출력
 - 학습하는 동안 GPU · CPU 를 같이 쓰므로 로봇 서버 · 수집과 동시에 돌리지 말 것
