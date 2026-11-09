@@ -204,8 +204,9 @@ class Teleop:
             if msg.get("rtt") is not None:
                 self.rtt_ms = float(msg["rtt"])
             head = msg.get("head")
-            if head and (msg.get("recenter") or self.n_msg == 1):
-                f = quat_to_R(head["q"]) @ np.array([0.0, 0.0, -1.0])
+            rq = msg.get("recenter_q") if msg.get("recenter") else None   # B/Y 를 누른 컨트롤러가 가리키는 방향 (목에 걸었을 때 정확)
+            if rq or (head and (msg.get("recenter") or self.n_msg == 1)):
+                f = quat_to_R(rq or head["q"]) @ np.array([0.0, 0.0, -1.0])
                 self.heading = math.atan2(-f[0], -f[2])
                 for h in self.hands.values():          # 기준이 바뀌었으니 그립을 다시 잡아야 함
                     h.engaged = False
