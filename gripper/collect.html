@@ -95,16 +95,11 @@
       <label style="margin-left:10px"><input type="checkbox" id="notable"> 테이블 검사 끔</label>
       <div class="btns">
         <button class="b-start" id="start">● 시작<span class="kbd">Space</span></button>
-        <button class="b-stop" id="stop" disabled>■ 끝 → 준비 자세<span class="kbd">Space</span></button>
+        <button class="b-stop" id="stop" disabled>■ 끝<span class="kbd">Space</span></button>
       </div>
       <div class="msg" id="xrmsg">꺼짐</div>
       <div class="chips"><span class="chip" id="hr">오른손 —</span><span class="chip" id="hl">왼손 —</span></div>
       <div id="recline" class="sub" style="margin-top:8px"></div>
-      <div class="sub" style="margin-top:10px">준비 자세로 (안전 정지 뒤 등 — 위로 든 다음 이동)</div>
-      <div class="btns" style="margin-top:4px">
-        <button class="b-drop" id="homer" style="font-size:14px;padding:8px">오른팔</button>
-        <button class="b-drop" id="homel" style="font-size:14px;padding:8px">왼팔</button>
-      </div>
     </div>
     <div class="card pending" id="pend" style="display:none">
       <h2>방금 에피소드</h2>
@@ -166,18 +161,7 @@ async function start() {
   try { await post("/api/xr/start", { max_vel: +$("vel").value, no_table: $("notable").checked }); }
   catch (e) { alert(e.message); } finally { busy = false; }
 }
-const returning = () => st && !st.xr.active && st.busy && st.phase === "running";
-async function stop() {
-  if (busy) return; busy = true;
-  try { await post(returning() ? "/api/stop" : "/api/xr/stop"); } catch (e) { alert(e.message); } finally { busy = false; }
-}
-async function home(side) {
-  if (busy || !st || st.busy || st.xr.active) return;
-  if (!confirm(`${side === "right" ? "오른팔" : "왼팔"}을 위로 든 다음 준비 자세로 옮깁니다. 주변을 확인했나요?`)) return;
-  busy = true;
-  try { await post("/api/xr/home", { sides: [side] }); } catch (e) { alert(e.message); } finally { busy = false; }
-}
-$("homer").onclick = () => home("right"); $("homel").onclick = () => home("left");
+async function stop() { if (busy) return; busy = true; try { await post("/api/xr/stop"); } catch (e) { alert(e.message); } finally { busy = false; } }
 async function decide(keep) {
   if (busy || !st || !st.rec.pending) return;
   busy = true;
@@ -188,7 +172,7 @@ $("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
 document.addEventListener("keydown", e => {
   if (epOpen) { epKey(e); return; }          // 에피소드 보기 중에는 VR 단축키 (Space = 시작) 안 받음
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
-  if (e.code === "Space") { e.preventDefault(); if (st && (st.xr.active || returning())) stop(); else start(); }
+  if (e.code === "Space") { e.preventDefault(); if (st && st.xr.active) stop(); else start(); }
   else if (e.key === "s" || e.key === "S" || e.key === "ㄴ") decide(true);
   else if (e.key === "d" || e.key === "D" || e.key === "ㅇ") decide(false);
 });
@@ -215,19 +199,14 @@ function render() {
   const last = ds && ds.last_side;
   const nextRight = last !== "right";
   $("next").innerHTML = st.rec.pending ? "방금 에피소드를 <span class='warn'>저장 / 버리기</span>"
-    : st.xr.active ? `${nextRight ? "오른쪽 큐브 → 오른칸 (오른손)" : "왼쪽 큐브 → 왼칸 (왼손)"} <small>그립(중지) 누른 채 팔 이동 · 트리거(검지) = 잡기 · 통에 넣고 놓은 뒤 [■ 끝] → 자동으로 준비 자세 (녹화에 포함)</small>`
+    : st.xr.active ? `${nextRight ? "오른쪽 큐브 → 오른칸 (오른손)" : "왼쪽 큐브 → 왼칸 (왼손)"} <small>그립(중지) 누른 채 팔 이동 · 트리거(검지) = 잡기 · 통에 넣고 놓은 뒤 팔을 처음 자세로 돌려놓고 [■ 끝]</small>`
     : nextRight ? `오른쪽 큐브 → 오른칸 (오른손)<small>통 비우고 큐브 2 개를 양옆에 (위치 조금씩 바꿔서) → [● 시작]</small>`
                 : `왼쪽 큐브 → 왼칸 (왼손)<small>오른칸 큐브는 그대로 두고 → [● 시작]</small>`;
   // 조작
   const x = st.xr, r = st.rec;
   $("start").disabled = x.active || !!r.pending || st.busy && !x.active;
-  const ret = returning();
-  $("stop").disabled = !x.active && !ret;
-  $("stop").firstChild.textContent = ret ? "■ 복귀 멈춤" : "■ 끝 → 준비 자세";
-  $("homer").disabled = $("homel").disabled = x.active || st.busy || r.active;
-  $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}` + (x.blocks ? ` · <span class="warn">안전 검사 걸림 ${x.blocks} 번</span>` : "")
-    : ret ? `<span class="warn">● ${st.stage}</span> <span class="sub">(멈추려면 Space)</span>`
-    : `<span class="sub">${x.msg}</span>` + (st.stage && /복귀/.test(st.stage) ? ` <span class="sub">· ${st.stage}</span>` : "");
+  $("stop").disabled = !x.active;
+  $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}` : `<span class="sub">${x.msg}</span>`;
   const chip = (k, ko) => { const h = (x.hands || {})[k] || {}; const c = h.level === "stop" ? "bad" : h.level === "ok" ? "ok" : "sub";
     return `${ko} <span class="${c}">${h.state || "—"}</span>${h.reason ? ` <span class="sub">${h.reason}</span>` : ""}`; };
   $("hr").innerHTML = chip("right", "오른손"); $("hl").innerHTML = chip("left", "왼손");
@@ -238,8 +217,7 @@ function render() {
   if (r.pending) {
     const p = r.pending, ex = p.extra || {};
     $("pinfo").innerHTML = `${p.n} 프레임 · ${p.duration_s} 초 · 쓴 손 <b>${SIDE_KO[ex.side] || ex.side || "-"}</b>` +
-      (ex.why ? ` · <span class="sub">${ex.why}</span>` : "") + (ex.home ? ` · <span class="${/끝$/.test(ex.home) ? "sub" : "warn"}">${ex.home}</span>` : "") +
-      (ex.blocks ? ` · <span class="warn">안전 검사 걸림 ${ex.blocks} 번</span>` : "") + (ex.side === "both" ? ` <span class="warn">— 양손이 다 움직임 (한 손만 쓰는 규칙이면 버리기)</span>` : "");
+      (ex.why ? ` · <span class="sub">${ex.why}</span>` : "") + (ex.side === "both" ? ` <span class="warn">— 양손이 다 움직임 (한 손만 쓰는 규칙이면 버리기)</span>` : "");
   }
   // 로봇
   const g = st.gripper || {}; const gm = k => g[k] ? `${g[k].mm} mm` : "상태 없음";
