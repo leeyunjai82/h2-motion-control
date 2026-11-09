@@ -498,6 +498,10 @@ def make_app(t):
     def vr():
         return page("vr.html")
 
+    @app.get("/vrurdf")
+    def vr_urdf_page():
+        return page("vr_urdf.html")
+
     @app.get("/view")
     def view_page():
         return page("vr_view.html")
@@ -566,7 +570,7 @@ def main():
         sys.exit("[vr] --v-max 0~0.3 m/s, --scale 0.2~3.0")
     t = Teleop(a.table_z, a.scale, a.v_max)
     print(f"[vr] 읽기 전용 — 로봇에 명령 안 보냄. 모니터 http://localhost:{a.port}/  ·  Quest: adb reverse tcp:{a.port} tcp:{a.port} 후 "
-          f"http://localhost:{a.port}/vr", flush=True)
+          f"http://localhost:{a.port}/vrurdf (URDF 가상 로봇) 또는 /vr", flush=True)
     kw = {"ssl_certfile": a.https[0], "ssl_keyfile": a.https[1]} if a.https else {}
     uvicorn.run(make_app(t), host="0.0.0.0", port=a.port, log_level="warning", **kw)
 

@@ -84,6 +84,10 @@ source activate_tv.sh && python gripper/vr_teleop.py          # 모니터: http:
 adb reverse tcp:50040 tcp:50040                               # Quest 3 USB 연결 (개발자 모드) — Quest 브라우저에서 http://localhost:50040/vr
 ```
 
+- **Quest 안에서 URDF 가상 로봇 보기**: Quest 브라우저에서 `http://localhost:50040/vrurdf` → [VR 시작].
+  H2 URDF + Dex1-1 가상 로봇이 눈앞 (기본: 내 앞 0.8 m, 로봇 뒤에서 봄) 에 서고 컨트롤러로 움직임. 머리 위 판 = 손별 상태.
+  B/Y = 방향 맞춤 + 로봇을 내 앞에 다시 놓기 · A/X = 뒤에서 ↔ 앞에서 보기 · 오른쪽 스틱 위아래 = 거리.
+  PC 브라우저로 열면 같은 장면 미리보기 (마우스 돌리기). ⚠ Quest 실기 (WebXR · 버튼 번호 · 진동 · 패스스루) 는 아직 확인 전
 - **3D 보기 (Quest 없이 먼저 검증)**: `http://localhost:50040/view` — URDF 메시로 가상 팔 · 그리퍼 겉 범위 (색 = 상태) · 목표 ·
   몸통 (+ 최소 거리 면) · 테이블.
   그리퍼는 **Unitree 공식 Dex1-1 URDF 메시** (`gripper/dex1_1/`, unitree_ros, BSD-3) 를 손목에 붙여 그림 — 장착 위치는 tcp_offset 0.1844 − 0.123 = 손목 앞 61.4 mm (손목 프레임 앞면 57.7 + 실측 147 − 손가락 끝 143.3),
