@@ -218,10 +218,18 @@ class Teleop:
             if msg.get("rtt") is not None:
                 self.rtt_ms = float(msg["rtt"])
             head = msg.get("head")
-            rq = msg.get("recenter_q") if msg.get("recenter") else None   # B/Y 를 누른 컨트롤러가 가리키는 방향 (목에 걸었을 때 정확)
-            if rq or (head and (msg.get("recenter") or self.n_msg == 1)):
-                f = quat_to_R(rq or head["q"]) @ np.array([0.0, 0.0, -1.0])
-                self.heading = math.atan2(-f[0], -f[2])
+            if msg.get("recenter") or self.n_msg == 1:
+                # 앞 방향: B/Y 를 누른 컨트롤러가 가리키는 쪽 → 없거나 수직이면 컨트롤러 손잡이 방향 → 헤드셋 (목에 걸면 부정확)
+                cands = [msg.get("recenter_q") if msg.get("recenter") else None]
+                cands += [(msg.get("hands") or {}).get(s, {}).get("q") for s in SIDES] if msg.get("recenter") else []
+                cands += [head["q"] if head else None]
+                for qq in cands:
+                    if not qq:
+                        continue
+                    f = quat_to_R(qq) @ np.array([0.0, 0.0, -1.0])
+                    if math.hypot(f[0], f[2]) > 0.3:
+                        self.heading = math.atan2(-f[0], -f[2])
+                        break
                 for h in self.hands.values():          # 기준이 바뀌었으니 그립을 다시 잡아야 함
                     h.engaged = False
             H = rot_y(-self.heading)
@@ -239,13 +247,11 @@ class Teleop:
                     "level": {s: self.hands[s].st["level"] for s in SIDES}}
 
     def _body_frame(self, head):
-        """abs: 머리 위치 · 좌우 회전(yaw)만 기준으로 한 몸 좌표 (xr_teleoperate head_yaw 방식). → (머리 위치, Hh) 또는 None"""
+        """abs: 몸 좌표 = 원점은 헤드셋 위치 (목에 걸면 가슴), 앞 방향은 B/Y 때 정한 방향으로 고정.
+        (xr_teleoperate 는 머리 방향을 매 순간 쓰지만, 목에 건 헤드셋은 기울고 돌아서 앞뒤가 뒤집힐 수 있음) → (원점, Hh) 또는 None"""
         if not head or head.get("p") is None:
             return None
-        f = quat_to_R(head["q"]) @ np.array([0.0, 0.0, -1.0])
-        if math.hypot(f[0], f[2]) < 0.2:      # 헤드셋 앞면이 거의 바닥/하늘을 봄 — 좌우 방향을 못 정함
-            return None
-        return np.asarray(head["p"], dtype=float), rot_y(-math.atan2(-f[0], -f[2]))
+        return np.asarray(head["p"], dtype=float), rot_y(-self.heading)
 
     def _to_body(self, body, c):
         ph, Hh = body
