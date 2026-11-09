@@ -3,6 +3,7 @@ policy.py — 그리퍼 ACT 정책 실행 (잡기 웹 pick_web 이 씀): model z
 
   model zip (trainer, format h2-gripper-act-v1): <이름>/policy.xml · policy.bin · meta.json
     입력 state [1,8] (side 손 7 관절 + 그리퍼 q, rad) · image_<카메라> [1,3,H,W] 0~1 RGB → action [1,chunk,8] rad
+    양손 모델 (side both, 오른손 · 왼손 에피소드를 한 데이터셋으로 학습): state · action 16 = [왼팔 7, 왼 그리퍼, 오른팔 7, 오른 그리퍼]
   저장: gripper/models/<이름>/ (.gitignore)
 
   한 틱 (30 Hz)
@@ -113,8 +114,17 @@ class Policy:
             raise ValueError(f"그리퍼 모델 아님: {self.meta.get('format')}")
         self.name, self.device = name, device
         self.side = self.meta["side"]
-        if self.side not in ("left", "right"):
-            raise ValueError(f"한 손 모델만 실행 (side {self.side})")
+        # 손별 (팔 14 축 중 자리, 출력 action 중 팔 7 · 그리퍼 자리, tcp 3 자리)
+        #   한 손 모델: state/action 8 = [팔 7, 그리퍼]. 양손 모델 (both): 16 = [왼팔 7, 왼 그리퍼, 오른팔 7, 오른 그리퍼], tcp 6
+        if self.side == "left":
+            self.parts = [("left", slice(0, 7), slice(0, 7), 7, slice(0, 3))]
+        elif self.side == "right":
+            self.parts = [("right", slice(7, 14), slice(0, 7), 7, slice(0, 3))]
+        elif self.side == "both":
+            self.parts = [("left", slice(0, 7), slice(0, 7), 7, slice(0, 3)),
+                          ("right", slice(7, 14), slice(8, 15), 15, slice(3, 6))]
+        else:
+            raise ValueError(f"모델 side 이상: {self.side}")
         self.cams = self.meta["cameras"]
         self.chunk = int(self.meta["chunk_size"])
         self.dim = int(self.meta["action_dim"])
@@ -235,14 +245,15 @@ class PolicyRunner:
         q = self.meas_arm()
         if q is None:
             bad.append("팔 실측 없음 (rt/lowstate · arm_server)")
-        g = r.grip.state(p.side)
-        if g is None:
-            bad.append(f"{p.side} 그리퍼 상태 없음")
+        gq = self.grip_q()
+        if gq is None:
+            bad.append("그리퍼 상태 없음")
         cp = r.cam_pitch.read() if r.cam_pitch else None
         if cp is not None and abs(cp["diff"]) > 1.0:
             bad.append(f"카메라 숙임 기준과 {cp['diff']:+.2f}° — 거치대를 맞추세요")
-        if q is not None and g is not None:
-            d = np.degrees(np.max(np.abs(self.side_state(q, g["q"])[:7] - p.start_pose[:7])))
+        if q is not None and gq is not None:
+            st = self.side_state(q, gq)
+            d = max(np.degrees(np.max(np.abs(st[asl] - p.start_pose[asl]))) for _, _, asl, _, _ in p.parts)
             if d > 25.0:
                 bad.append(f"팔이 시작 자세(학습 데이터 첫 자세)와 {d:.0f}° 다름 — 먼저 [준비 자세로]")
         return bad
@@ -251,10 +262,19 @@ class PolicyRunner:
         q = self.r.cam_pitch.arm_now() if self.r.cam_pitch else None
         return q if q is not None else self.r.arm_q
 
+    def grip_q(self):
+        """→ {손: 그리퍼 q 실측} (모델이 쓰는 손 전부) 또는 None"""
+        out = {}
+        for side, *_ in self.policy.parts:
+            g = self.r.grip.state(side)
+            if g is None or g.get("q") is None:
+                return None
+            out[side] = g["q"]
+        return out
+
     def side_state(self, q14, gq):
-        p = self.policy
-        a = q14[:7] if p.side == "left" else q14[7:]
-        return np.r_[a, gq]
+        """팔 14 (제어 순서) + {손: 그리퍼 q} → 모델 state (한 손 8 / 양손 16, 녹화 순서와 같음)"""
+        return np.concatenate([np.r_[q14[csl], gq[side]] for side, csl, _, _, _ in self.policy.parts])
 
     # ----- 실행 -----
     def start(self):
@@ -275,18 +295,18 @@ class PolicyRunner:
         try:
             while not self.stop_evt.is_set():
                 q = self.meas_arm()
-                g = r.grip.state(p.side)
+                gq = self.grip_q()
                 img, _ = r.cam.frame()
                 images = {"body": img}
                 for c in p.cams:
                     if c["name"] != "body":
                         images[c["name"]] = r.wrist.frame(c["name"])[0]
-                if q is None or g is None or any(v is None for v in images.values()):
+                if q is None or gq is None or any(v is None for v in images.values()):
                     self.inf_err = "팔 · 그리퍼 실측 또는 카메라 영상 끊김"
                     return
                 t_obs = self.T
                 t0 = time.time()
-                pred = p.infer(self.side_state(q, g["q"]), images)
+                pred = p.infer(self.side_state(q, gq), images)
                 self.state["infer_ms"] = round((time.time() - t0) * 1000, 1)
                 ens.add(t_obs, pred)
         except Exception as e:  # noqa: BLE001
@@ -301,10 +321,12 @@ class PolicyRunner:
             tok = b["token"]
             target = np.radians(np.asarray(b["target_deg"], dtype=float))      # 14 축, 다른 팔은 이 값 유지
             pc.LAST_CMD.update(q=target.copy(), t=time.time())
-            sl = slice(0, 7) if p.side == "left" else slice(7, 14)
             r.say(f"정책 시작 {p.name} ({p.side}, {p.device}, 추론 {p.infer_ms:.0f} ms)")
-            # 1) 시작 자세로 천천히 (학습 데이터 첫 지령 평균)
-            d = float(np.max(np.abs(target[sl] - p.start_pose[:7])))
+            # 1) 시작 자세로 천천히 (학습 데이터 첫 지령 평균) — 모델이 쓰는 팔 전부
+            q_start = target.copy()
+            for _, csl, asl, _, _ in p.parts:
+                q_start[csl] = p.start_pose[asl]
+            d = float(np.max(np.abs(target - q_start)))
             if math.degrees(d) > cfg["start_tol_deg"]:
                 sec = max(2.0, 1.5 * d / 0.3)
                 q0 = target.copy()
@@ -314,15 +336,15 @@ class PolicyRunner:
                         raise PolicyStop("정지")
                     s = min((time.time() - t0) / sec, 1.0)
                     s = s * s * (3 - 2 * s)
-                    q = q0.copy()
-                    q[sl] = q0[sl] + s * (p.start_pose[:7] - q0[sl])
+                    q = q0 + s * (q_start - q0)
                     rr = pc.call("/stream/cmd", {"token": tok, "deg": np.degrees(q).tolist()}, timeout=1.0)
                     pc.LAST_CMD.update(q=np.radians(np.asarray(rr["target_deg"])), t=time.time())
                     if s >= 1.0:
                         break
                     time.sleep(1 / FPS)
                 target = np.radians(np.asarray(rr["target_deg"], dtype=float))
-            r.grip.set(p.side, float(p.start_pose[7]))
+            for side, _, _, gi, _ in p.parts:
+                r.grip.set(side, float(p.start_pose[gi]))
             # 2) 정책 — 추론 스레드가 최신 관측으로 계속 추론해 ens 에 넣고, 이 루프는 30 Hz 로 ens 에서 꺼내 보냄
             self.state["phase"] = "정책"
             ens = Ensemble(p.chunk, float(cfg["ensemble_k"]))
@@ -359,29 +381,32 @@ class PolicyRunner:
                     raise PolicyStop(f"정책 출력이 학습 범위 밖 ({p.meta['joint_names'][k]} {math.degrees(over[k]):.0f}° 넘음)")
                 a = np.clip(a, p.a_min, p.a_max)
                 cmd = target.copy()
-                cmd[sl] = a[:7]
+                for _, csl, asl, _, _ in p.parts:
+                    cmd[csl] = a[asl]
                 qm = r.mdl.to_model(cmd)
-                T = r.mdl.tcp(qm, p.side)
-                if p.tcp_min is not None:
-                    tcp = T.translation
-                    if np.any(tcp < p.tcp_min - cfg["tcp_tol"]) or np.any(tcp > p.tcp_max + cfg["tcp_tol"]):
-                        raise PolicyStop(f"집게 가운데 {np.round(tcp, 3).tolist()} 가 학습 범위 ± {cfg['tcp_tol'] * 100:.0f} cm 밖")
-                if r.table_plane is not None:
-                    a0, bb, cc = r.table_plane
-                    tz = a0 + bb * T.translation[0] + cc * T.translation[1]
-                    low = r.mdl.lowest(qm, p.side)
-                    if low < tz + cfg["floor_clear"]:
-                        raise PolicyStop(f"그리퍼가 테이블에 {max(0.0, low - tz) * 1000:.0f} mm 까지 — 멈춤")
+                for side, _, _, _, tsl in p.parts:        # 손마다: 학습 범위 · 테이블
+                    T = r.mdl.tcp(qm, side)
+                    if p.tcp_min is not None:
+                        tcp = T.translation
+                        if np.any(tcp < p.tcp_min[tsl] - cfg["tcp_tol"]) or np.any(tcp > p.tcp_max[tsl] + cfg["tcp_tol"]):
+                            raise PolicyStop(f"{side} 집게 가운데 {np.round(tcp, 3).tolist()} 가 학습 범위 ± {cfg['tcp_tol'] * 100:.0f} cm 밖")
+                    if r.table_plane is not None:
+                        a0, bb, cc = r.table_plane
+                        tz = a0 + bb * T.translation[0] + cc * T.translation[1]
+                        low = r.mdl.lowest(qm, side)
+                        if low < tz + cfg["floor_clear"]:
+                            raise PolicyStop(f"{side} 그리퍼가 테이블에 {max(0.0, low - tz) * 1000:.0f} mm 까지 — 멈춤")
                 rr = pc.call("/stream/cmd", {"token": tok, "deg": np.degrees(cmd).tolist()}, timeout=1.0)
                 pc.LAST_CMD.update(q=np.radians(np.asarray(rr["target_deg"])), t=time.time())
                 lag = float(np.max(np.abs(np.asarray(rr["target_deg"]) - np.asarray(rr["meas_deg"]))))
                 if lag > cfg["track_abort_deg"]:
                     raise PolicyStop(f"지령 ↔ 실측 {lag:.0f}° — 걸렸거나 부딪힘")
-                r.grip.set(p.side, float(np.clip(a[7], pc.Q_LO, pc.Q_HI)))
+                for side, _, _, gi, _ in p.parts:
+                    r.grip.set(side, float(np.clip(a[gi], pc.Q_LO, pc.Q_HI)))
                 self.state["step"] += 1
                 # 끝 판정: 끝 자세 근처에 머묾
                 if time.time() - t_start > cfg["min_run_s"]:
-                    near = math.degrees(np.max(np.abs(a[:7] - p.end_pose[:7]))) < cfg["end_tol_deg"]
+                    near = max(math.degrees(np.max(np.abs(a[asl] - p.end_pose[asl]))) for _, _, asl, _, _ in p.parts) < cfg["end_tol_deg"]
                     t_near = (t_near or time.time()) if near else None
                     if t_near and time.time() - t_near > cfg["hold_end_s"]:
                         raise PolicyStop("끝 자세 도착 — 한 회 끝")
