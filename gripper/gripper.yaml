@@ -32,6 +32,7 @@ rate: 200                     # 송신 [Hz] — 끊기면 서비스가 힘을 �
 # 잡기 웹 (gripper/pick_web.py · pick_core.py) — 값은 모두 계산 · 추정, 실물 확인 전
 pick:
   mm_per_rad: 15.7            # 집게 안쪽 간격 [mm] = q × 15.7 — 82 mm (URDF 41 mm × 2) / 실측 최대 q 5.2 rad 비율, 캘리퍼 실측 아님
+  object_mm: 50               # 잡는 물건 = 50 mm 정육면체 하나로 고정 (2026-11-09). VR 그리퍼 범위 = object + open_margin (벌림) ~ object − squeeze (잡음)
   open_margin_mm: 25          # 벌림 = 박스 + 25 mm (최대 q_range 까지)
   squeeze_mm: 8               # 닫기 목표 = 박스 − 8 mm → kp 로 박스를 밈 (쥐는 힘 미확인)
   contact_min_mm: 3           # 닫은 뒤 간격 ≥ 닫기 목표 + 3 mm 이면 박스에 막힘 = 잡음, 아니면 놓침으로 보고 중단

@@ -9,7 +9,7 @@ xr_real.py — VR 조작 (xr_teleoperate H2 IK) → 실제 팔 · 그리퍼.  �
   안전 (겹겹이):
    - 시작 조건: 실기 팔 (카메라만 · 다른 동작 중이면 거부) · arm_server hold · 테이블을 잼 · 카메라 숙임 · 485 보드 · 앞 에피소드 결정
    - 팔 속도: arm_server 스트림 max_vel (기본 gripper.yaml xr_view.real_max_vel 0.3 rad/s, 상한 1.0)
-   - 데드맨: 그립(중지)을 누른 손만 팔이 움직임. 그리퍼는 트리거만 따름 (당기면 닫힘 · 놓으면 벌림)
+   - 데드맨: 그립(중지)을 누른 손만 팔이 움직임. 그리퍼는 트리거만 따름 — 놓음 75 mm ~ 끝까지 42 mm (물건 50 mm 고정, 그 아래로 안 닫힘)
    - 손별 검사: 몸통 · 테이블 (잰 평면) · 다른 팔 · 뒤 한계 → 걸리면 그 손은 이번 명령을 버리고 그 자리
    - 한 번에 크게 다른 목표 (관절 0.5 rad 넘게 — IK 가 튐) 는 버림
    - 명령 · 실측 차이 > pick.track_abort_deg → 세션 끝 (걸리거나 부딪힘)
@@ -36,6 +36,11 @@ if _miss:
 MAX_VEL_CAP = 1.0           # VR 실기 스트림 max_vel 상한 [rad/s]
 JUMP_RAD = 0.5              # 한 명령에서 관절 목표가 이보다 크게 바뀌면 버림 (IK 튐)
 IDLE_END_S = 1.5            # 이 시간 넘게 명령이 없으면 세션 끝
+if "object_mm" not in P:
+    raise SystemExit("[xr] gripper.yaml pick.object_mm (잡는 물건 크기) 없음")
+OBJ_MM = float(P["object_mm"])
+GRIP_OPEN_MM = min(OBJ_MM + float(P["open_margin_mm"]), pc.gap_mm(pc.Q_HI))   # 트리거 놓음 = 이만큼 벌림 (50 + 25 = 75 mm)
+GRIP_CLOSE_MM = max(OBJ_MM - float(P["squeeze_mm"]), pc.gap_mm(pc.Q_LO))      # 트리거 끝까지 = 이만큼만 닫음 (50 − 8 = 42 mm)
 SQUEEZE_Q = float(P["squeeze_mm"]) / pc.MM_PER_RAD   # 그리퍼를 지금 손가락 위치보다 이만큼만 더 조임 (≈ 8 mm) — 물건에 막혀도
                                                       #   완전 닫힘까지 억지로 조이지 않음 (계속 힘이 걸리면 과열). 자동 잡기의 squeeze_mm 와 같음
 
@@ -251,7 +256,8 @@ class XRTeleop:
 
     def grip_target(self, closing, q_meas):
         """트리거 닫힘 비율 · 지금 손가락 q → 보낼 목표 q. 닫는 쪽은 지금 위치보다 SQUEEZE_Q 까지만 (물건에 막히면 거기서 멈춤)."""
-        want = pc.q_for_gap(pc.gap_mm(pc.Q_HI) * (1.0 - min(max(float(closing), 0.0), 1.0)))
+        c = min(max(float(closing), 0.0), 1.0)
+        want = pc.q_for_gap(GRIP_OPEN_MM - c * (GRIP_OPEN_MM - GRIP_CLOSE_MM))     # 트리거 0 → 75 mm · 1 → 42 mm (물건 50 mm 고정)
         if q_meas is None:
             return None                     # 그리퍼 상태를 모르면 안 보냄
         return min(max(max(want, float(q_meas) - SQUEEZE_Q), pc.Q_LO), pc.Q_HI)

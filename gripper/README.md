@@ -111,7 +111,7 @@ adb reverse tcp:8012 tcp:8012                               # Quest: https://loc
 잡기 웹: 테이블 재기 → (수집 켬) → VR 조작 칸 속도 (0.2 / 0.3 / 0.5 rad/s) → [VR 시작] → 조작 → [VR 끝] → 저장 / 버리기.
 
 - Quest 화면: 머리 카메라 + 아래 양쪽 손목 카메라 (잡기 웹 영상), 위에 상태 (ROBOT ON / STOP: R:TABLE …)
-- 그립(중지) 누른 손만 팔이 움직임 · 뗀 손은 그 자리. 그리퍼는 트리거만 따름 (당기면 닫힘 · 놓으면 벌림)
+- 그립(중지) 누른 손만 팔이 움직임 · 뗀 손은 그 자리. 그리퍼는 트리거만 따름: 놓음 75 mm ~ 끝까지 42 mm (물건 50 mm 고정, pick.object_mm), 한 번에 지금 위치보다 8 mm 까지만 조임
 - 시작 조건: 실기 · 다른 동작 없음 · arm_server hold · 테이블 잼 · 카메라 숙임 · 485 보드 · 앞 에피소드 결정
 - 손별 멈춤: 몸통 (body_clear_m) · 테이블 (잰 평면 + tip_clear_mm, x > xr_view.table_x_min_m) · 다른 팔 (xr_view.arm_gap_m) ·
   뒤 (xr_view.back_limit_m) · IK 튐 (0.5 rad) → 그 손은 그 명령을 버리고 그 자리
