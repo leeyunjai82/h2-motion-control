@@ -36,7 +36,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 READ_ONLY = True            # 1단계 — 이 파일에는 arm_server / 그리퍼로 보내는 코드가 없음
 
 V = pc.CFG.get("vr") or {}
-_need = ("port", "mapping", "abs_hand_point_m", "abs_grip_pitch_deg", "table_x_min_m", "scale", "v_max", "w_max_deg", "joint_vmax", "ik_iters", "posture_gain", "follow_mm",
+_need = ("port", "back_limit_m", "mapping", "abs_hand_point_m", "abs_grip_pitch_deg", "table_x_min_m", "scale", "v_max", "w_max_deg", "joint_vmax", "ik_iters", "posture_gain", "follow_mm",
          "follow_deg", "unreach_mm", "arm_gap_m", "table_z_m", "workspace", "timeout_s")
 _miss = [k for k in _need if k not in V]
 if _miss:
@@ -98,6 +98,7 @@ class Teleop:
             self.q_start = self.q_rest.copy()
         self.start = start
         self.mapping = mapping                 # abs = 손 절대 위치 (머리 기준, xr_teleoperate 방식) · rel = 그립 순간부터 상대 이동
+        self.body_p0 = None                    # abs: 몸 좌표 원점 (B/Y 때 헤드셋 위치, 고정)
         self.abs_off = None                    # abs: 손별 몸(머리 기준) → pelvis 위치 오프셋 [m] (B/Y 자세 맞춤으로 정함 — 어깨 너비 차이도 흡수)
         # abs: 컨트롤러 → 로봇 손 자세 = 그대로 (xr_teleoperate: 컨트롤러 자세가 Unitree 팔 URDF 규약을 따름 — 앞을 가리키면 손 x 앞,
         #   손바닥 안쪽). 컨트롤러 손잡이 기울기만 pitch 로 보정 (vr.abs_grip_pitch_deg)
@@ -190,6 +191,9 @@ class Teleop:
         front = pts[pts[:, 0] > float(V["table_x_min_m"])]       # 테이블은 몸 앞 이 x 부터 — 옆으로 내린 팔은 검사 안 함
         low = None if len(front) == 0 else float(front[:, 2].min()) - self.table_z
         ag = self.arm_gap(qm)
+        back = min(float(min(p[0] for p in self.arm_pts(qm, side)[1:])), float(pts[:, 0].min()))   # 팔꿈치 · 손목 · 그리퍼 가장 뒤
+        if back < float(V["back_limit_m"]):
+            why.append(f"뒤로 {back * 100:.0f} cm (한계 {float(V['back_limit_m']) * 100:.0f})")
         if g is not None and g < float(P["body_clear_m"]):
             why.append(f"몸통 {g * 100:.0f} cm (최소 {float(P['body_clear_m']) * 100:.0f})")
         if low is not None and low * 1000 < float(P["tip_clear_mm"]):
@@ -197,7 +201,7 @@ class Teleop:
         if ag < float(V["arm_gap_m"]):
             why.append(f"다른 팔 {ag * 100:.0f} cm (최소 {float(V['arm_gap_m']) * 100:.0f})")
         return why, {"body_gap_cm": None if g is None else round(g * 100, 1), "table_mm": None if low is None else round(low * 1000),
-                     "arm_gap_cm": round(ag * 100, 1)}
+                     "arm_gap_cm": round(ag * 100, 1), "back_cm": round(back * 100, 1)}
 
     def clamp_ws(self, p):
         q = p.copy()
@@ -235,9 +239,9 @@ class Teleop:
             H = rot_y(-self.heading)
             hands = msg.get("hands") or {}
             if self.mapping == "abs":
+                if msg.get("recenter") and head and head.get("p") is not None:
+                    self._calibrate((np.asarray(head["p"], dtype=float), rot_y(-self.heading)), hands)
                 body = self._body_frame(head)
-                if body is not None and msg.get("recenter"):
-                    self._calibrate(body, hands)
                 for side in SIDES:
                     self._hand(self.hands[side], hands.get(side), H, dt, body)
             else:
@@ -249,6 +253,8 @@ class Teleop:
     def _body_frame(self, head):
         """abs: 몸 좌표 = 원점은 헤드셋 위치 (목에 걸면 가슴), 앞 방향은 B/Y 때 정한 방향으로 고정.
         (xr_teleoperate 는 머리 방향을 매 순간 쓰지만, 목에 건 헤드셋은 기울고 돌아서 앞뒤가 뒤집힐 수 있음) → (원점, Hh) 또는 None"""
+        if self.body_p0 is not None:          # B/Y 때 헤드셋 위치로 고정 — 목에 건 헤드셋이 흔들려도 팔이 따라 움직이지 않음
+            return self.body_p0, rot_y(-self.heading)
         if not head or head.get("p") is None:
             return None
         return np.asarray(head["p"], dtype=float), rot_y(-self.heading)
@@ -272,6 +278,7 @@ class Teleop:
             hand_pt = T.translation - T.rotation @ np.array([self.hand_d, 0.0, 0.0])
             offs[side] = hand_pt - p_b
         if offs:
+            self.body_p0 = body[0].copy()
             one = next(iter(offs.values()))
             self.abs_off = {s: offs.get(s, one * np.array([1.0, -1.0, 1.0]) if s not in offs else None) for s in SIDES}
             print(f"[vr] 자세 맞춤: 몸 → pelvis 오프셋 " + " · ".join(f"{s} {np.round(v, 3).tolist()}" for s, v in self.abs_off.items()), flush=True)
@@ -351,7 +358,8 @@ class Teleop:
         if why and not reasons:
             # 이미 한계 근처에 있을 때 빠져나오는 쪽 (걸린 거리가 지금보다 줄지 않음) 은 허용 — 안 그러면 한 번 걸리면 못 움직임
             _, now = self.check(self.q, side)
-            keys = [k for k, w in (("body_gap_cm", "몸통"), ("table_mm", "테이블"), ("arm_gap_cm", "다른 팔")) if any(r.startswith(w) for r in why)]
+            keys = [k for k, w in (("body_gap_cm", "몸통"), ("table_mm", "테이블"), ("arm_gap_cm", "다른 팔"), ("back_cm", "뒤로"))
+                    if any(r.startswith(w) for r in why)]
             if all(vals[k] is not None and now[k] is not None and vals[k] >= now[k] for k in keys):
                 why = []
         reasons += why
