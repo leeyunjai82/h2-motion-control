@@ -550,6 +550,7 @@ def run_seg(mdl, sg, stop_evt, on_tick=None):
             pass
 
 
+GRASP_YAWS = (0, 15, 30)       # 잡을 때 yaw 자동: 입력 RPY 로 안 되면 안쪽으로 더 틀어 이 순서로 시도 (가운데 물체 — 팔이 몸통에 붙거나 관절이 튐)
 PLACE_YAWS = (0, 15, 30, 45)   # 놓을 때 yaw 자동: 안쪽(오른손 +, 왼손 −) 으로 이 순서로 시도
 
 

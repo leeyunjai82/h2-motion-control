@@ -415,11 +415,26 @@ class Runner:
             if bin_pt is None:
                 raise HTTPException(400, "그 픽셀 시선이 통 테두리 높이와 만나지 않음")
         pc.set_speed(self.speed)
-        if bin_pt is not None:
-            plan = pc.plan_pick_auto_place(self.mdl, q_now, side, top, width_mm, height_mm, rpy, bin_pt, bin_h_mm,
-                                           place_yaw=self.place_yaw)
+        # 잡을 때 yaw 자동: 입력 RPY 로 안 되면 안쪽 (오른손 +, 왼손 −) 으로 15 · 30° 더 틀어 다시 (처음 되는 것). 다 안 되면 첫 시도의 이유
+        sgn = 1.0 if side == "right" else -1.0
+        first = None
+        for gy in pc.GRASP_YAWS:
+            r2 = [float(rpy[0]), float(rpy[1]), float(rpy[2]) + sgn * gy]
+            if bin_pt is not None:
+                plan = pc.plan_pick_auto_place(self.mdl, q_now, side, top, width_mm, height_mm, r2, bin_pt, bin_h_mm,
+                                               place_yaw=self.place_yaw)
+            else:
+                plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, r2)
+            plan["grasp_yaw_in"] = gy
+            if plan["ok"]:
+                if gy:
+                    plan.setdefault("notes", []).append(f"잡을 때 yaw 안쪽 {gy}° 자동 (입력 RPY 로는 안 됨)")
+                break
+            first = first or plan
         else:
-            plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, rpy)
+            plan = first
+            plan["reasons"].append(f"잡을 때 yaw 안쪽 {list(pc.GRASP_YAWS)}° 다 안 됨 — 물체를 몸에서 40~45 cm 앞으로")
+        rpy = plan.get("rpy_deg", rpy)
         plan["speed"] = self.speed
         plan["table_z"] = round(self.table_plane[0] + self.table_plane[1] * top[0] + self.table_plane[2] * top[1], 4)   # 박스 자리 테이블 높이
         if plan.get("grasp"):     # 자로 확인할 값: 테이블 면 → 집게 가운데 (두 패드 가운데)
@@ -445,7 +460,7 @@ class Runner:
     def summary(plan):
         if plan is None:
             return None
-        keys = ("ok", "side", "speed", "place_yaw_in", "place_rpy_deg", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+        keys = ("ok", "side", "speed", "grasp_yaw_in", "place_yaw_in", "place_rpy_deg", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
                 "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
         return {k: plan.get(k) for k in keys if k in plan}
 
