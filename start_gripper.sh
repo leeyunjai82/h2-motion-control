@@ -31,7 +31,24 @@ source "$ROOT/robot_env.sh" || exit 1
 if [ ! -f "$ROOT/robots/${ROBOT}/robot.yaml" ]; then echo "❌ robots/${ROBOT}/robot.yaml 없음" >&2; exit 2; fi
 
 up() { curl -s -m 1 -o /dev/null "$1" 2>/dev/null; }
-if up "http://localhost:50030/"; then echo "❌ 포트 50030 사용 중 — 실행 중인 잡기 웹을 먼저 끄세요" >&2; exit 1; fi
+if up "http://localhost:50030/"; then
+  # 앞 실행이 남아 있음 (다른 창 · 끊긴 창) → 그 실행의 종료 순서 (cleanup: 띄운 거꾸로, TERM → 8 초 → 강제) 로 끄고 다시
+  OLD=$(pgrep -f "start_gripper.sh" | grep -v -w "$$" || true)
+  echo "⚠️  잡기 웹(50030)이 이미 떠 있음 — 앞 실행 $( [ -n "$OLD" ] && echo "(start_gripper.sh PID $(echo $OLD | tr '\n' ' '))" || echo "(창 없이 남은 프로그램)")"
+  echo "    끄면 팔은 그 자리 · 그리퍼 힘이 풀림 — 잡고 있는 물건이 있으면 먼저 내려놓기"
+  read -r -p "   앞 실행을 끄고 다시 시작하려면 yes 입력: " ans
+  [ "$ans" = "yes" ] || { echo "취소"; exit 1; }
+  if [ -n "$OLD" ]; then
+    kill -INT $OLD 2>/dev/null || true          # 그 창의 cleanup 이 순서대로 끔 (그리퍼 서비스 sudo kill 포함)
+  else
+    pkill -TERM -f "gripper/xr_virtual.py" 2>/dev/null || true
+    pkill -TERM -f "gripper/pick_web.py" 2>/dev/null || true
+  fi
+  for _ in $(seq 1 40); do up "http://localhost:50030/" || break; sleep 1; done
+  if up "http://localhost:50030/"; then echo "❌ 40 초 안에 안 꺼짐 — 그 창에서 Ctrl+C 로 끄고 다시" >&2; exit 1; fi
+  for _ in $(seq 1 20); do pgrep -f "start_gripper.sh" | grep -v -w "$$" >/dev/null || break; sleep 1; done
+  echo "   앞 실행 꺼짐 — 다시 시작"
+fi
 
 if [ $SIM -eq 0 ]; then
   echo "⚠️  실기 그리퍼 잡기 (ROBOT=$ROBOT, $IFACE) — 로봇을 거치대에 걸고 FSM 703 (start_fsm.sh stand),"
