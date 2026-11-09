@@ -1021,7 +1021,7 @@ def make_app(r: Runner):
     # ----- VR 조작 (gripper/xr_virtual.py --real → 여기 → arm_server · 그리퍼) -----
     @app.post("/api/xr/start")
     def api_xr_start(body: dict):
-        return r.xr.start(float(body.get("max_vel", xr_real.X["real_max_vel"])), CAM_PITCH_MAX)
+        return r.xr.start(float(body.get("max_vel", xr_real.X["real_max_vel"])), CAM_PITCH_MAX, bool(body.get("no_table", False)))
 
     @app.post("/api/xr/stop")
     def api_xr_stop():
@@ -1104,6 +1104,7 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 </fieldset>
 <fieldset><legend>VR 조작 (Quest · xr_teleoperate)</legend>
 관절 속도 <select id="xrvel" style="background:#222;color:#eee"><option value="0.2">0.2</option><option value="0.3" selected>0.3</option><option value="0.5">0.5</option></select> rad/s
+<label><input type="checkbox" id="xrnotable">테이블 검사 끔 (테이블 없이 시험)</label><br>
 <button id="xrstart">VR 시작</button><button id="xrstop" disabled>VR 끝</button>
 <div id="xrst" style="font-size:13px">꺼짐</div>
 <div style="font-size:12px">먼저 <code>python gripper/xr_virtual.py --real</code> 실행 · 테이블을 잰 뒤 [VR 시작]. 그립(중지)을 누른 손만 움직이고, 뗀 손은 그 자리 (그리퍼도 그대로).
@@ -1193,8 +1194,9 @@ async function poll(){try{const s=await (await fetch('/api/state')).json();
  $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
  $('run').disabled=!(planOk&&s.plan_id===planId&&!s.busy); $('next').disabled=!s.waiting; $('home').disabled=!s.can_home;
  ['gopen','gclose','pready','pdef'].forEach(k=>$(k).disabled=s.busy);}catch(e){} setTimeout(poll,300);}
-$('xrstart').onclick=async()=>{if(!confirm('실제 팔이 VR 손을 따라 움직입니다. 주변을 비우고 E-stop 을 손에 두세요. 시작할까요?'))return;
- try{await post('/api/xr/start',{max_vel:+$('xrvel').value});}catch(e){alert(e.message);}};
+$('xrstart').onclick=async()=>{const nt=$('xrnotable').checked;
+ if(!confirm('실제 팔이 VR 손을 따라 움직입니다. 주변을 비우고 E-stop 을 손에 두세요.'+(nt?' (테이블 검사 끔 — 팔 아래에 아무것도 두지 마세요)':'')+' 시작할까요?'))return;
+ try{await post('/api/xr/start',{max_vel:+$('xrvel').value,no_table:nt});}catch(e){alert(e.message);}};
 $('xrstop').onclick=()=>post('/api/xr/stop',{}).catch(e=>alert(e.message));
 setInterval(async()=>{try{const s=await (await fetch('/api/xr/state')).json();
  const h=s.hands||{}; const hs=k=>h[k]?`<span class="${h[k].level==='stop'?'bad':h[k].level==='ok'?'ok':''}">${h[k].state}</span> ${h[k].reason||''}`:'';

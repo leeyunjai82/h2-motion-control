@@ -75,7 +75,7 @@ class XRTeleop:
             why.append(f"몸통 {g * 100:.0f} cm")
         T = mdl.tcp(qm, side)
         env = pc.ENVELOPE @ T.rotation.T + T.translation
-        plane = self.r.table_plane
+        plane = None if getattr(self, "no_table", False) else self.r.table_plane
         front = env[env[:, 0] > float(X["table_x_min_m"])]
         if plane is not None and len(front):
             zt = plane[0] + plane[1] * front[:, 0] + plane[2] * front[:, 1]
@@ -93,7 +93,7 @@ class XRTeleop:
         return why
 
     # ---------- 세션 ----------
-    def start(self, max_vel, cam_pitch_max):
+    def start(self, max_vel, cam_pitch_max, no_table=False):
         r = self.r
         with self.lk:
             if self.active:
@@ -104,8 +104,8 @@ class XRTeleop:
                 raise HTTPException(409, "다른 동작 중")
             if r.rec.pending is not None:
                 raise HTTPException(409, "앞 에피소드를 [저장] 또는 [버리기] 먼저")
-            if r.table_plane is None:
-                raise HTTPException(409, "테이블을 먼저 재세요 ([테이블 점 추가]) — 테이블 높이 검사에 씀")
+            if r.table_plane is None and not no_table:
+                raise HTTPException(409, "테이블을 먼저 재세요 ([테이블 점 추가]) — 또는 [테이블 검사 끔] 체크 (테이블 없이 시험)")
             if not (0.0 < float(max_vel) <= MAX_VEL_CAP):
                 raise HTTPException(400, f"속도 0 ~ {MAX_VEL_CAP} rad/s")
             ok, msg, _ = pc.arm_ready_check()
@@ -136,7 +136,8 @@ class XRTeleop:
             self.n, self.t_last = 0, time.time()
             self.epoch += 1
             self.active = True
-            self.msg = f"VR 조작 중 (관절 {self.max_vel:.2f} rad/s)"
+            self.no_table = bool(no_table)
+            self.msg = f"VR 조작 중 (관절 {self.max_vel:.2f} rad/s" + (", 테이블 검사 끔)" if self.no_table else ")")
         with r.lk:
             r.phase, r.stage, r.waiting = "vr", "VR 조작", False
         r.stage_idx = 1
@@ -149,7 +150,7 @@ class XRTeleop:
             except (ValueError, RuntimeError) as e:
                 self.stop(f"녹화 시작 못 함: {e}")
                 raise HTTPException(409, f"녹화 시작 못 함: {e}")
-        r.say(f"VR 조작 시작 — 관절 {self.max_vel:.2f} rad/s, 그립을 누른 손만 움직임")
+        r.say(f"VR 조작 시작 — 관절 {self.max_vel:.2f} rad/s, 그립을 누른 손만 움직임" + (" · ⚠ 테이블 검사 끔" if self.no_table else ""))
         return {"ok": True, "epoch": self.epoch, "q": self.q0_named}
 
     def stop(self, why="VR 끝"):
