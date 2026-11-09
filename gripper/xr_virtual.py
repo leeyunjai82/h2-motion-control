@@ -24,9 +24,47 @@ import json
 import os
 import sys
 import time
+import threading
 import urllib.request
 
+import cv2
 import numpy as np
+
+
+def placeholder(msg):
+    img = np.full((480, 640, 3), 40, np.uint8)
+    for i, line in enumerate(("VIRTUAL (no robot command)", msg, "robot view: PC http://localhost:50040/")):
+        cv2.putText(img, line, (20, 200 + 40 * i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (230, 230, 230), 2)
+    return img
+
+
+def feed_video(tv, url):
+    """잡기 웹 머리 카메라 MJPEG → Quest 화면 (immersive). 못 받으면 안내 글자 화면."""
+    while True:
+        try:
+            with urllib.request.urlopen(url, timeout=3) as r:
+                buf = b""
+                while True:
+                    chunk = r.read(16384)
+                    if not chunk:
+                        break
+                    buf += chunk
+                    last = None
+                    while True:                       # 버퍼에 쌓인 프레임 중 가장 최신 것만
+                        a = buf.find(b"\xff\xd8")
+                        b = buf.find(b"\xff\xd9", a + 2) if a != -1 else -1
+                        if a == -1 or b == -1:
+                            break
+                        last, buf = buf[a:b + 2], buf[b + 2:]
+                    if last is not None:
+                        img = cv2.imdecode(np.frombuffer(last, np.uint8), cv2.IMREAD_COLOR)
+                        if img is not None:
+                            tv.render_to_xr(cv2.resize(img, (640, 480)))
+                    if len(buf) > 4_000_000:
+                        buf = b""
+        except Exception as e:  # noqa: BLE001
+            tv.render_to_xr(placeholder(f"no camera: {type(e).__name__}"))
+            time.sleep(1.0)
 
 
 def post(url, data, timeout=0.5):
@@ -46,9 +84,10 @@ def main():
     ap.add_argument("--viewer", default="http://localhost:50040", help="gripper/xr_viewer.py 주소")
     ap.add_argument("--hand", action="store_true", help="컨트롤러 대신 손 추적 입력")
     ap.add_argument("--hz", type=float, default=30.0, help="IK · 전송 주기 (xr_teleoperate 기본 30)")
+    ap.add_argument("--video", default="http://localhost:50030/video", help="immersive 에서 Quest 에 보여 줄 영상 (잡기 웹 머리 카메라 MJPEG)")
     ap.add_argument("--display", choices=("pass-through", "immersive"), default="pass-through",
                     help="Vuer 화면 모드: pass-through = 실제 주변 (Vuer 왼쪽 아래 'pass-through' 버튼) · "
-                         "immersive = G1 때처럼 'Virtual Reality' 버튼 (로봇 영상 없이 검은 화면)")
+                         "immersive = G1 때처럼 'Virtual Reality' 버튼 (잡기 웹 머리 카메라 영상을 보여 줌)")
     a = ap.parse_args()
 
     xr = os.path.abspath(os.path.expanduser(a.xr))
@@ -82,8 +121,12 @@ def main():
     q_last = np.array([q0[n] for n in names])   # 가상 팔 지금 자세에서 시작 (실제 로봇이면 실측 관절)
     arm_ik.init_data = q_last.copy()
 
-    tv = TeleVuerWrapper(use_hand_tracking=a.hand, binocular=True, img_shape=(480, 1280),
-                         display_mode=a.display, zmq=False, webrtc=False, arm_reference_mode="head_yaw")
+    immersive = a.display == "immersive"
+    # immersive 는 영상이 있어야 함 (televuer: zmq 또는 webrtc) — 로봇 영상 서버 대신 잡기 웹 머리 카메라 (D435i) 를 한 눈 영상으로 넣음
+    tv = TeleVuerWrapper(use_hand_tracking=a.hand, binocular=not immersive, img_shape=(480, 640) if immersive else (480, 1280),
+                         display_mode=a.display, zmq=immersive, webrtc=False, arm_reference_mode="head_yaw")
+    if immersive:
+        threading.Thread(target=feed_video, args=(tv, a.video), daemon=True).start()
     print("[xr] Vuer 서버 :8012 — Quest: adb reverse tcp:8012 tcp:8012 → https://localhost:8012/?ws=wss://localhost:8012", flush=True)
     print(f"[xr] 화면 모드 {a.display} — Vuer 에서 " + ("왼쪽 아래 'pass-through' 버튼" if a.display == "pass-through" else "'Virtual Reality' 버튼")
           + " 을 컨트롤러로 누름", flush=True)
