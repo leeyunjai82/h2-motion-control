@@ -163,7 +163,7 @@ async function load() {
     hands[s] = { g, box, fill, tgt, dex };
   }
   loaded = true;
-  $("info").textContent = navigator.xr ? "준비됨" : "WebXR 없음 — PC 화면 미리보기만 (Quest 브라우저에서 열 것)";
+  $("info").textContent = navigator.xr ? "준비됨 — [VR 시작] 을 누르세요" : "WebXR 없음 — PC 화면 미리보기만 (Quest 브라우저에서 열 것)";
   poll();
 }
 
@@ -329,7 +329,10 @@ if (navigator.xr) {
     $("go").disabled = !(ar || vr);
     if (!(ar || vr)) $("info").textContent += " · 이 브라우저는 immersive-ar/vr 불가";
   });
-  $("go").onclick = () => { if (loaded) startXR().catch(e => { $("info").textContent = "시작 실패: " + e; }); };
+  $("go").onclick = () => {
+    $("info").textContent = loaded ? "VR 시작 요청…" : "아직 메시 불러오는 중 — 끝나면 다시 누르세요";
+    if (loaded) startXR().catch(e => { $("info").textContent = "시작 실패: " + e; });
+  };
 }
 </script>
 </body>
