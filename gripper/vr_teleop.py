@@ -36,7 +36,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 READ_ONLY = True            # 1단계 — 이 파일에는 arm_server / 그리퍼로 보내는 코드가 없음
 
 V = pc.CFG.get("vr") or {}
-_need = ("port", "back_limit_m", "mapping", "abs_hand_point_m", "abs_grip_pitch_deg", "table_x_min_m", "scale", "v_max", "w_max_deg", "joint_vmax", "ik_iters", "posture_gain", "follow_mm",
+_need = ("port", "back_limit_m", "mapping", "abs_grip_pitch_deg", "table_x_min_m", "scale", "v_max", "w_max_deg", "joint_vmax", "ik_iters", "posture_gain", "follow_mm",
          "follow_deg", "unreach_mm", "arm_gap_m", "table_z_m", "workspace", "timeout_s")
 _miss = [k for k in _need if k not in V]
 if _miss:
@@ -79,6 +79,7 @@ class Hand:
         self.t0 = None              # 그 순간 가상 TCP (p, R) — pelvis
         self.tgt = None             # 속도 제한한 목표 TCP (p, R)
         self.trig = 0.0
+        self.latch = False          # A/X 로 켠 그리퍼 닫힘 고정
         self.st = {"state": "대기", "reason": "", "level": "idle"}
         self.haptic = 0.0
 
@@ -98,12 +99,13 @@ class Teleop:
             self.q_start = self.q_rest.copy()
         self.start = start
         self.mapping = mapping                 # abs = 손 절대 위치 (머리 기준, xr_teleoperate 방식) · rel = 그립 순간부터 상대 이동
+        self.debug = False
+        self.dbg_t = {s: 0.0 for s in SIDES}
         self.body_p0 = None                    # abs: 몸 좌표 원점 (B/Y 때 헤드셋 위치, 고정)
         self.abs_off = None                    # abs: 손별 몸(머리 기준) → pelvis 위치 오프셋 [m] (B/Y 자세 맞춤으로 정함 — 어깨 너비 차이도 흡수)
         # abs: 컨트롤러 → 로봇 손 자세 = 그대로 (xr_teleoperate: 컨트롤러 자세가 Unitree 팔 URDF 규약을 따름 — 앞을 가리키면 손 x 앞,
         #   손바닥 안쪽). 컨트롤러 손잡이 기울기만 pitch 로 보정 (vr.abs_grip_pitch_deg)
         self.R_grip = pin.rpy.rpyToMatrix(0.0, math.radians(float(V["abs_grip_pitch_deg"])), 0.0)
-        self.hand_d = float(pc.TCP_OFF[0]) - float(V["abs_hand_point_m"])   # 손 기준점 (손목 + 0.05) → 집게 가운데
         self.q = self.q_start.copy()
         self.hands = {s: Hand(s) for s in SIDES}
         self.heading = 0.0          # 방향 맞춤 [rad] (WebXR y 축 둘레)
@@ -275,8 +277,7 @@ class Teleop:
                 continue
             p_b, _ = self._to_body(body, c)
             T = self.mdl.tcp(self.q, side)
-            hand_pt = T.translation - T.rotation @ np.array([self.hand_d, 0.0, 0.0])
-            offs[side] = hand_pt - p_b
+            offs[side] = T.translation - p_b      # 컨트롤러 위치 ↔ 집게 가운데 (자세와 상관없이 위치만 — 손목을 돌려도 팔이 안 밀림)
         if offs:
             self.body_p0 = body[0].copy()
             one = next(iter(offs.values()))
@@ -293,7 +294,9 @@ class Teleop:
             h.engaged, h.tgt = False, None
             h.st = {"state": "컨트롤러 없음", "reason": "", "level": "idle"}
             return
-        h.trig = float(c.get("trig") or 0.0)
+        if c.get("toggle"):                   # A/X: 그리퍼 닫힘 고정 켜고 끔 (트리거를 계속 안 당겨도 잡은 채로 팔을 움직임)
+            h.latch = not h.latch
+        h.trig = max(float(c.get("trig") or 0.0), 1.0 if h.latch else 0.0)
         grip = float(c.get("grip") or 0.0) > 0.5
         p_c = H @ np.asarray(c["p"], dtype=float)
         R_c = H @ quat_to_R(c["q"])
@@ -318,7 +321,11 @@ class Teleop:
         if absm:    # 원하는 목표 = 손 절대 자세 (머리 기준 몸 좌표 + 오프셋) — 팔 모양이 사람 팔을 따라감
             p_b, R_b = self._to_body(body, c)
             R_des = R_b @ self.R_grip
-            p_des = p_b + self.abs_off[side] + R_des @ np.array([self.hand_d, 0.0, 0.0])
+            p_des = p_b + self.abs_off[side]
+            if self.debug and time.monotonic() - self.dbg_t[side] > 0.5:
+                self.dbg_t[side] = time.monotonic()
+                print(f"[dbg] {side:5s} 손(몸 좌표) {np.round(p_b, 3).tolist()} rpy {rpy_deg(R_b)} → 목표 {np.round(p_des, 3).tolist()} · "
+                      f"가상 TCP {np.round(T.translation, 3).tolist()} · {h.st.get('state', '')} {h.st.get('reason', '')}", flush=True)
         else:       # 원하는 목표 = 그립 순간 TCP + (컨트롤러 상대 이동, pelvis 축)
             p_des = h.t0[0] + self.scale * (M_XR @ (p_c - h.c0[0]))
             R_des = (M_XR @ (R_c @ h.c0[1].T) @ M_XR.T) @ h.t0[1]
@@ -426,7 +433,7 @@ class Teleop:
                     "tcp": r3(T.translation), "tcp_rpy": rpy_deg(T.rotation),
                     "target": None if h.tgt is None else r3(h.tgt[0]),
                     "target_rpy": None if h.tgt is None else rpy_deg(h.tgt[1]),
-                    "gripper_mm": round(self.gap_max * (1.0 - h.trig), 1),
+                    "gripper_mm": round(self.gap_max * (1.0 - h.trig), 1), "gripper_latch": h.latch,
                     "pts": [r3(p) for p in self.arm_pts(self.q, side)],
                     "joints": joints}
             return out
@@ -661,12 +668,14 @@ def main():
                     help="시작 가상 자세: default = 로봇 켰을 때 (팔 내림, 기본) · ready = 잡기 웹 준비 자세 (팔 앞으로)")
     ap.add_argument("--mapping", choices=("abs", "rel"), default=str(V["mapping"]),
                     help="abs = 손 절대 위치 (팔 모양이 사람 팔을 따라감, B/Y 로 자세 맞춤) · rel = 그립 순간부터 상대 이동")
+    ap.add_argument("--debug", action="store_true", help="손 · 목표 · 가상 TCP 를 0.5 초마다 터미널에 찍음 (문제 보고용)")
     ap.add_argument("--https", nargs=2, metavar=("CERT", "KEY"), help="Wi-Fi 로 쓸 때 (WebXR 는 localhost 아니면 HTTPS 필요)")
     a = ap.parse_args()
     # 1단계 (읽기 전용, 로봇 명령 없음) 라서 속도를 넉넉히 허용. 실제 로봇 단계에서는 gripper.yaml 값 (v_max 0.1 · joint_vmax ≤ server_max_vel) 부터
     if not (0 < a.v_max <= 1.0) or not (0.2 <= a.scale <= 3.0) or not (0 < a.joint_vmax <= 3.0):
         sys.exit("[vr] --v-max 0~1.0 m/s, --joint-vmax 0~3.0 rad/s, --scale 0.2~3.0")
     t = Teleop(a.table_z, a.scale, a.v_max, a.start, a.mapping, a.joint_vmax)
+    t.debug = a.debug
     print(f"[vr] 읽기 전용 — 로봇에 명령 안 보냄. 모니터 http://localhost:{a.port}/  ·  Quest: adb reverse tcp:{a.port} tcp:{a.port} 후 "
           f"http://localhost:{a.port}/vrurdf (URDF 가상 로봇) 또는 /vr", flush=True)
     kw = {"ssl_certfile": a.https[0], "ssl_keyfile": a.https[1]} if a.https else {}

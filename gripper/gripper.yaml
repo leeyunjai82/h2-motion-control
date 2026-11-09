@@ -100,9 +100,8 @@ wrist_cams:
 vr:
   port: 50040
   mapping: abs                # abs = 손 절대 위치 (머리 기준 · 좌우 회전만, xr_teleoperate televuer 방식) — 팔 모양이 사람 팔을 따라감.
-                              #   시작할 때 가상 로봇처럼 팔을 내리고 서서 B/Y = 위치 맞춤 (몸 → pelvis 오프셋). 손 자세는 컨트롤러 방향 그대로.
+                              #   시작할 때 가상 로봇처럼 팔을 내리고 서서 B/Y = 위치 맞춤 (컨트롤러 위치 ↔ 집게 가운데, 손별). 손 자세는 컨트롤러 방향 그대로.
                               #   rel = 그립 순간부터 상대 이동
-  abs_hand_point_m: 0.05      # abs: 컨트롤러 쥔 손 = 로봇 손목 + 이 거리 (xr_teleoperate H2_ArmIK L_ee/R_ee 0.05 와 같음)
   abs_grip_pitch_deg: 0       # abs: 컨트롤러 손잡이 기울기 보정 (+ = 손이 더 숙임). ⚠ Quest 3 grip 자세 기울기는 확인 필요
   scale: 1.0                  # 손 이동 → 그리퍼 이동 배율
   v_max: 0.10                 # 목표 TCP 최고 속도 [m/s] (실제 로봇 2단계는 0.05 부터)

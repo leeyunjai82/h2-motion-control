@@ -17,7 +17,7 @@
 <button id="go" disabled>VR 시작</button>
 <div class="box" id="info">WebXR 확인 중…</div>
 <div class="box">
-  그립(중지) 버튼 누르고 있는 동안만 따라감 · 트리거 = 그리퍼 닫기 · B/Y = 자세 맞춤 (가상 로봇처럼 팔을 내리고 누름)<br>
+  그립(중지) 버튼 누르고 있는 동안만 따라감 · 트리거 = 그리퍼 닫기 · A/X = 그리퍼 닫힘 고정 · B/Y = 자세 맞춤 (가상 로봇처럼 팔을 내리고 누름)<br>
   컨트롤러 옆 작은 상자 색: 초록 따라감 · 노랑 일부만 · 빨강 멈춤 (진동) · 회색 대기
 </div>
 <div class="box" id="st">연결 전</div>
@@ -28,6 +28,7 @@ const $ = id => document.getElementById(id);
 let ws = null, wsOk = false, lastAck = null, rtt = null, sendT = 0, recenterReq = false, recenterQ = null;
 const level = { left: "idle", right: "idle" };
 const prevBtn = { left: false, right: false };
+const prevA = { left: false, right: false }, toggleReq = { left: false, right: false };
 
 function connect() {
   ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
@@ -125,6 +126,9 @@ async function start() {
         if (ap) { const q = ap.transform.orientation; recenterQ = [q.x, q.y, q.z, q.w]; }
       }
       prevBtn[src.handedness] = by;
+      const ax4 = !!(b[4] && b[4].pressed);
+      if (ax4 && !prevA[src.handedness]) toggleReq[src.handedness] = true;   // A/X = 그리퍼 닫힘 고정 켜고 끔
+      prevA[src.handedness] = ax4;
       msg.hands[src.handedness] = {
         p: [p.x, p.y, p.z], q: [o.x, o.y, o.z, o.w],
         trig: b[0] ? b[0].value : 0, grip: b[1] ? b[1].value : 0,
@@ -135,6 +139,7 @@ async function start() {
     if (lastAck) lastAck.haptic = null;
     if (wsOk && t - sendT >= 18) {          // 약 50 Hz
       if (recenterReq) { msg.recenter = true; msg.recenter_q = recenterQ; recenterReq = false; recenterQ = null; }
+      for (const s of ["left", "right"]) if (toggleReq[s] && msg.hands[s]) { msg.hands[s].toggle = true; toggleReq[s] = false; }
       ws.send(JSON.stringify(msg));
       sendT = t;
     }

@@ -22,7 +22,7 @@
   <div id="st"></div>
   <div class="note">
     그립(중지) 누르는 동안만 가상 팔이 따라옴 · 트리거 = 그리퍼 닫기 · B/Y = 자세 맞춤 (가상 로봇처럼 팔을 내리고 누름) + 로봇을 내 앞에 다시 놓기 ·
-    A/X = 뒤에서 보기 ↔ 앞에서 보기 · 오른쪽 스틱 위아래 = 로봇과의 거리<br>
+    A/X = 그리퍼 닫힘 고정 켜고 끔 (트리거 안 당겨도 잡은 채로) · 스틱 누르기 = 뒤에서 ↔ 앞에서 보기 · 오른쪽 스틱 위아래 = 로봇과의 거리<br>
     처음에: 로봇 쪽을 보고 서서 팔을 내리고 (컨트롤러는 앞을 가리킴) B/Y. 그다음 그립을 누른 채 움직이면 팔 모양을 따라감. 손 상자 색: 초록 따라감 · 노랑 일부만 · 빨강 멈춤 (진동) · 회색 대기
   </div>
 </div>
@@ -243,7 +243,8 @@ for (const s of ["left", "right"]) {
   ctrlBalls[s] = new THREE.Mesh(new THREE.SphereGeometry(0.02, 16, 12), new THREE.MeshBasicMaterial({ color: 0x999999 }));
   ctrlBalls[s].visible = false; scene.add(ctrlBalls[s]);
 }
-const prevBtn = { left: [false, false], right: [false, false] };
+const prevBtn = { left: [false, false, false], right: [false, false, false] };
+const toggleReq = { left: false, right: false };
 let lastT = 0;
 
 renderer.setAnimationLoop((t, frame) => {
@@ -275,7 +276,7 @@ renderer.setAnimationLoop((t, frame) => {
     const pose = frame.getPose(src.gripSpace, ref);
     if (!pose) continue;
     const o = pose.transform.orientation, p = pose.transform.position, b = src.gamepad.buttons, ax = src.gamepad.axes || [];
-    const by = !!(b[5] && b[5].pressed), aX = !!(b[4] && b[4].pressed);
+    const by = !!(b[5] && b[5].pressed), aX = !!(b[4] && b[4].pressed), stk = !!(b[3] && b[3].pressed);
     if (by && !prevBtn[hd][1]) {
       recenterReq = true; needPlace = true;
       const ap = src.targetRaySpace && frame.getPose(src.targetRaySpace, ref);   // 컨트롤러가 가리키는 방향 = 로봇 앞
@@ -285,10 +286,11 @@ renderer.setAnimationLoop((t, frame) => {
         headYaw = Math.atan2(-f.x, -f.z);
       }
     }
-    if (aX && !prevBtn[hd][0]) { front = !front; needPlace = true; }
-    prevBtn[hd] = [aX, by];
+    if (aX && !prevBtn[hd][0]) toggleReq[hd] = true;                     // A/X = 그리퍼 닫힘 고정 켜고 끔
+    if (stk && !prevBtn[hd][2]) { front = !front; needPlace = true; }  // 스틱 누르기 = 뒤에서 ↔ 앞에서 보기
+    prevBtn[hd] = [aX, by, stk];
     if (hd === "right" && ax.length >= 4 && Math.abs(ax[3]) > 0.3) { dist = Math.max(0.3, Math.min(3, dist - ax[3] * dt * 0.6)); needPlace = true; }
-    msg.hands[hd] = { p: [p.x, p.y, p.z], q: [o.x, o.y, o.z, o.w], trig: b[0] ? b[0].value : 0, grip: b[1] ? b[1].value : 0 };
+    msg.hands[hd] = { p: [p.x, p.y, p.z], q: [o.x, o.y, o.z, o.w], trig: b[0] ? b[0].value : 0, grip: b[1] ? b[1].value : 0, toggle: false };
     const ball = ctrlBalls[hd];
     ball.visible = true; ball.position.set(p.x, p.y, p.z);
     ball.material.color.setHex(LCOL[lastLevels[hd]] || LCOL.idle);
@@ -298,6 +300,7 @@ renderer.setAnimationLoop((t, frame) => {
   if (needPlace && headPos) { placeRobot(headPos, headYaw); needPlace = false; }
   if (wsOk && t - sendT >= 18) {
     if (recenterReq) { msg.recenter = true; msg.recenter_q = recenterQ; recenterReq = false; recenterQ = null; }
+    for (const s of ["left", "right"]) if (toggleReq[s] && msg.hands[s]) { msg.hands[s].toggle = true; toggleReq[s] = false; }
     ws.send(JSON.stringify(msg)); sendT = t;
   }
   renderer.render(scene, camera);
