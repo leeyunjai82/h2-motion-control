@@ -50,7 +50,10 @@ PORT = 50030
 J_MAP = robot_env.JOINTS["map"]      # URDF 관절 이름 → 슬롯
 DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
 DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고
-TABLE_WIN = 31                       # 테이블 높이 잴 때 깊이 창 [픽셀]
+TABLE_WIN = 61                       # 테이블 잴 때 클릭 점 주변 창 [픽셀] — 창 안 픽셀 전부를 3D 점으로 바꿔 평면 맞춤 (2026-11-09 31 → 61)
+TABLE_STRIDE = 3                     # 창 안 픽셀 간격 (61 × 61 → 21 × 21 = 441 점)
+TABLE_TRIM_MM = 8.0                  # 평면에서 이보다 먼 점은 버리고 다시 맞춤 (물체 · 모서리 · 반사가 섞인 점)
+TABLE_RESID_WARN = 4.0               # 한 창의 평면 잔차 RMS 가 이보다 크면 [mm] 경고 (평평하지 않거나 깊이가 나쁨)
 CAM_PITCH_OK, CAM_PITCH_MAX = 0.5, 1.0   # 카메라 숙임 (몸통 기준) 기준값과 차이 [deg]: OK / 넘으면 실행 거부 (거치대를 맞출 것)
 TABLE_SLOPE_MAX_DEG = 8.0            # 테이블 점들로 맞춘 평면이 이보다 기울면 거부 (몸통 뒤 기움 ≈ 4°, 2026-11-06 check_rsimu)
 CLICK_Z_TABLE = (-0.40, 0.30)        # 테이블 높이로 받아들이는 범위 [m, pelvis] (시연 테이블 110 cm ≈ +0.06~0.09)
@@ -169,6 +172,33 @@ class RealCamera:
         c = self.rs.rs2_deproject_pixel_to_point(self.intr, [float(u), float(v)], float(np.median(w)) * self.scale)
         return cam_to_pelvis(c), spread
 
+    def patch(self, u, v, win, stride):
+        """클릭 점 주변 창의 테이블 3D 점들 (pelvis, N × 3) 또는 None"""
+        with self.lk:
+            frames = list(self.depths)
+        if not frames:
+            return None
+        us, vs, ds = _patch_pts(frames, self.scale, u, v, win, stride)
+        if len(ds) < 30:
+            return None
+        c = np.array([self.rs.rs2_deproject_pixel_to_point(self.intr, [float(a), float(b)], float(z))   # 클릭 계획과 같은 투영 (왜곡 포함)
+                      for a, b, z in zip(us, vs, ds)])
+        return (A_CT @ c.T).T + B_CT + P2T
+
+
+def _patch_pts(depths, scale, u, v, win, stride):
+    """깊이 프레임들 → 클릭 점 주변 win × win 창 (stride 간격) 픽셀마다 시간 중앙값 깊이 → (u 배열, v 배열, 깊이 m 배열)."""
+    h = win // 2
+    ui, vi = int(round(u)), int(round(v))
+    stack = np.stack([f[max(0, vi - h):vi + h + 1:stride, max(0, ui - h):ui + h + 1:stride] for f in depths]).astype(float)
+    stack[stack == 0] = np.nan
+    d = np.nanmedian(stack, axis=0) * scale                      # (rows, cols) m
+    rows = np.arange(max(0, vi - h), vi + h + 1, stride)[:d.shape[0]]
+    cols = np.arange(max(0, ui - h), ui + h + 1, stride)[:d.shape[1]]
+    uu, vv = np.meshgrid(cols, rows)
+    ok = np.isfinite(d) & (d > 0)
+    return uu[ok], vv[ok], d[ok]
+
 
 class FakeCamera:
     """로봇 없이 화면·계획 시험용 — 회색 화면, 클릭은 높이 top_z 인 수평면과 만나는 점."""
@@ -195,6 +225,13 @@ class FakeCamera:
     def point(self, u, v, win=None):
         p = ray_to_plane(self.ray(u, v), self.top_z)     # 가짜 깊이 = 높이 top_z 평면
         return None if p is None else (p, 0.0)
+
+    def patch(self, u, v, win, stride):
+        h = win // 2
+        pts = [ray_to_plane(self.ray(uu, vv), self.top_z) for vv in range(int(v) - h, int(v) + h + 1, stride)
+               for uu in range(int(u) - h, int(u) + h + 1, stride)]
+        pts = [p for p in pts if p is not None]
+        return np.array(pts) + np.random.normal(0, 0.001, (len(pts), 3)) if len(pts) >= 30 else None
 
 
 # ---------------- 카메라 숙임 (거치대) ----------------
@@ -369,31 +406,48 @@ class Runner:
 
     # ----- 테이블 높이 -----
     def measure_table(self, u, v, reset=False):
+        """클릭 점 주변 TABLE_WIN 창의 깊이 점 전부 (클릭 1 번 ≈ 수백 점) 를 모아, 최근 6 번 클릭의 점 전체로 평면을 맞춤.
+        평면에서 TABLE_TRIM_MM 넘게 떨어진 점은 버리고 다시 맞춤 (물체 · 모서리 · 반사). 창마다 잔차 RMS = 그 자리 평평함 · 깊이 품질."""
         if self.busy():
             raise HTTPException(409, "실행 중")
         if reset:
             with self.lk:
-                self.table_pts, self.table_plane, self.table_z = [], None, None
-        got = self.cam.point(u, v, win=TABLE_WIN)
-        if got is None:
+                self.table_pts, self.table_plane, self.table_z, self.table_px = [], None, None, []
+        pts_new = self.cam.patch(u, v, TABLE_WIN, TABLE_STRIDE)
+        if pts_new is None:
             raise HTTPException(400, "그 자리 깊이 없음 — 테이블 빈 곳을 다시 클릭")
-        p, spread = got
-        if not (CLICK_Z_TABLE[0] <= p[2] <= CLICK_Z_TABLE[1]):
-            raise HTTPException(400, f"테이블 높이 z {p[2]:.3f} 이 범위 {CLICK_Z_TABLE} 밖 — 테이블 빈 곳을 클릭했는지 확인")
-        pts = (self.table_pts + [p.tolist()])[-6:]
-        plane = fit_plane(pts)
+        zc_new = float(np.median(pts_new[:, 2]))
+        if not (CLICK_Z_TABLE[0] <= zc_new <= CLICK_Z_TABLE[1]):
+            raise HTTPException(400, f"테이블 높이 z {zc_new:.3f} 이 범위 {CLICK_Z_TABLE} 밖 — 테이블 빈 곳을 클릭했는지 확인")
+        patches = (getattr(self, "table_patches", []) if self.table_pts else []) + [pts_new]
+        px = (getattr(self, "table_px", []) if self.table_pts else []) + [[float(u), float(v)]]
+        patches, px = patches[-6:], px[-6:]
+        allp = np.concatenate(patches)
+        plane = fit_plane(allp)
+        for _ in range(2):                                         # 먼 점 버리고 다시
+            a0, b, c = plane
+            res = allp[:, 2] - (a0 + b * allp[:, 0] + c * allp[:, 1])
+            keep = np.abs(res) <= TABLE_TRIM_MM / 1000.0
+            if keep.sum() < 30:
+                break
+            plane = fit_plane(allp[keep])
         slope = math.degrees(math.atan(math.hypot(plane[1], plane[2])))
         if slope > TABLE_SLOPE_MAX_DEG:
             raise HTTPException(400, f"테이블 점들로 맞춘 평면이 {slope:.1f}° 기움 (> {TABLE_SLOPE_MAX_DEG}°) — 박스 위나 테이블 밖을 찍었는지 확인, [테이블 지우기] 후 다시")
-        zc = float(np.mean([q[2] for q in pts]))
+        a0, b, c = plane
+        resid = [float(np.sqrt(np.mean((q[:, 2] - (a0 + b * q[:, 0] + c * q[:, 1])) ** 2)) * 1000.0) for q in patches]
+        cents = [q.mean(axis=0).tolist() for q in patches]
+        zc = float(np.mean([q[2] for q in cents]))
         with self.lk:
-            self.table_pts, self.table_plane, self.table_z, self.table_click = pts, plane, zc, (u, v)
+            self.table_patches, self.table_px, self.table_resid = patches, px, resid
+            self.table_pts, self.table_plane, self.table_z, self.table_click = cents, plane, zc, (u, v)
             self.plan = None
-        info = {"table_z": round(zc, 4), "n": len(pts), "spread_mm": round(spread, 1),
-                "slope_x_mm_per_10cm": round(plane[1] * 100, 1), "slope_y_mm_per_10cm": round(plane[2] * 100, 1)}
-        self._jsonl({"table_pt": np.round(p, 4).tolist(), "table_plane": [round(v, 5) for v in plane], **info, "px": [u, v]})
-        self.say(f"테이블 점 {len(pts)}: {np.round(p, 3).tolist()} (깊이 흔들림 {spread:.0f} mm) → 평균 z {zc:.3f}, "
-                 f"기울기 앞으로 {plane[1] * 100:+.1f} · 왼쪽으로 {plane[2] * 100:+.1f} mm/10 cm")
+        info = {"table_z": round(zc, 4), "n": len(patches), "spread_mm": round(resid[-1], 1), "resid_mm": [round(x, 1) for x in resid],
+                "n_pts": int(len(pts_new)), "slope_x_mm_per_10cm": round(plane[1] * 100, 1), "slope_y_mm_per_10cm": round(plane[2] * 100, 1)}
+        self._jsonl({"table_patch": np.round(cents[-1], 4).tolist(), "table_plane": [round(v, 5) for v in plane], **info, "px": [u, v]})
+        self.say(f"테이블 점 {len(patches)}: 창 {TABLE_WIN}px · {len(pts_new)} 점, 가운데 {np.round(cents[-1], 3).tolist()} "
+                 f"(평면 잔차 {resid[-1]:.1f} mm) → 평균 z {zc:.3f}, 기울기 앞으로 {plane[1] * 100:+.1f} · 왼쪽으로 {plane[2] * 100:+.1f} mm/10 cm"
+                 + (f" ⚠ 잔차 {resid[-1]:.1f} mm > {TABLE_RESID_WARN} — 그 자리가 평평하지 않거나 깊이가 나쁨 (반사 · 그림자 · 모서리)" if resid[-1] > TABLE_RESID_WARN else ""))
         return info
 
     # ----- 계획 -----
@@ -762,8 +816,11 @@ class Runner:
             plan, click, bclick = self.plan, self.click, self.bin_click
         if click:
             cv2.drawMarker(img, (int(click[0]), int(click[1])), (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
-        if self.table_click:
-            cv2.drawMarker(img, (int(self.table_click[0]), int(self.table_click[1])), (200, 200, 200), cv2.MARKER_DIAMOND, 14, 2)
+        h = TABLE_WIN // 2                 # 테이블 잰 창 (회색 = 잔차 작음, 빨강 = 큼)
+        for (tu, tv), rr in zip(getattr(self, "table_px", []) if self.table_pts else [], getattr(self, "table_resid", [])):
+            col = (0, 0, 255) if rr > TABLE_RESID_WARN else (200, 200, 200)
+            cv2.rectangle(img, (int(tu) - h, int(tv) - h), (int(tu) + h, int(tv) + h), col, 1)
+            cv2.putText(img, f"{rr:.0f}", (int(tu) - h, int(tv) - h - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1)
         if bclick:
             cv2.drawMarker(img, (int(bclick[0]), int(bclick[1])), (0, 140, 255), cv2.MARKER_TILTED_CROSS, 18, 2)
         if plan and plan.get("grasp"):
@@ -834,7 +891,7 @@ def make_app(r: Runner):
 
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return PAGE.replace("__W__", str(W)).replace("__H__", str(H)).replace(
+        return PAGE.replace("__TWIN__", str(TABLE_WIN)).replace("__W__", str(W)).replace("__H__", str(H)).replace(
             "__RPY__", json.dumps(P["rpy_deg"])).replace("__SIM__", "true" if r.sim and not getattr(r, "cam_only", False) else "false").replace(
             "__CAMONLY__", "true" if getattr(r, "cam_only", False) else "false")
 
@@ -1060,6 +1117,7 @@ def make_app(r: Runner):
     def api_table_clear():
         with r.lk:
             r.table_pts, r.table_plane, r.table_z, r.table_click, r.plan = [], None, None, None, None
+            r.table_patches, r.table_px, r.table_resid = [], [], []
         r.say("테이블 점 지움")
         return {"ok": True}
 
@@ -1137,7 +1195,7 @@ button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f
 #next{background:#064;border-color:#3c8}pre{white-space:pre-wrap;font-size:12px;background:#1a1a1a;padding:6px;max-height:300px;overflow:auto}
 .bad{color:#f88}.ok{color:#8f8}.sim{background:#553;padding:4px 8px}
 </style></head><body>
-<div class="wrap"><div><img id="img" src="/video" width="__W__" height="__H__"><div id="simnote"></div>
+<div class="wrap"><div style="position:relative"><img id="img" src="/video" width="__W__" height="__H__"><div id="tblbox" style="position:absolute;border:2px solid #0f0;pointer-events:none;display:none"></div><div id="simnote"></div>
 <div id="wristimgs" style="display:flex;gap:6px;margin-top:6px"></div>
 <div style="font-size:12px;margin-top:4px">노란 + 클릭 · 하늘 ○ 계획한 잡는 자리(진한)/접근 위치 · 초록 ● 왼 집게 · 분홍 ● 오른 집게 (FK 투영)</div></div>
 <div class="panel">
@@ -1209,10 +1267,14 @@ const hint=()=>{$('clickhint').textContent=tableMode?'테이블 빈 곳을 클�
 $('tbl').onclick=()=>{tableMode=true;boxUV=null;hint();};
 $('tblclr').onclick=async()=>{try{await post('/api/table/clear');tableZ=null;$('tblz').textContent='테이블: 안 잼';boxUV=null;hint();}catch(e){alert(e.message);}};
 document.querySelectorAll('input[name=dest]').forEach(x=>x.onchange=()=>{boxUV=null;hint();});
-$('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect();
+$('img').onmousemove=e=>{const b=$('tblbox'); if(!tableMode){b.style.display='none';return;}   // 테이블 잴 창 미리 보기
+ const im=$('img'),rc=im.getBoundingClientRect(),s=__TWIN__*rc.width/__W__;
+ b.style.display='block';b.style.width=s+'px';b.style.height=s+'px';b.style.left=(e.clientX-rc.left-s/2)+'px';b.style.top=(e.clientY-rc.top-s/2)+'px';};
+$('img').onmouseleave=()=>{$('tblbox').style.display='none';};
+$('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect(); $('tblbox').style.display='none';
  const u=(e.clientX-rc.left)*__W__/rc.width, v=(e.clientY-rc.top)*__H__/rc.height;
  if(tableMode){tableMode=false;hint();try{const t=await post('/api/table',{u,v});tableZ=t.table_z;
-   $('tblz').textContent=`테이블 점 ${t.n} · 평균 z ${t.table_z.toFixed(3)} · 기울기 앞 ${t.slope_x_mm_per_10cm} · 왼 ${t.slope_y_mm_per_10cm} mm/10cm (흔들림 ${t.spread_mm} mm)`;hint();}catch(err){alert(err.message);} return;}
+   $('tblz').textContent=`테이블 점 ${t.n} · 평균 z ${t.table_z.toFixed(3)} · 기울기 앞 ${t.slope_x_mm_per_10cm} · 왼 ${t.slope_y_mm_per_10cm} mm/10cm (이번 창 평면 잔차 ${t.spread_mm} mm${t.spread_mm>4?' ⚠ 큼 — 다른 자리':''})`;hint();}catch(err){alert(err.message);} return;}
  let body={u,v,side:side(),width_mm:+$('size').value,height_mm:+$('height').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]};
  if(dest()==='bin'){ if(!boxUV){boxUV=[u,v];hint();$('plan').textContent='박스 클릭 저장 — 이제 통 안쪽 가운데를 클릭';return;}
    body.u=boxUV[0];body.v=boxUV[1];body.bin_u=u;body.bin_v=v;body.bin_h_mm=+$('binh').value;boxUV=null;hint();}
