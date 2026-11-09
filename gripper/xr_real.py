@@ -118,7 +118,12 @@ class XRTeleop:
                 import glob
                 if not glob.glob("/dev/ttyUSB*"):
                     raise HTTPException(409, "485–USB 보드 포트(/dev/ttyUSB*) 없음")
-            b = pc.call("/stream/begin", {"max_vel": float(max_vel)})
+            try:
+                b = pc.call("/stream/begin", {"max_vel": float(max_vel)})
+            except urllib.error.HTTPError as e:
+                raise HTTPException(409, f"arm_server 가 스트림을 안 엶 ({e.code}: {e.read().decode(errors='ignore')[:120]})")
+            except Exception as e:  # noqa: BLE001
+                raise HTTPException(409, f"arm_server 응답 없음 ({type(e).__name__})")
             self.tok = b["token"]
             self.q = np.radians(np.asarray(b["target_deg"], dtype=float))
             self.max_vel = float(max_vel)
@@ -210,14 +215,18 @@ class XRTeleop:
         try:
             res = pc.call("/stream/cmd", {"token": tok, "deg": np.degrees(mdl.to_ctrl(cand)).tolist()}, timeout=1.0)
         except urllib.error.HTTPError as e:
-            self.stop(f"arm_server 가 명령 거부 ({e.code})")
+            if self.tok == tok:                # 그 사이 새 세션이 열렸으면 그 세션은 건드리지 않음
+                self.stop(f"arm_server 가 명령 거부 ({e.code})")
             raise HTTPException(409, "arm_server 세션 끝 — 잡기 웹에서 [VR 시작] 다시")
         except Exception as e:  # noqa: BLE001
-            self.stop(f"arm_server 응답 없음 ({type(e).__name__})")
+            if self.tok == tok:
+                self.stop(f"arm_server 응답 없음 ({type(e).__name__})")
             raise HTTPException(409, "arm_server 응답 없음")
         tgt = np.radians(np.asarray(res["target_deg"], dtype=float))
         lag = float(np.max(np.abs(np.asarray(res["target_deg"]) - np.asarray(res["meas_deg"]))))
         with self.lk:
+            if not self.active or self.tok != tok:  # 보내는 사이 [정지] · [VR 끝] — 그리퍼 명령도 안 보냄
+                raise HTTPException(409, f"VR 세션 없음 ({self.msg})")
             self.q = tgt
             self.n += 1
             self.t_last = time.time()
