@@ -54,11 +54,11 @@ TCP_OFF = np.array(CFG["tcp_offset"], dtype=float)
 Q_LO, Q_HI = float(CFG["q_range"][0]), float(CFG["q_range"][1])
 MM_PER_RAD = float(P["mm_per_rad"])
 
-# 준비 자세 (gripper.yaml pick.ready_tcp_m · ready_rpy_deg — 왼손 기준, 오른손은 y 반대) — 카메라 화면 밖
+# 준비 자세 (gripper.yaml pick.ready_tcp_m · ready_rpy_deg — 왼손 기준, 오른손은 y · roll · yaw 반대) — 카메라 화면 밖
 _rt = [float(v) for v in P["ready_tcp_m"]]
 READY_TCP = {"left": np.array([_rt[0], abs(_rt[1]), _rt[2]]), "right": np.array([_rt[0], -abs(_rt[1]), _rt[2]])}
 _rr = [math.radians(float(v)) for v in P["ready_rpy_deg"]]
-READY_R = pin.rpy.rpyToMatrix(*_rr)
+READY_R = {"left": pin.rpy.rpyToMatrix(*_rr), "right": pin.rpy.rpyToMatrix(-_rr[0], _rr[1], -_rr[2])}   # 오른손 = 좌우 대칭 (roll · yaw 반대)
 _vt = [float(v) for v in P["via_tcp_m"]]
 VIA_TCP = {"left": np.array([_vt[0], abs(_vt[1]), _vt[2]]), "right": np.array([_vt[0], -abs(_vt[1]), _vt[2]])}
 VIA_R = pin.rpy.rpyToMatrix(*[math.radians(float(v)) for v in P["via_rpy_deg"]])
@@ -159,7 +159,7 @@ class Model:
 def at_ready(mdl, qm, side):
     T = mdl.tcp(qm, side)
     return (np.linalg.norm(T.translation - READY_TCP[side]) < AT_READY_POS and
-            np.linalg.norm(pin.log3(READY_R @ T.rotation.T)) < AT_READY_ROT)
+            np.linalg.norm(pin.log3(READY_R[side] @ T.rotation.T)) < AT_READY_ROT)
 
 
 READY_BTN_NEAR_M = 0.15   # 수집 화면 [준비 자세로]: 손이 준비 자세에서 이만큼 안 이거나 몸 가까이(x < FRONT_X)일 때만 (통 · 테이블 위에서는 안 됨)
@@ -200,7 +200,7 @@ def plan_pose(mdl, q_now_ctrl, side, which):
     if which == "ready":
         if at_ready(mdl, q0, side):
             return None, "이미 준비 자세"
-        q1, ep, er = mdl.ik(q0, side, READY_TCP[side], READY_R, iters=600)
+        q1, ep, er = mdl.ik(q0, side, READY_TCP[side], READY_R[side], iters=600)
         if ep > IK_POS_TOL or er > IK_ROT_TOL:
             return None, f"준비 자세 IK 실패 ({ep * 1000:.1f} mm)"
         name = "준비 자세로"
@@ -395,7 +395,7 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=N
                  ("통에 넣는 높이로", T(cmd(rel_p), Rp), P["v_slow"], "bin"),
                  ("@open", None, None, None),
                  ("위로", T(cmd(over_p), Rp), P["v_slow"], "bin"),
-                 ("준비 자세로 복귀", T(READY_TCP[side], READY_R), P["v_lin"], "transit")]
+                 ("준비 자세로 복귀", T(READY_TCP[side], READY_R[side]), P["v_lin"], "transit")]
     else:
       steps = [("접근 위치로", T(cmd(pre_p)), P["v_lin"], "transit"),
              ("내려가기", T(cmd(grasp_p)), P["v_slow"], "grasp"),
@@ -405,7 +405,7 @@ def plan_pick(mdl, q_now_ctrl, side, top, width_mm, height_mm, rpy_deg, bin_pt=N
              ("내려놓기", T(cmd(place_p)), P["v_slow"], "grasp"),
              ("@open", None, None, None),
              ("빼기", T(cmd(pre_p)), P["v_slow"], "grasp"),
-             ("준비 자세로 복귀", T(READY_TCP[side], READY_R), P["v_lin"], "transit")]
+             ("준비 자세로 복귀", T(READY_TCP[side], READY_R[side]), P["v_lin"], "transit")]
     q = q_ready
     seq = [("@open", None)]
     for name, Tt, v, kind in steps:
@@ -456,7 +456,7 @@ def plan_home(mdl, q_now_ctrl, side, floor_z):
             return None, why
         seq.append(("arm", sg))
         q = sg.qs[-1]
-    sg, why = cart_seg(mdl, "준비 자세로", side, q, pin.SE3(READY_R, READY_TCP[side]), P["v_lin"])
+    sg, why = cart_seg(mdl, "준비 자세로", side, q, pin.SE3(READY_R[side], READY_TCP[side]), P["v_lin"])
     if sg is None:
         return None, why
     seq.append(("arm", sg))
