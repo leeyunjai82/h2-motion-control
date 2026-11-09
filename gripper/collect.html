@@ -64,7 +64,6 @@
   <h1>데이터 수집 (VR)</h1>
   <label>데이터셋 <input id="ds" size="16"></label>
   <label><input type="checkbox" id="recon"> 수집 켬</label>
-  <label>목표 <input id="goal" type="number" value="30" min="1" style="width:60px"> 개씩</label>
 </header>
 <main>
   <section>
@@ -79,13 +78,8 @@
   </section>
   <section>
     <div class="card">
-      <h2>다음 할 일</h2>
+      <h2>에피소드</h2>
       <div class="next" id="next">—</div>
-    </div>
-    <div class="card">
-      <h2>진행 (저장된 성공 에피소드)</h2>
-      <div class="row"><span>오른쪽 큐브 → 오른칸 (오른손)</span><b id="nr">0</b></div><div class="bar"><i id="br" style="width:0"></i></div>
-      <div class="row"><span>왼쪽 큐브 → 왼칸 (왼손)</span><b id="nl">0</b></div><div class="bar"><i id="bl" style="width:0"></i></div>
       <div class="sub" id="dsinfo"></div>
       <button class="linkbtn" id="epopen">수집 데이터 보기 (에피소드별) ▸</button>
     </div>
@@ -156,7 +150,6 @@ async function recSet() {
 }
 $("recon").onchange = recSet;
 $("ds").onchange = () => { if ($("recon").checked) recSet(); else refreshDs(); };
-$("goal").onchange = render;
 
 async function start() {
   if (busy || !st || st.xr.active || st.rec.pending) return;
@@ -212,18 +205,10 @@ async function refreshDs() {
 
 function render() {
   if (!st) return;
-  const goal = Math.max(1, +$("goal").value || 30);
-  const sides = (ds && ds.sides) || {};
-  const nr = sides.right || 0, nl = sides.left || 0;
-  $("nr").textContent = `${nr} / ${goal}`; $("nl").textContent = `${nl} / ${goal}`;
-  $("br").style.width = `${Math.min(100, nr / goal * 100)}%`; $("bl").style.width = `${Math.min(100, nl / goal * 100)}%`;
-  // 다음 할 일: 마지막 저장이 오른손이면 왼쪽, 아니면 오른쪽 (오른쪽 → 왼쪽 순서)
-  const last = ds && ds.last_side;
-  const nextRight = last !== "right";
-  $("next").innerHTML = st.rec.pending ? "방금 에피소드를 <span class='warn'>저장 / 버리기</span>"
-    : st.xr.active ? `${nextRight ? "오른쪽 큐브 → 오른칸 (오른손)" : "왼쪽 큐브 → 왼칸 (왼손)"} <small>그립(중지) 누른 채 팔 이동 · 트리거(검지) = 잡기 · 통에 넣고 놓은 뒤 팔을 준비 자세 근처로 돌려놓고 [■ 끝]</small>`
-    : nextRight ? `오른쪽 큐브 → 오른칸 (오른손)<small>통 비우고 큐브 2 개를 양옆에 (위치 조금씩 바꿔서) → [● 시작]</small>`
-                : `왼쪽 큐브 → 왼칸 (왼손)<small>오른칸 큐브는 그대로 두고 → [● 시작]</small>`;
+  const nsaved = ds ? ds.episodes : 0;
+  $("next").innerHTML = st.rec.pending ? `#${nsaved + 1} — <span class='warn'>저장 / 버리기</span>`
+    : st.rec.active ? `#${nsaved + 1} <span class="warn">녹화 중</span>`
+    : `저장 ${nsaved} 개 <small>다음 #${nsaved + 1}</small>`;
   // 조작
   const x = st.xr, r = st.rec;
   $("start").disabled = x.active || !!r.pending || st.busy && !x.active;
