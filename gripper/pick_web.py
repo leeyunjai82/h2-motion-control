@@ -1029,7 +1029,8 @@ def make_app(r: Runner):
 
     @app.post("/api/xr/cmd")
     def api_xr_cmd(body: dict):
-        return r.xr.cmd(body.get("names") or [], body.get("q") or [], body.get("grip") or {}, body.get("press") or {})
+        return r.xr.cmd(body.get("names") or [], body.get("q") or [], body.get("grip") or {}, body.get("press") or {},
+                        bool(body.get("no_input", False)))
 
     @app.get("/api/xr/state")
     def api_xr_state():
@@ -1107,7 +1108,7 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 <label><input type="checkbox" id="xrnotable">테이블 검사 끔 (테이블 없이 시험)</label><br>
 <button id="xrstart">VR 시작</button><button id="xrstop" disabled>VR 끝</button>
 <div id="xrst" style="font-size:13px">꺼짐</div>
-<div style="font-size:12px">먼저 <code>python gripper/xr_virtual.py --real</code> 실행 · 테이블을 잰 뒤 [VR 시작]. 그립(중지)을 누른 손만 움직이고, 뗀 손은 그 자리 (그리퍼도 그대로).
+<div style="font-size:12px">먼저 <code>python gripper/xr_virtual.py --real</code> 실행 → Quest 에서 'Virtual Reality' → 테이블을 잰 뒤 (또는 테이블 검사 끔) [VR 시작]. 그립(중지)을 누른 손만 움직이고, 뗀 손은 그 자리 (그리퍼도 그대로).
 수집 켬이면 [VR 시작]~[VR 끝] 이 한 에피소드.</div>
 </fieldset>
 <fieldset><legend>데이터 수집 (ACT)</legend>

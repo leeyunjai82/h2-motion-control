@@ -192,73 +192,99 @@ def main():
 
     dt = 1.0 / a.hz
     n_ok, t_print, t_poll = 0, time.monotonic(), 0.0
-    try:
-        while True:
-            t0 = time.monotonic()
-            # --real: 세션 확인 (꺼져 있으면 0.3 초마다)
-            if real and not sess["active"] and t0 - t_poll > 0.3:
-                t_poll = t0
+
+    def step():
+        nonlocal n_ok, t_print, t_poll, q_last
+        t0 = time.monotonic()
+        # --real: 세션 확인 (꺼져 있으면 0.3 초마다)
+        if real and not sess["active"] and t0 - t_poll > 0.3:
+            t_poll = t0
+            try:
+                s = get(real + "/api/xr/state", timeout=1.0)
+                if s.get("active") and s.get("q0") and s.get("epoch") != sess["epoch"]:
+                    q_last = np.array([s["q0"][n] for n in names])
+                    reset_ik(q_last)
+                    base = f"ROBOT ON {float(s['max_vel']):.2f} rad/s - hold GRIP to move"
+                    sess.update(active=True, epoch=s["epoch"], vmax=a.joint_vmax or float(s["max_vel"]), base=base, msg=base)
+                    print(f"[xr] 실제 팔 세션 #{s['epoch']} 시작 — 그립을 누른 손만 움직임", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+        d = tv.get_tele_data()
+        if real and sess["active"] and not d.motion_data_ready:
+            # Quest 입력이 아직 없음 (VR 안 들어감 · 화면 꺼짐) — 그 자리 유지 명령만 보내 세션을 살려 둠 (팔은 안 움직임)
+            try:
+                post(real + "/api/xr/cmd", {"names": names, "q": q_last.tolist(), "grip": {}, "press": {}, "no_input": True}, timeout=1.0)
+                sess["msg"] = "ROBOT ON - no Quest input (enter VR)"
+            except urllib.error.HTTPError as e:
+                sess.update(active=False, msg="ROBOT OFF - press VR START on pick web")
+                print(f"[xr] 실제 팔 세션 끝 ({e.code})", flush=True)
+            except Exception:  # noqa: BLE001
+                pass
+        sendable = d.motion_data_ready and (not real or sess["active"])
+        if sendable:
+            # 데드맨: 그립(중지) 누른 손만 그 손 자세를 목표로, 뗀 손은 지금 손목 자세 그대로
+            pin.framesForwardKinematics(m, arm_ik.reduced_robot.data, q_last)
+            now = {"left": arm_ik.reduced_robot.data.oMf[arm_ik.L_hand_id].homogeneous.copy(),
+                   "right": arm_ik.reduced_robot.data.oMf[arm_ik.R_hand_id].homogeneous.copy()}
+            press = {"left": a.no_deadman or float(d.left_ctrl_squeezeValue) > 0.5,
+                     "right": a.no_deadman or float(d.right_ctrl_squeezeValue) > 0.5}
+            tgt = {"left": d.left_wrist_pose if press["left"] else now["left"],
+                   "right": d.right_wrist_pose if press["right"] else now["right"]}
+            q_cmd = q_last
+            if press["left"] or press["right"]:
+                q_sol, _ = arm_ik.solve_ik(tgt["left"], tgt["right"], q_last, None)
+                dq = np.asarray(q_sol, dtype=float) - q_last
+                big = float(np.max(np.abs(dq)))
+                lim = sess["vmax"] * dt                 # 관절 속도 제한 (방향 유지, 같은 비율로 줄임)
+                q_cmd = q_last + (dq * (lim / big) if big > lim else dq)
+            if a.hand:
+                grip = {"left": 1.0 - min(1.0, d.left_hand_pinchValue / 100.0), "right": 1.0 - min(1.0, d.right_hand_pinchValue / 100.0)}
+            else:
+                # televuer: ctrl_triggerValue = 10 − 트리거 × 10 (10 = 놓음 · 0 = 끝까지) → 닫힘 비율 0~1
+                grip = {"left": 1.0 - d.left_ctrl_triggerValue / 10.0, "right": 1.0 - d.right_ctrl_triggerValue / 10.0}
+            if real:
                 try:
-                    s = get(real + "/api/xr/state", timeout=1.0)
-                    if s.get("active") and s.get("q0") and s.get("epoch") != sess["epoch"]:
-                        q_last = np.array([s["q0"][n] for n in names])
-                        reset_ik(q_last)
-                        base = f"ROBOT ON {float(s['max_vel']):.2f} rad/s - hold GRIP to move"
-                        sess.update(active=True, epoch=s["epoch"], vmax=a.joint_vmax or float(s["max_vel"]), base=base, msg=base)
-                        print(f"[xr] 실제 팔 세션 #{s['epoch']} 시작 — 그립을 누른 손만 움직임", flush=True)
+                    res = post(real + "/api/xr/cmd", {"names": names, "q": q_cmd.tolist(), "grip": grip, "press": press}, timeout=1.0)
+                    q_last = np.array([res["q"][n] for n in names])     # 잡기 웹이 받아들인 (안전 검사 · 서버 속도 제한 후) 목표에서 이어감
+                    n_ok += 1
+                    h = res.get("hands") or {}
+                    stops = [f"{k[0].upper()}:{en(v.get('reason', ''))}" for k, v in h.items() if v.get("level") == "stop"]
+                    sess["msg"] = ("STOP: " + " / ".join(stops))[:60] if stops else sess["base"]
+                except urllib.error.HTTPError as e:
+                    sess.update(active=False, msg="ROBOT OFF - press VR START on pick web")
+                    print(f"[xr] 실제 팔 세션 끝 ({e.code}: {e.read().decode(errors='ignore')[:120]})", flush=True)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[xr] 잡기 웹 전송 실패: {e}", flush=True)
+            else:
+                q_last = q_cmd
+                n_ok += 1
+            if viewer_ok:
+                try:
+                    post(a.viewer + "/api/ext", {"names": names, "q": q_last.tolist(), "grip": grip,
+                                                 "src": "실제 팔 목표" if real else "xr_teleoperate (가상)"})
                 except Exception:  # noqa: BLE001
                     pass
-            d = tv.get_tele_data()
-            sendable = d.motion_data_ready and (not real or sess["active"])
-            if sendable:
-                # 데드맨: 그립(중지) 누른 손만 그 손 자세를 목표로, 뗀 손은 지금 손목 자세 그대로
-                pin.framesForwardKinematics(m, arm_ik.reduced_robot.data, q_last)
-                now = {"left": arm_ik.reduced_robot.data.oMf[arm_ik.L_hand_id].homogeneous.copy(),
-                       "right": arm_ik.reduced_robot.data.oMf[arm_ik.R_hand_id].homogeneous.copy()}
-                press = {"left": a.no_deadman or float(d.left_ctrl_squeezeValue) > 0.5,
-                         "right": a.no_deadman or float(d.right_ctrl_squeezeValue) > 0.5}
-                tgt = {"left": d.left_wrist_pose if press["left"] else now["left"],
-                       "right": d.right_wrist_pose if press["right"] else now["right"]}
-                q_cmd = q_last
-                if press["left"] or press["right"]:
-                    q_sol, _ = arm_ik.solve_ik(tgt["left"], tgt["right"], q_last, None)
-                    dq = np.asarray(q_sol, dtype=float) - q_last
-                    big = float(np.max(np.abs(dq)))
-                    lim = sess["vmax"] * dt                 # 관절 속도 제한 (방향 유지, 같은 비율로 줄임)
-                    q_cmd = q_last + (dq * (lim / big) if big > lim else dq)
-                if a.hand:
-                    grip = {"left": 1.0 - min(1.0, d.left_hand_pinchValue / 100.0), "right": 1.0 - min(1.0, d.right_hand_pinchValue / 100.0)}
-                else:
-                    # televuer: ctrl_triggerValue = 10 − 트리거 × 10 (10 = 놓음 · 0 = 끝까지) → 닫힘 비율 0~1
-                    grip = {"left": 1.0 - d.left_ctrl_triggerValue / 10.0, "right": 1.0 - d.right_ctrl_triggerValue / 10.0}
-                if real:
-                    try:
-                        res = post(real + "/api/xr/cmd", {"names": names, "q": q_cmd.tolist(), "grip": grip, "press": press}, timeout=1.0)
-                        q_last = np.array([res["q"][n] for n in names])     # 잡기 웹이 받아들인 (안전 검사 · 서버 속도 제한 후) 목표에서 이어감
-                        n_ok += 1
-                        h = res.get("hands") or {}
-                        stops = [f"{k[0].upper()}:{en(v.get('reason', ''))}" for k, v in h.items() if v.get("level") == "stop"]
-                        sess["msg"] = ("STOP: " + " / ".join(stops))[:60] if stops else sess["base"]
-                    except urllib.error.HTTPError as e:
-                        sess.update(active=False, msg="ROBOT OFF - press VR START on pick web")
-                        print(f"[xr] 실제 팔 세션 끝 ({e.code}: {e.read().decode(errors='ignore')[:120]})", flush=True)
-                    except Exception as e:  # noqa: BLE001
-                        print(f"[xr] 잡기 웹 전송 실패: {e}", flush=True)
-                else:
-                    q_last = q_cmd
-                    n_ok += 1
-                if viewer_ok:
-                    try:
-                        post(a.viewer + "/api/ext", {"names": names, "q": q_last.tolist(), "grip": grip,
-                                                     "src": "실제 팔 목표" if real else "xr_teleoperate (가상)"})
-                    except Exception:  # noqa: BLE001
-                        pass
-            if time.monotonic() - t_print > 2.0:
-                st = "Quest 입력 기다림" if not d.motion_data_ready else (
-                    "입력 받는 중" if not real else ("실제 팔 세션 중" if sess["active"] else "잡기 웹 [VR 시작] 기다림"))
-                print(f"[xr] {st} · 보낸 수 {n_ok}", flush=True)
-                t_print = time.monotonic()
-            time.sleep(max(0.0, dt - (time.monotonic() - t0)))
+        if time.monotonic() - t_print > 2.0:
+            st = "Quest 입력 기다림" if not d.motion_data_ready else (
+                "입력 받는 중" if not real else ("실제 팔 세션 중" if sess["active"] else "잡기 웹 [VR 시작] 기다림"))
+            print(f"[xr] {st} · 보낸 수 {n_ok}", flush=True)
+            t_print = time.monotonic()
+
+    last_err = ""
+    try:
+        while True:
+            t_loop = time.monotonic()
+            try:
+                step()
+            except KeyboardInterrupt:
+                raise
+            except Exception as e:  # noqa: BLE001 — 한 번 실패해도 멈추지 않음 (실제 팔은 잡기 웹 1.5 초 · arm_server 0.2 초 뒤 멈춤)
+                msg = f"{type(e).__name__}: {e}"
+                if msg != last_err:
+                    import traceback
+                    print(f"[xr] ⚠ 오류 (계속 돎): {msg}\n{traceback.format_exc(limit=4)}", flush=True)
+                    last_err = msg
+            time.sleep(max(0.0, dt - (time.monotonic() - t_loop)))
     except KeyboardInterrupt:
         pass
     finally:

@@ -182,11 +182,15 @@ class XRTeleop:
                 self.stop(f"VR 입력이 {IDLE_END_S} 초 넘게 없음")
 
     # ---------- 한 명령 ----------
-    def cmd(self, names, q, grip, press):
+    def cmd(self, names, q, grip, press, no_input=False):
         r, mdl = self.r, self.mdl
         with self.lk:
             if not self.active:
                 raise HTTPException(409, f"VR 세션 없음 ({self.msg})")
+            if no_input:                       # Quest 입력 없음 — 팔 · 그리퍼는 그대로, 세션만 유지
+                for side in pc.SIDES:
+                    self.hands[side] = {"state": "Quest 입력 없음", "reason": "Quest 에서 'Virtual Reality' 를 누르세요", "level": "idle"}
+                press, grip = {}, {}
             qm_now = mdl.to_model(self.q)
             qm_in = qm_now.copy()
             for n, v in zip(names, q):
@@ -194,7 +198,7 @@ class XRTeleop:
                 if i is not None and np.isfinite(v):
                     qm_in[i] = float(v)
             cand = qm_now.copy()
-            for side in pc.SIDES:
+            for side in (() if no_input else pc.SIDES):
                 ix = mdl.idx[side]
                 if not press.get(side):
                     self.hands[side] = {"state": "대기 (그립 안 누름)", "reason": "", "level": "idle"}
