@@ -94,33 +94,15 @@ wrist_cams:
   wrist_left: /dev/v4l/by-path/pci-0000:00:14.0-usb-0:1:1.0-video-index0
   wrist_right: /dev/v4l/by-id/usb-ZVCAI_USB_Camera_zvcai231100001-video-index0
 
-# VR 원격 조작 (gripper/vr_teleop.py) — Quest 3 브라우저 WebXR 컨트롤러 → 팔 IK.
-#   1단계: 읽기 전용 — 가상 팔만 움직이고 로봇(arm_server · 그리퍼)에는 아무 명령도 안 보냄.
-#   조작: 그립(중지) 버튼을 누르고 있는 동안만 손 움직임을 따라감 (누른 순간 기준 상대 이동) · 트리거 = 그리퍼 닫기 · B/Y = 방향 맞춤
-vr:
+# 가상 H2 3D 뷰어 (gripper/xr_viewer.py) — xr_virtual.py (Unitree xr_teleoperate 입력 + H2 IK) 결과를 그림. 로봇 명령 없음.
+#   안전 검사 값은 "실제였으면 멈춤" 표시용 (실제 로봇 단계에서 같은 기준을 씀)
+xr_view:
   port: 50040
-  mapping: abs                # abs = 손 절대 위치 (머리 기준 · 좌우 회전만, xr_teleoperate televuer 방식) — 팔 모양이 사람 팔을 따라감.
-                              #   시작할 때 가상 로봇처럼 팔을 내리고 서서 B/Y = 위치 맞춤 (컨트롤러 위치 ↔ 집게 가운데, 손별). 손 자세는 컨트롤러 방향 그대로.
-                              #   rel = 그립 순간부터 상대 이동
-  abs_grip_pitch_deg: 0       # abs: 컨트롤러 손잡이 기울기 보정 (+ = 손이 더 숙임). ⚠ Quest 3 grip 자세 기울기는 확인 필요
-  scale: 1.0                  # 손 이동 → 그리퍼 이동 배율
-  v_max: 0.10                 # 목표 TCP 최고 속도 [m/s] (실제 로봇 2단계는 0.05 부터)
-  w_max_deg: 45               # 목표 자세 최고 회전 속도 [°/s] — 손목 관절 속도 상한 안에서 위치가 안 밀리게
-  joint_vmax: 1.0             # 관절 속도 상한 [rad/s] — pick.server_max_vel 이하여야 함
-  ik_iters: 30                # tick 마다 IK 반복
-  posture_gain: 0.05          # IK: 위치 우선 → 자세는 남는 자유도로 → 그래도 남는 자유도로 준비 자세 쪽 유지 (팔꿈치 튐 줄임)
-  follow_mm: 5                # 이보다 가까우면 '따라감'
-  follow_deg: 3
-  unreach_mm: 30              # IK 가 이보다 멀면 그 tick 은 버림 (팔을 억지로 뻗지 않음)
+  table_z_m: 0.053            # 테이블 높이 [m, pelvis] — ⚠ 확인 필요: 잡기 웹 테이블 측정값으로 (--table-z, -1.0 = 없음)
+  table_x_min_m: 0.15         # 테이블 앞 끝 [m, pelvis x] — 이보다 앞에 있는 그리퍼만 테이블 높이 검사. ⚠ 실제 테이블 위치로 맞출 것
   arm_gap_m: 0.12             # 양팔 (팔꿈치 · 손목 · 집게 가운데) 사이 최소 거리
-  back_limit_m: -0.12         # 팔꿈치 · 손목 · 그리퍼가 pelvis 기준 이보다 뒤 (x) 로 가면 멈춤 — 로봇 뒤 물건 보호. 준비 자세 팔꿈치 −0.09. ⚠ 실제 뒤 공간에 맞출 것
-  table_z_m: 0.053            # 테이블 높이 [m, pelvis] — ⚠ 확인 필요: pick web 테이블 측정값으로 맞출 것 (--table-z 로도 바꿈)
-  table_x_min_m: 0.15         # 테이블 앞 끝 [m, pelvis x] — 이보다 앞에 있는 그리퍼만 테이블 높이 검사 (몸 옆에 내린 팔은 안 함). ⚠ 실제 테이블 위치로 맞출 것
-  workspace:                  # 목표 TCP 허용 상자 [m, pelvis] — 밖이면 상자 안으로 자름
-    x: [-0.05, 0.75]           # 팔을 몸 옆에 내린 기본 자세 (집게 x ≈ 0.02) 도 들어가게
-    y_abs: 0.60
-    z: [-0.35, 0.45]
-  timeout_s: 0.3              # 이 시간 동안 컨트롤러 값이 안 오면 따라가기 멈춤
+  back_limit_m: -0.12         # 팔꿈치 · 손목 · 그리퍼가 pelvis 기준 이보다 뒤 (x) 면 멈춤 — 로봇 뒤 물건 보호. ⚠ 실제 뒤 공간에 맞출 것
+  timeout_s: 0.5              # 이 시간 동안 값이 안 오면 '입력 끊김'
   dex1_view:                  # 3D 보기 그리퍼 모양 (gripper/dex1_1, Unitree 공식 URDF) — 표시만, IK · 안전 검사는 위 tcp_offset · ENVELOPE 를 씀
     urdf: dex1_1/dex1_1.urdf
     origin_to_tcp_m: 0.123    # Dex1 원점 → 집게 패드 가운데 (tcp_offset 주석과 같음, 메시 손가락 끝 143.3 mm 와 맞음) → 원점 = 손목 기준 0.1844 − 0.123 = 0.0614

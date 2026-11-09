@@ -74,73 +74,24 @@ gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side
 
 로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
 
-## VR 조작 (Quest 3) — `vr_teleop.py` · 1단계 읽기 전용
+## xr_teleoperate 가상 실행 — `xr_virtual.py` + `xr_viewer.py` (로봇 명령 없음)
 
-**로봇에 명령을 보내지 않음** (arm_server · 그리퍼 호출 없음). 가상 팔만 컨트롤러를 따라가고 모니터에 결과를 보여 줌.
-손 움직임에 H2 가 얼마나 따라오는지 (손목 한계 · 몸통 · 테이블 · 다른 팔) 를 로봇 없이 먼저 체감하는 단계.
+Unitree xr_teleoperate 의 Quest 입력 처리 (televuer) 와 H2 IK (`H2_ArmIK`) 를 그대로 쓰고, 로봇 대신 가상 H2 3D 뷰어로 보냄.
+xr_teleoperate H2 URDF 와 이 저장소 URDF 는 팔 관절 이름 · 원점 · 한계가 같음 (2026-11-09 비교).
 
-```bash
-source activate_tv.sh && python gripper/vr_teleop.py          # 모니터: http://localhost:50040/
-adb reverse tcp:50040 tcp:50040                               # Quest 3 USB 연결 (개발자 모드) — Quest 브라우저에서 http://localhost:50040/vr
-```
-
-- **Quest 안에서 URDF 가상 로봇 보기**: Quest 브라우저에서 `http://localhost:50040/vrurdf` → [VR 시작].
-  H2 URDF + Dex1-1 가상 로봇이 눈앞 (기본: 내 앞 0.8 m, 로봇 뒤에서 봄) 에 서고 컨트롤러로 움직임. 머리 위 판 = 손별 상태.
-  B/Y = 방향 맞춤 (누른 컨트롤러가 가리키는 쪽 = 로봇 앞, 헤드셋을 목에 걸어도 됨) + 로봇을 내 앞에 다시 놓기 · A/X = 뒤에서 ↔ 앞에서 보기 · 오른쪽 스틱 위아래 = 거리.
-  PC 브라우저로 열면 같은 장면 미리보기 (마우스 돌리기). ⚠ Quest 실기 (WebXR · 버튼 번호 · 진동 · 패스스루) 는 아직 확인 전
-- **3D 보기 (Quest 없이 먼저 검증)**: `http://localhost:50040/view` — URDF 메시로 가상 팔 · 그리퍼 겉 범위 (색 = 상태) · 목표 ·
-  몸통 (+ 최소 거리 면) · 테이블.
-  그리퍼는 **Unitree 공식 Dex1-1 URDF 메시** (`gripper/dex1_1/`, unitree_ros, BSD-3) 를 손목에 붙여 그림 — 장착 위치는 tcp_offset 0.1844 − 0.123 = 손목 앞 61.4 mm (손목 프레임 앞면 57.7 + 실측 147 − 손가락 끝 143.3),
-  H2 손목 메시에 붙은 기본 손은 손목 앞면 57.7 mm 부터 잘라 냄. 어댑터는 사용자 STL (`gripper/adapter/adapter.stl`, 저장소에 포함. 없으면 원통으로 그림. 놓는 방법은 gripper.yaml `vr.dex1_view.adapter_stl`). 트리거로 손가락 벌림 (URDF 0 닫힘 ~ 0.041 m×2 = 80 mm, 실측 최대 82 mm). 오른쪽 **가짜 컨트롤러** 슬라이더 (로봇 기준 dx dy dz · RPY · 트리거) 로 Quest 와 같은 메시지를 보냄.
-  Quest 와 동시에 켜면 두 입력이 섞임 (모니터에 경고)
-- **매핑 (기본 `abs`, xr_teleoperate 와 같은 방식)**: 손의 절대 위치를 머리 기준 (좌우 회전만) 몸 좌표로 바꿔 로봇 손에 씀 — 팔 모양이 사람 팔을 따라감.
-  처음에 가상 로봇처럼 팔을 내리고 (컨트롤러는 앞을 가리킴) B/Y = 자세 맞춤 (손별 위치 오프셋, 어깨 너비 차이 흡수). 손 자세는 컨트롤러 방향 그대로.
-  xr_teleoperate H2 (`televuer/tv_wrapper.py`, `robot_arm_ik.py H2_ArmIK`) 는 배율 없음 (scale_arms 주석 처리), 머리 → 허리 고정 오프셋 (+0.15, 0, +0.45) —
-  우리는 고정 오프셋 대신 B/Y 로 맞춤 (헤드셋을 목에 걸어도 됨). 몸 기준점 · 앞 방향은 B/Y 때 값으로 고정 (헤드셋이 흔들려도 팔 안 움직임). `--mapping rel` = 예전 상대 이동 방식
-- 그리퍼: 트리거 = 누른 만큼 닫힘 · **A/X = 지금 트리거 간격으로 고정 / 풀기** (원하는 만큼 당긴 채 누르면 그 간격 유지, 더 당기면 더 닫힘) · 문제 보고용 `--debug` (0.5 초마다 손 · 목표 · 가상 TCP 출력)
-- 조작: **그립(중지) 버튼을 누르고 있는 동안만** 따라감 (누른 순간 기준 상대 이동, 떼면 그 자리) · 트리거 = 그리퍼 닫기 ·
-  B/Y = 방향 맞춤 (로봇과 같은 방향을 보고 누름). Quest 화면: 컨트롤러 옆 작은 상자 색 = 초록 따라감 · 노랑 일부만 · 빨강 멈춤 (진동)
-- IK: 위치 우선 → 자세는 위치를 해치지 않는 만큼 → 남는 자유도로 준비 자세 쪽. 자세를 다 못 맞추면 '자세 일부만 (N° 못 따라감)'
-- 시작 가상 자세: `--start default` (기본, 로봇 켰을 때 팔 내린 자세) · `--start ready` (잡기 웹 준비 자세). 테이블 없이 손 따라오는지만 볼 때 `--table-z -1.0`
-- 뒤 한계: 팔꿈치 · 손목 · 그리퍼가 pelvis 기준 x < vr.back_limit_m (−0.12) 이면 멈춤 (로봇 뒤 물건 보호)
-- 멈춤 (그 tick 버림, 팔 그대로 · 손 기준을 그 자리로 다시 맞춰서 손을 되돌리면 바로 따라감): 몸통 < body_clear_m · 그리퍼 바닥이 테이블 + tip_clear_mm 아래 (몸 앞 x > vr.table_x_min_m 인 부분만) · 양팔 사이 < vr.arm_gap_m · IK 가 30 mm 넘게 못 닿음
-- 속도: 목표 TCP ≤ vr.v_max · 회전 ≤ vr.w_max_deg/s · 관절 ≤ vr.joint_vmax (방향을 유지하며 같은 비율로 줄임)
-- 테이블 높이 `vr.table_z_m` 은 ⚠ 확인 필요 — 잡기 웹 테이블 측정값으로 맞추거나 `--table-z` 로 줌
-- Wi-Fi 로 쓰려면 HTTPS 필요: `openssl req -x509 -newkey rsa:2048 -nodes -keyout vr.key -out vr.crt -days 365 -subj "/CN=h2"` 후
-  `--https vr.crt vr.key` (자체 서명 경고 수락 후 WebXR 동작은 확인 필요)
-- 확인한 것: 3D 보기 가짜 컨트롤러 (헤드리스 Chromium) · 가짜 컨트롤러 (WebSocket) 로 앞 이동 · yaw · 몸 가운데 이동 · 몸통 / 테이블 멈춤 · 방향 맞춤 · 연결 끊김. 모니터 · VR 페이지 로드 (헤드리스 Chromium).
-  **Quest 3 실기 (WebXR · 패스스루 · 버튼 번호 · 진동) 는 아직 확인 전**
-
-### 배치 (2026-11-06)
-
-- 물체는 양옆 (오른쪽 = 오른팔, 왼쪽 = 왼팔), 통은 가운데 **pelvis 앞 0.40 m 이상** (가슴 앞면에서 약 30 cm). 가슴 바로 앞(0.30–0.35)은
-  놓을 때 손목 pitch 한계로 IK 가 안 풀리거나, 풀려도 팔 · 그리퍼가 몸통 앞면 안쪽까지 옴 (계산, 실기에서 몸통 충돌)
-- RPY 는 잡기부터 놓기까지 하나 (0, 20, 0). 위에서 수직(탑다운, pitch 90)은 손목 pitch ±33° + 집게가 손목에서 19 cm 라 앞쪽 어디서도 IK 불가
-- 계획이 몸통 충돌도 검사: 팔꿈치 · 손목 · 그리퍼가 몸통 앞면(x 0.097)에 5 cm 보다 가까우면 거부 (gripper.yaml body_*)
-
-### 계산으로 정한 것 (실물 확인 전)
-
-- H2 손목 pitch ±33° (URDF) + 집게 가운데가 손목에서 19.1 cm → 위에서 수직으로(pitch 90°)는 앞쪽 어디서도 IK 가 안 풀림.
-  테이블 110 cm (pelvis +0.09) · 박스 5–6 cm 에서 pitch 10–20° 면 x 0.35–0.50 · y ±0.10–0.30 모두 계획 OK → 기본 (0, 20, 0)
-- 접근은 항상 잡는 자리 바로 위에서 수직으로. 잡는 높이 = 박스 가운데, 그리퍼 몸통(높이 67 mm)이 바닥에 10 mm 안쪽으로
-  오면 그만큼 올림. 패드가 박스와 15 mm 미만 겹치면 계획 거부
-- 웹에는 잡는 폭(로봇 좌우)과 높이를 따로 입력. 폭 6 cm 면 벌림 최대 약 79 mm 에서 한쪽 여유 약 10 mm → 5 cm 이하 권장.
-  높이는 3 cm 이상 (pitch 20 에서 높이 20 mm 는 그리퍼 몸통이 바닥에 먼저 닿아 패드가 10 mm 만 겹침 → 거부)
-- 닫기: 박스 − 8 mm 를 목표로 kp 5 로 밈. 닫은 뒤 간격이 목표 + 3 mm 보다 크면 잡음, 아니면 놓침 → 벌리고 멈춤.
-  쥐는 힘은 모름
-- 팔 관절 속도: 계획 최고 0.4 rad/s × 속도 배율 (웹 ×1 · ×1.5 · ×2 기본 · ×3), arm_server 스트림 상한 1.0 × 배율 (최대 3.0) rad/s.
-  잡기 한 번 (통): ×1 약 36 초 · ×2 약 22 초 · ×3 약 17 초 (가짜 로봇). 한 데이터셋 안에서는 배율을 같게. 명령 ↔ 실측 15° 넘게 벌어지면 멈춤
-- 기록: `logs/pick_YYYYMMDD.jsonl` (계획 · 단계 · 결과)
-
-## xr_teleoperate 가상 실행 — `xr_virtual.py`
-
-Unitree xr_teleoperate 의 Quest 입력 처리 (televuer) 와 H2 IK (`H2_ArmIK`) 를 그대로 쓰고, 로봇 대신 위 3D 뷰어로 보냄 (로봇 · 그리퍼 명령 없음).
-xr_teleoperate 저장소 (`--xr`, 기본 `~/xr_teleoperate`) 와 그 README 의 tv 환경 의존성 (pinocchio 3 + casadi, meshcat, logging-mp, televuer) 필요.
+준비 (한 번): `git clone --recurse-submodules https://github.com/unitreerobotics/xr_teleoperate ~/xr_teleoperate`,
+`cd ~/xr_teleoperate/teleop/televuer && pip install -e .`, `pip install 'vuer[all]==0.0.60' "params-proto>=2.13,<3"`
+(params-proto 3.x 는 vuer 0.0.60 과 안 맞음), 인증서 `~/.config/xr_teleoperate/{cert,key}.pem`.
 
 ```bash
-python gripper/vr_teleop.py --table-z -1.0                 # 터미널 1: 뷰어 http://localhost:50040/view
+python gripper/xr_viewer.py --table-z -1.0                  # 터미널 1: 뷰어 http://localhost:50040/
 python gripper/xr_virtual.py --xr ~/xr_teleoperate          # 터미널 2: Vuer :8012 + H2 IK → 뷰어
-adb reverse tcp:8012 tcp:8012                               # Quest: https://localhost:8012/?ws=wss://localhost:8012
+adb reverse tcp:8012 tcp:8012                               # Quest USB
+adb shell am start -a android.intent.action.VIEW -d "https://localhost:8012/?ws=wss://localhost:8012" com.oculus.browser
 ```
-- 뷰어 손 상태에 "실제였으면 멈춤: 몸통 …" 처럼 우리 안전 검사 결과를 표시만 함 (xr_teleoperate 자체에는 이 검사가 없음)
-- ⚠ 이 저장소 시험 환경에는 pinocchio casadi 가 없어 H2_ArmIK · televuer 실행은 확인 못 함 (뷰어 쪽 /api/ext 만 확인)
+- 조작은 xr_teleoperate 와 같음 (헤드셋을 머리에 쓰고 컨트롤러 쥔 손 = 로봇 손, 머리 기준 절대 위치 · 배율 없음, 트리거 = 그리퍼)
+- 뷰어: H2 URDF + Unitree Dex1-1 메시 (`dex1_1/`, BSD-3) + 사용자 어댑터 STL (`adapter/adapter.stl`) — 손목 앞면 57.7 mm 부터 기본 손 잘라 냄,
+  어댑터 4 mm 만 손목 밖, Dex1 원점 = tcp_offset 0.1844 − 0.123
+- 우리 안전 검사 (몸통 · 테이블 · 다른 팔 · 뒤 한계, gripper.yaml `xr_view`) 를 "실제였으면 멈춤" 으로 표시만 함 — xr_teleoperate 에는 이 검사가 없음
+- xr_teleoperate 를 실제 로봇에 쓸 때 주의 (소스 확인): H2 관절 속도 제한 기본 30 rad/s · 종료 시 팔 관절 0 으로 이동 (go_home) · rt/lowcmd 직접 송신
+  (arm_server 와 동시 사용 금지) · 녹화 형식이 우리 trainer 와 다름

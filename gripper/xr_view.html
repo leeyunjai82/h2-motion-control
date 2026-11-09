@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>H2 VR 3D 보기</title>
+<title>H2 가상 뷰어</title>
 <style>
   body { font-family: sans-serif; margin: 0; background: #f4f4f4; color: #222; }
   #wrap { display: flex; flex-wrap: wrap; }
@@ -23,16 +23,14 @@
 <div id="wrap">
   <div id="view"><div id="hud">불러오는 중…</div></div>
   <div id="side">
-    <b>가짜 컨트롤러</b> <span class="note">(Quest 없이 시험 — Quest 와 동시에 켜지 말 것)</span><br>
-    <label><input type="checkbox" id="simOn"> 켜기 (50 Hz 로 보냄)</label>
-    <div class="note">슬라이더 = 그립을 누른 순간부터 손을 움직인 양 (로봇 기준: x 앞 · y 왼쪽 · z 위, RPY °).
-      그립을 끈 채로 슬라이더를 옮기고 그립을 켜면 그 자리가 새 기준.</div>
-    <div id="hands"></div>
-    <button onclick="simRecenter = true">자세 맞춤 (B/Y) — 슬라이더 0 에서</button>
-    <button onclick="fetch('/api/reset',{method:'POST'})">가상 팔 시작 자세로 리셋</button>
-    <p class="note">마우스: 끌기 = 돌리기 · 휠 = 확대. 회색 상자 = 몸통 (앞면 + 최소 거리 선) · 갈색 = 테이블 ·
-      Dex1-1 = Unitree 공식 메시 (트리거로 벌림) · 손 상자 선 = 안전 검사에 쓰는 그리퍼 겉 범위 (색 = 상태) · 원 = 목표 TCP</p>
+    <b>가상 H2 — xr_teleoperate 입력</b> <span class="note">(로봇 명령 없음)</span>
+    <div id="hands" class="note"></div>
+    <p><button onclick="fetch('/api/reset',{method:'POST'})">가상 팔 시작 자세로</button></p>
+    <p class="note">입력: <code>python gripper/xr_virtual.py</code> (Quest → xr_teleoperate H2 IK → 여기).<br>
+      마우스: 끌기 = 돌리기 · 휠 = 확대. 회색 상자 = 몸통, 빨간 면 = 몸통 최소 거리, 갈색 = 테이블,
+      Dex1-1 = Unitree 공식 메시, 손 상자 선 = 안전 검사용 그리퍼 범위 (빨강 = 실제였으면 멈춤).</p>
   </div>
+</div>
 </div>
 <script src="/vendor/three.min.js"></script>
 <script>
@@ -192,6 +190,7 @@ async function poll() {
       hud += `<div><b>${NAME[s]}</b> <span class="${h.level}">${h.state}</span> <span class="note">${h.reason || ""}</span></div>`;
     }
     $("hud").innerHTML = hud;
+    $("hands").innerHTML = hud;
   } catch (e) { $("hud").innerHTML = '<span class="stop">서버 응답 없음</span>'; }
   setTimeout(poll, 50);
 }
@@ -200,68 +199,6 @@ function loop() { requestAnimationFrame(loop); placeCam(); renderer.render(scene
 loop();
 load().catch(e => { $("hud").textContent = "불러오기 실패: " + e; });
 
-// ---------- 가짜 컨트롤러 → /ws (Quest 페이지와 같은 메시지) ----------
-const SL = [["dx", -0.4, 0.4, 0.005, "m"], ["dy", -0.4, 0.4, 0.005, "m"], ["dz", -0.4, 0.4, 0.005, "m"],
-            ["roll", -90, 90, 1, "°"], ["pitch", -90, 90, 1, "°"], ["yaw", -90, 90, 1, "°"], ["trig", 0, 1, 0.05, ""]];
-const sim = {};
-for (const s of ["right", "left"]) {
-  sim[s] = { grip: false };
-  let h = `<fieldset><legend>${NAME[s]}</legend><label><input type="checkbox" id="${s}_grip"> 그립 (따라가기)</label>`;
-  for (const [k, lo, hi, st, u] of SL) {
-    sim[s][k] = 0;
-    h += `<label class="s">${k}<input type="range" id="${s}_${k}" min="${lo}" max="${hi}" step="${st}" value="0"><span id="${s}_${k}_v">0</span></label>`;
-  }
-  h += `<button id="${s}_zero">슬라이더 0</button></fieldset>`;
-  $("hands").insertAdjacentHTML("beforeend", h);
-}
-for (const s of ["right", "left"]) {
-  $(`${s}_grip`).onchange = e => { sim[s].grip = e.target.checked; };
-  for (const [k] of SL) {
-    $(`${s}_${k}`).oninput = e => { sim[s][k] = +e.target.value; $(`${s}_${k}_v`).textContent = e.target.value; };
-  }
-  $(`${s}_zero`).onclick = () => { for (const [k] of SL) { sim[s][k] = 0; $(`${s}_${k}`).value = 0; $(`${s}_${k}_v`).textContent = "0"; } };
-}
-
-// 로봇 RPY → 행렬 (Rz·Ry·Rx), WebXR 로: R_xr = Mᵀ R M, p_xr = 기준 + Mᵀ d
-const M = [[0, 0, -1], [-1, 0, 0], [0, 1, 0]];
-const T3 = A => A[0].map((_, i) => A.map(r => r[i]));
-const mm = (A, B) => A.map(r => B[0].map((_, j) => r.reduce((s, v, k) => s + v * B[k][j], 0)));
-function rpyMat(r, p, y) {
-  const [cr, sr, cp, sp, cy, sy] = [Math.cos(r), Math.sin(r), Math.cos(p), Math.sin(p), Math.cos(y), Math.sin(y)];
-  return [[cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
-          [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
-          [-sp, cp * sr, cp * cr]];
-}
-function quat(R) {   // [x, y, z, w]
-  const tr = R[0][0] + R[1][1] + R[2][2];
-  if (tr > 0) { const s = Math.sqrt(tr + 1) * 2; return [(R[2][1] - R[1][2]) / s, (R[0][2] - R[2][0]) / s, (R[1][0] - R[0][1]) / s, 0.25 * s]; }
-  if (R[0][0] > R[1][1] && R[0][0] > R[2][2]) { const s = Math.sqrt(1 + R[0][0] - R[1][1] - R[2][2]) * 2; return [0.25 * s, (R[0][1] + R[1][0]) / s, (R[0][2] + R[2][0]) / s, (R[2][1] - R[1][2]) / s]; }
-  if (R[1][1] > R[2][2]) { const s = Math.sqrt(1 + R[1][1] - R[0][0] - R[2][2]) * 2; return [(R[0][1] + R[1][0]) / s, 0.25 * s, (R[1][2] + R[2][1]) / s, (R[0][2] - R[2][0]) / s]; }
-  const s = Math.sqrt(1 + R[2][2] - R[0][0] - R[1][1]) * 2; return [(R[0][2] + R[2][0]) / s, (R[1][2] + R[2][1]) / s, 0.25 * s, (R[1][0] - R[0][1]) / s];
-}
-const BASE = { right: [0.2, 1.0, -0.3], left: [-0.2, 1.0, -0.3] };
-const D2R = Math.PI / 180;
-let ws = null, simRecenter = false;
-function ensureWs() {
-  if (ws && ws.readyState <= 1) return;
-  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws");
-  ws.onmessage = () => {};
-}
-setInterval(() => {
-  if (!$("simOn").checked) { if (ws) { ws.close(); ws = null; } return; }
-  ensureWs();
-  if (ws.readyState !== 1) return;
-  const msg = { t: performance.now(), head: { p: [0, 1.6, 0], q: [0, 0, 0, 1] }, hands: {}, recenter: simRecenter };
-  simRecenter = false;
-  for (const s of ["right", "left"]) {
-    const v = sim[s];
-    const Rr = rpyMat(v.roll * D2R, v.pitch * D2R, v.yaw * D2R);
-    const Rx = mm(mm(T3(M), Rr), M);
-    const d = [-v.dy, v.dz, -v.dx];   // Mᵀ · (dx, dy, dz)
-    msg.hands[s] = { p: BASE[s].map((b, i) => b + d[i]), q: quat(Rx), grip: v.grip ? 1 : 0, trig: v.trig };
-  }
-  ws.send(JSON.stringify(msg));
-}, 20);
 </script>
 </body>
 </html>

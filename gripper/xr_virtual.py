@@ -2,7 +2,7 @@
 xr_virtual.py — Unitree xr_teleoperate 를 로봇 없이 (가상) 돌려 봄
 
   xr_teleoperate 의 Quest 입력 처리 (televuer · TeleVuerWrapper) 와 H2 팔 IK (H2_ArmIK) 를 **그대로** 쓰고,
-  로봇 제어 (H2_ArmController · Dex1 그리퍼) 대신 IK 결과 관절값을 우리 3D 뷰어 (gripper/vr_teleop.py) 로 보냄.
+  로봇 제어 (H2_ArmController · Dex1 그리퍼) 대신 IK 결과 관절값을 우리 3D 뷰어 (gripper/xr_viewer.py) 로 보냄.
   → 로봇 · 그리퍼에는 아무 명령도 안 보냄. xr_teleoperate 조작감을 URDF 가상 로봇으로 먼저 확인하는 용도.
 
   준비 (mini PC, 한 번):
@@ -13,7 +13,7 @@ xr_virtual.py — Unitree xr_teleoperate 를 로봇 없이 (가상) 돌려 봄
       openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout key.pem -out cert.pem -subj "/CN=localhost"
 
   실행:
-    터미널 1:  python gripper/vr_teleop.py --table-z -1.0          # 뷰어 (http://localhost:50040/view)
+    터미널 1:  python gripper/xr_viewer.py --table-z -1.0          # 뷰어 (http://localhost:50040/)
     터미널 2:  python gripper/xr_virtual.py --xr ~/xr_teleoperate   # Vuer 서버 (8012) + H2 IK → 뷰어
     Quest (USB): adb reverse tcp:8012 tcp:8012 → Quest 브라우저 https://localhost:8012/?ws=wss://localhost:8012
                  (자체 서명 경고 → 계속) → 'Enter VR' (pass-through)
@@ -43,7 +43,7 @@ def get(url, timeout=2.0):
 def main():
     ap = argparse.ArgumentParser(description="xr_teleoperate (televuer + H2_ArmIK) → 우리 3D 뷰어 (로봇 명령 없음)")
     ap.add_argument("--xr", default=os.path.expanduser("~/xr_teleoperate"), help="xr_teleoperate 저장소 경로")
-    ap.add_argument("--viewer", default="http://localhost:50040", help="gripper/vr_teleop.py 주소")
+    ap.add_argument("--viewer", default="http://localhost:50040", help="gripper/xr_viewer.py 주소")
     ap.add_argument("--hand", action="store_true", help="컨트롤러 대신 손 추적 입력")
     ap.add_argument("--hz", type=float, default=30.0, help="IK · 전송 주기 (xr_teleoperate 기본 30)")
     a = ap.parse_args()
@@ -68,7 +68,7 @@ def main():
     try:
         q0 = get(a.viewer + "/api/ext/q")
     except Exception as e:  # noqa: BLE001
-        sys.exit(f"[xr] 뷰어 {a.viewer} 에 연결 안 됨 ({e}) — 먼저 python gripper/vr_teleop.py 실행")
+        sys.exit(f"[xr] 뷰어 {a.viewer} 에 연결 안 됨 ({e}) — 먼저 python gripper/xr_viewer.py 실행")
 
     arm_ik = H2_ArmIK()
     m = arm_ik.reduced_robot.model
