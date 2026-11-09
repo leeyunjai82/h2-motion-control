@@ -36,7 +36,7 @@ from fastapi.responses import FileResponse, HTMLResponse, Response
 READ_ONLY = True            # 1단계 — 이 파일에는 arm_server / 그리퍼로 보내는 코드가 없음
 
 V = pc.CFG.get("vr") or {}
-_need = ("port", "scale", "v_max", "w_max_deg", "joint_vmax", "ik_iters", "posture_gain", "follow_mm",
+_need = ("port", "table_x_min_m", "scale", "v_max", "w_max_deg", "joint_vmax", "ik_iters", "posture_gain", "follow_mm",
          "follow_deg", "unreach_mm", "arm_gap_m", "table_z_m", "workspace", "timeout_s")
 _miss = [k for k in _need if k not in V]
 if _miss:
@@ -84,15 +84,20 @@ class Hand:
 
 
 class Teleop:
-    def __init__(self, table_z, scale, v_max):
+    def __init__(self, table_z, scale, v_max, start="default"):
         self.mdl = pc.Model()
         self.table_z = float(table_z)
         self.scale, self.v_max = float(scale), float(v_max)
         self.w_max = math.radians(float(V["w_max_deg"]))
         self.jv = float(V["joint_vmax"])
         self.ws = V["workspace"]
-        self.q_rest = self._ready_q()
-        self.q = self.q_rest.copy()
+        self.q_rest = self._ready_q()          # IK 남는 자유도가 끌려가는 자세 (준비 자세)
+        if start == "default":                 # 로봇을 켰을 때 자세 (robot.yaml default_arm_deg — 팔 내림)
+            self.q_start = self.mdl.to_model(pc.default_q_ctrl())
+        else:                                  # 잡기 웹 준비 자세 (팔 앞으로)
+            self.q_start = self.q_rest.copy()
+        self.start = start
+        self.q = self.q_start.copy()
         self.hands = {s: Hand(s) for s in SIDES}
         self.heading = 0.0          # 방향 맞춤 [rad] (WebXR y 축 둘레)
         self.lock = threading.Lock()
@@ -122,7 +127,7 @@ class Teleop:
 
     def reset(self):
         with self.lock:
-            self.q = self.q_rest.copy()
+            self.q = self.q_start.copy()
             for h in self.hands.values():
                 h.engaged, h.c0, h.t0, h.tgt = False, None, None, None
                 h.st = {"state": "대기", "reason": "준비 자세로 리셋", "level": "idle"}
@@ -174,15 +179,18 @@ class Teleop:
         """→ (이유 목록, 값 dict). 이유가 있으면 그 자세는 쓰지 않음."""
         mdl, why = self.mdl, []
         g = mdl.body_gap(qm, side)
-        low = mdl.lowest(qm, side) - self.table_z
+        T = mdl.tcp(qm, side)
+        pts = pc.ENVELOPE @ T.rotation.T + T.translation
+        front = pts[pts[:, 0] > float(V["table_x_min_m"])]       # 테이블은 몸 앞 이 x 부터 — 옆으로 내린 팔은 검사 안 함
+        low = None if len(front) == 0 else float(front[:, 2].min()) - self.table_z
         ag = self.arm_gap(qm)
         if g is not None and g < float(P["body_clear_m"]):
             why.append(f"몸통 {g * 100:.0f} cm (최소 {float(P['body_clear_m']) * 100:.0f})")
-        if low * 1000 < float(P["tip_clear_mm"]):
+        if low is not None and low * 1000 < float(P["tip_clear_mm"]):
             why.append(f"테이블 {low * 1000:.0f} mm (최소 {float(P['tip_clear_mm']):.0f})")
         if ag < float(V["arm_gap_m"]):
             why.append(f"다른 팔 {ag * 100:.0f} cm (최소 {float(V['arm_gap_m']) * 100:.0f})")
-        return why, {"body_gap_cm": None if g is None else round(g * 100, 1), "table_mm": round(low * 1000),
+        return why, {"body_gap_cm": None if g is None else round(g * 100, 1), "table_mm": None if low is None else round(low * 1000),
                      "arm_gap_cm": round(ag * 100, 1)}
 
     def clamp_ws(self, p):
@@ -275,10 +283,19 @@ class Teleop:
             dq = dq * (lim_q / big)
         q_new[ix] = self.q[ix] + dq
         why, vals = self.check(q_new, side)
+        if why and not reasons:
+            # 이미 한계 근처에 있을 때 빠져나오는 쪽 (걸린 거리가 지금보다 줄지 않음) 은 허용 — 안 그러면 한 번 걸리면 못 움직임
+            _, now = self.check(self.q, side)
+            keys = [k for k, w in (("body_gap_cm", "몸통"), ("table_mm", "테이블"), ("arm_gap_cm", "다른 팔")) if any(r.startswith(w) for r in why)]
+            if all(vals[k] is not None and now[k] is not None and vals[k] >= now[k] for k in keys):
+                why = []
         reasons += why
         if reasons:
             h.haptic = 0.6
-            h.tgt = prev_tgt            # 목표가 막힌 쪽으로 계속 달아나지 않게 — 손을 되돌리면 바로 다시 따라감
+            h.tgt = prev_tgt            # 목표가 막힌 쪽으로 계속 달아나지 않게
+            # 손과 목표의 기준을 지금 자리로 다시 맞춤 (미끄러짐): 막힌 쪽으로 더 간 손을 되돌릴 때 바로 다시 따라감
+            dR = M_XR @ (R_c @ h.c0[1].T) @ M_XR.T
+            h.t0 = (prev_tgt[0] - self.scale * (M_XR @ (p_c - h.c0[0])), dR.T @ prev_tgt[1])
             h.st = {"state": "멈춤", "reason": " · ".join(reasons), "level": "stop"}
             h.st.update(vals)
             return
@@ -565,11 +582,13 @@ def main():
     ap.add_argument("--table-z", type=float, default=float(V["table_z_m"]), help="테이블 높이 [m, pelvis]")
     ap.add_argument("--scale", type=float, default=float(V["scale"]))
     ap.add_argument("--v-max", type=float, default=float(V["v_max"]), help="목표 TCP 최고 속도 [m/s]")
+    ap.add_argument("--start", choices=("default", "ready"), default="default",
+                    help="시작 가상 자세: default = 로봇 켰을 때 (팔 내림, 기본) · ready = 잡기 웹 준비 자세 (팔 앞으로)")
     ap.add_argument("--https", nargs=2, metavar=("CERT", "KEY"), help="Wi-Fi 로 쓸 때 (WebXR 는 localhost 아니면 HTTPS 필요)")
     a = ap.parse_args()
     if not (0 < a.v_max <= 0.3) or not (0.2 <= a.scale <= 3.0):
         sys.exit("[vr] --v-max 0~0.3 m/s, --scale 0.2~3.0")
-    t = Teleop(a.table_z, a.scale, a.v_max)
+    t = Teleop(a.table_z, a.scale, a.v_max, a.start)
     print(f"[vr] 읽기 전용 — 로봇에 명령 안 보냄. 모니터 http://localhost:{a.port}/  ·  Quest: adb reverse tcp:{a.port} tcp:{a.port} 후 "
           f"http://localhost:{a.port}/vrurdf (URDF 가상 로봇) 또는 /vr", flush=True)
     kw = {"ssl_certfile": a.https[0], "ssl_keyfile": a.https[1]} if a.https else {}
