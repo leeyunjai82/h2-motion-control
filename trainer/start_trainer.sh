@@ -21,7 +21,17 @@ if ! "$PY" -c "import torch, torchvision, openvino, fastapi, uvicorn, cv2" 2>/de
   "$PY" -c "import torch, torchvision, openvino, fastapi, uvicorn, cv2"
   exit 1
 fi
-"$PY" -c "import torch; ok=torch.cuda.is_available(); print('[trainer] torch', torch.__version__, '| CUDA', ok, '|', torch.cuda.get_device_name(0) if ok else 'GPU 없음 — CPU 학습(매우 느림)', '|', torch.cuda.get_arch_list() if ok else '')"
+"$PY" - <<'PY'
+import torch
+x = getattr(torch, "xpu", None)
+if torch.cuda.is_available():
+    dev = f"CUDA {torch.cuda.get_device_name(0)} {torch.cuda.get_arch_list()}"
+elif x is not None and x.is_available():
+    dev = f"Intel XPU {x.get_device_name(0)}"
+else:
+    dev = "GPU 없음 (CUDA · Intel XPU) — CPU 학습 (매우 느림)"
+print(f"[trainer] torch {torch.__version__} | 학습 장치: {dev}")
+PY
 LOGD="${TRAINER_DATA:-$HERE/data}/logs"
 mkdir -p "$LOGD"
 "$PY" -u "$HERE/trainer_server.py" 2>&1 | tee -a "$LOGD/trainer_$(date +%Y%m%d).log"

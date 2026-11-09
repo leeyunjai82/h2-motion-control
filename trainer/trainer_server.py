@@ -341,6 +341,21 @@ def _ver(pkg):
 
 
 _info_cache = {"t": 0, "v": None}
+_xpu = {"done": False, "name": None}
+
+
+def _xpu_name():
+    """Intel GPU (PyTorch XPU) 이름 — nvidia-smi 가 없는 PC 용. 서버 프로세스에서 XPU 를 잡지 않게 따로 한 번만 확인."""
+    if not _xpu["done"]:
+        _xpu["done"] = True
+        try:
+            out = subprocess.run([sys.executable, "-c", "import torch; x=getattr(torch,'xpu',None); "
+                                  "print(x.get_device_name(0) if x is not None and x.is_available() else '')"],
+                                 capture_output=True, text=True, timeout=60).stdout.strip()
+            _xpu["name"] = out.splitlines()[-1] if out else None
+        except Exception:   # noqa: BLE001
+            _xpu["name"] = None
+    return _xpu["name"]
 
 
 @app.get("/api/info")
@@ -355,7 +370,8 @@ def api_info():
             n, mu, mt, u, t, drv = [x.strip() for x in ln.split(",")]
             gpus.append({"name": n, "mem_used": int(mu), "mem_total": int(mt), "util": int(u), "temp": int(t), "driver": drv})
     except Exception as e:   # noqa: BLE001
-        gpus = [{"error": f"nvidia-smi: {e}"}]
+        xn = _xpu_name()
+        gpus = [{"name": f"Intel XPU {xn}", "xpu": True}] if xn else [{"error": f"nvidia-smi: {e}"}]
     du = shutil.disk_usage(DATA)
     v = {"gpus": gpus, "torch": _ver("torch"), "torchvision": _ver("torchvision"), "openvino": _ver("openvino"),
          "python": sys.version.split()[0], "disk_free_gb": round(du.free / 1e9, 1), "defaults": DEFAULT_TRAIN,
