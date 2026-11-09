@@ -131,3 +131,16 @@ adb reverse tcp:50040 tcp:50040                               # Quest 3 USB 연�
 - 팔 관절 속도: 계획 최고 0.4 rad/s × 속도 배율 (웹 ×1 · ×1.5 · ×2 기본 · ×3), arm_server 스트림 상한 1.0 × 배율 (최대 3.0) rad/s.
   잡기 한 번 (통): ×1 약 36 초 · ×2 약 22 초 · ×3 약 17 초 (가짜 로봇). 한 데이터셋 안에서는 배율을 같게. 명령 ↔ 실측 15° 넘게 벌어지면 멈춤
 - 기록: `logs/pick_YYYYMMDD.jsonl` (계획 · 단계 · 결과)
+
+## xr_teleoperate 가상 실행 — `xr_virtual.py`
+
+Unitree xr_teleoperate 의 Quest 입력 처리 (televuer) 와 H2 IK (`H2_ArmIK`) 를 그대로 쓰고, 로봇 대신 위 3D 뷰어로 보냄 (로봇 · 그리퍼 명령 없음).
+xr_teleoperate 저장소 (`--xr`, 기본 `~/xr_teleoperate`) 와 그 README 의 tv 환경 의존성 (pinocchio 3 + casadi, meshcat, logging-mp, televuer) 필요.
+
+```bash
+python gripper/vr_teleop.py --table-z -1.0                 # 터미널 1: 뷰어 http://localhost:50040/view
+python gripper/xr_virtual.py --xr ~/xr_teleoperate          # 터미널 2: Vuer :8012 + H2 IK → 뷰어
+adb reverse tcp:8012 tcp:8012                               # Quest: https://localhost:8012/?ws=wss://localhost:8012
+```
+- 뷰어 손 상태에 "실제였으면 멈춤: 몸통 …" 처럼 우리 안전 검사 결과를 표시만 함 (xr_teleoperate 자체에는 이 검사가 없음)
+- ⚠ 이 저장소 시험 환경에는 pinocchio casadi 가 없어 H2_ArmIK · televuer 실행은 확인 못 함 (뷰어 쪽 /api/ext 만 확인)

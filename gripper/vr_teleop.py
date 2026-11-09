@@ -30,7 +30,7 @@ import numpy as np
 import pinocchio as pin
 import uvicorn
 import xml.etree.ElementTree as ET
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 READ_ONLY = True            # 1단계 — 이 파일에는 arm_server / 그리퍼로 보내는 코드가 없음
@@ -404,6 +404,34 @@ class Teleop:
                 "err_deg": round(e_r, 1)}
         h.st.update(vals)
 
+    # ---------- 외부 IK (xr_teleoperate 가상 실행기 gripper/xr_virtual.py) ----------
+    def arm_q_named(self):
+        with self.lock:
+            return {self.mdl.qname[i]: float(self.q[i]) for s in SIDES for i in self.mdl.idx[s]}
+
+    def set_external(self, names, q, grip, src):
+        """외부 IK 결과 (관절 이름 → rad) 를 가상 팔에 그대로 넣음. 안전 검사는 표시만 (실제였다면 멈췄을지)."""
+        now = time.monotonic()
+        with self.lock:
+            if self.last_t is not None and now > self.last_t:
+                self.rate = 0.9 * self.rate + 0.1 * (1.0 / max(now - self.last_t, 1e-3))
+            self.last_t, self.last_msg = now, now
+            byname = {n: i for i, n in self.mdl.qname.items()}
+            qn = self.q.copy()
+            for n, v in zip(names, q):
+                i = byname.get(n)
+                if i is not None:
+                    qn[i] = min(max(float(v), float(self.mdl.lo[i])), float(self.mdl.hi[i]))
+            self.q = qn
+            for side in SIDES:
+                h = self.hands[side]
+                h.trig = min(max(float((grip or {}).get(side, 0.0)), 0.0), 1.0)
+                h.engaged, h.tgt = True, None
+                why, vals = self.check(self.q, side)
+                h.st = {"state": src, "reason": ("실제였으면 멈춤: " + " · ".join(why)) if why else "",
+                        "level": "stop" if why else "ok"}
+                h.st.update(vals)
+
     # ---------- 모니터 ----------
     def state(self):
         with self.lock:
@@ -632,6 +660,16 @@ def make_app(t):
     @app.get("/api/state")
     def api_state():
         return t.state()
+
+    @app.get("/api/ext/q")
+    def api_ext_q():
+        return t.arm_q_named()
+
+    @app.post("/api/ext")
+    async def api_ext(req: Request):
+        d = await req.json()
+        t.set_external(d.get("names") or [], d.get("q") or [], d.get("grip") or {}, str(d.get("src") or "외부 IK"))
+        return {"ok": True}
 
     @app.post("/api/reset")
     def api_reset():
