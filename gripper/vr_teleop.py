@@ -79,7 +79,7 @@ class Hand:
         self.t0 = None              # 그 순간 가상 TCP (p, R) — pelvis
         self.tgt = None             # 속도 제한한 목표 TCP (p, R)
         self.trig = 0.0
-        self.latch = False          # A/X 로 켠 그리퍼 닫힘 고정
+        self.latch = None           # A/X 로 고정한 트리거 값 (0 열림 ~ 1 닫힘), None = 고정 안 함
         self.st = {"state": "대기", "reason": "", "level": "idle"}
         self.haptic = 0.0
 
@@ -294,9 +294,10 @@ class Teleop:
             h.engaged, h.tgt = False, None
             h.st = {"state": "컨트롤러 없음", "reason": "", "level": "idle"}
             return
-        if c.get("toggle"):                   # A/X: 그리퍼 닫힘 고정 켜고 끔 (트리거를 계속 안 당겨도 잡은 채로 팔을 움직임)
-            h.latch = not h.latch
-        h.trig = max(float(c.get("trig") or 0.0), 1.0 if h.latch else 0.0)
+        trig = float(c.get("trig") or 0.0)
+        if c.get("toggle"):                   # A/X: 지금 트리거 만큼 닫힌 상태로 고정 / 풀기 (트리거를 놓아도 그 간격 유지)
+            h.latch = None if h.latch is not None else trig
+        h.trig = trig if h.latch is None else max(trig, h.latch)   # 고정 중에도 트리거를 더 당기면 더 닫힘, 놓으면 고정 값으로
         grip = float(c.get("grip") or 0.0) > 0.5
         p_c = H @ np.asarray(c["p"], dtype=float)
         R_c = H @ quat_to_R(c["q"])
@@ -433,7 +434,7 @@ class Teleop:
                     "tcp": r3(T.translation), "tcp_rpy": rpy_deg(T.rotation),
                     "target": None if h.tgt is None else r3(h.tgt[0]),
                     "target_rpy": None if h.tgt is None else rpy_deg(h.tgt[1]),
-                    "gripper_mm": round(self.gap_max * (1.0 - h.trig), 1), "gripper_latch": h.latch,
+                    "gripper_mm": round(self.gap_max * (1.0 - h.trig), 1), "gripper_latch": None if h.latch is None else round(self.gap_max * (1.0 - h.latch), 1),
                     "pts": [r3(p) for p in self.arm_pts(self.q, side)],
                     "joints": joints}
             return out

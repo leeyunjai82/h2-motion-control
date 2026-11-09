@@ -22,7 +22,7 @@
   <div id="st"></div>
   <div class="note">
     그립(중지) 누르는 동안만 가상 팔이 따라옴 · 트리거 = 그리퍼 닫기 · B/Y = 자세 맞춤 (가상 로봇처럼 팔을 내리고 누름) ·
-    A/X = 그리퍼 닫힘 고정 켜고 끔 (트리거 안 당겨도 잡은 채로) · 스틱 누르기 = 뒤에서 ↔ 앞에서 보기 (가상 로봇을 내 앞에 다시 놓음) · 오른쪽 스틱 위아래 = 로봇과의 거리<br>
+    A/X = 지금 그리퍼 간격으로 고정 / 풀기 (트리거를 원하는 만큼 당긴 채 누름) · 스틱 누르기 = 뒤에서 ↔ 앞에서 보기 (가상 로봇을 내 앞에 다시 놓음) · 오른쪽 스틱 위아래 = 로봇과의 거리<br>
     처음에: 로봇 쪽을 보고 서서 팔을 내리고 (컨트롤러는 앞을 가리킴) B/Y. 그다음 그립을 누른 채 움직이면 팔 모양을 따라감. 손 상자 색: 초록 따라감 · 노랑 일부만 · 빨강 멈춤 (진동) · 회색 대기
   </div>
 </div>
@@ -282,7 +282,7 @@ renderer.setAnimationLoop((t, frame) => {
       const ap = src.targetRaySpace && frame.getPose(src.targetRaySpace, ref);   // 컨트롤러가 가리키는 방향 = 로봇 앞
       if (ap) { const q = ap.transform.orientation; recenterQ = [q.x, q.y, q.z, q.w]; }
     }
-    if (aX && !prevBtn[hd][0]) toggleReq[hd] = true;                     // A/X = 그리퍼 닫힘 고정 켜고 끔
+    if (aX && !prevBtn[hd][0]) toggleReq[hd] = true;                     // A/X = 지금 트리거 값으로 그리퍼 고정 / 풀기
     if (stk && !prevBtn[hd][2]) { front = !front; needPlace = true; }  // 스틱 누르기 = 뒤에서 ↔ 앞에서 보기
     prevBtn[hd] = [aX, by, stk];
     if (hd === "right" && ax.length >= 4 && Math.abs(ax[3]) > 0.3) { dist = Math.max(0.3, Math.min(3, dist - ax[3] * dt * 0.6)); needPlace = true; }

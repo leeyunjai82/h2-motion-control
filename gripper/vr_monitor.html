@@ -49,7 +49,7 @@ function handHtml(side, h) {
   s += `<tr><td>가상 TCP</td><td>${h.tcp.join(", ")}</td><td>RPY ${h.tcp_rpy.join(", ")}</td></tr>`;
   s += `<tr><td>오차</td><td>${v(h.err_mm, " mm")}</td><td>${v(h.err_deg, "°")}</td></tr>`;
   s += `<tr><td>몸통</td><td>${v(h.body_gap_cm, " cm")}</td><td>테이블 위 ${v(h.table_mm, " mm")} · 다른 팔 ${v(h.arm_gap_cm, " cm")}</td></tr>`;
-  s += `<tr><td>그리퍼</td><td>${h.gripper_mm} mm</td><td>${h.engaged ? "그립 중" : ""}</td></tr>`;
+  s += `<tr><td>그리퍼</td><td>${h.gripper_mm} mm${h.gripper_latch != null ? ` (고정 ${h.gripper_latch} mm)` : ""}</td><td>${h.engaged ? "그립 중" : ""}</td></tr>`;
   s += `</table><table style="margin-top:6px">`;
   for (const j of h.joints) {
     const f = Math.min(1, Math.max(0, (j.deg - j.lo) / (j.hi - j.lo)));
