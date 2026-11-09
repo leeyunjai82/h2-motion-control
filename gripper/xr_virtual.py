@@ -16,7 +16,7 @@ xr_virtual.py — Unitree xr_teleoperate (Quest 입력 + H2 IK) → 가상 뷰�
 
   Quest (USB): adb reverse tcp:8012 tcp:8012 → https://localhost:8012/?ws=wss://localhost:8012 → 'Virtual Reality' (immersive)
   조작: 헤드셋을 머리에 쓰고 컨트롤러 쥔 손 = 로봇 손 (머리 기준 절대 위치, xr_teleoperate 와 같음).
-        그립(중지)을 누른 손만 따라감 · 트리거 = 그리퍼 (그립 누른 동안만). Quest 화면 = 머리 카메라 + 손목 카메라 두 개 (잡기 웹 영상)
+        그립(중지)을 누른 손만 팔이 따라감 · 트리거 = 그리퍼 (당기면 닫힘 · 놓으면 벌림). Quest 화면 = 머리 카메라 + 손목 카메라 두 개 (잡기 웹 영상)
 """
 import argparse
 import json

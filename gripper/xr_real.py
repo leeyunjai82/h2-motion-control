@@ -9,7 +9,7 @@ xr_real.py — VR 조작 (xr_teleoperate H2 IK) → 실제 팔 · 그리퍼.  �
   안전 (겹겹이):
    - 시작 조건: 실기 팔 (카메라만 · 다른 동작 중이면 거부) · arm_server hold · 테이블을 잼 · 카메라 숙임 · 485 보드 · 앞 에피소드 결정
    - 팔 속도: arm_server 스트림 max_vel (기본 gripper.yaml xr_view.real_max_vel 0.3 rad/s, 상한 1.0)
-   - 데드맨: 그립(중지)을 누른 손만 움직임. 뗀 손 = 마지막 목표 그대로 · 그리퍼도 그대로 (잡은 것 안 떨어뜨림)
+   - 데드맨: 그립(중지)을 누른 손만 팔이 움직임. 그리퍼는 트리거만 따름 (당기면 닫힘 · 놓으면 벌림)
    - 손별 검사: 몸통 · 테이블 (잰 평면) · 다른 팔 · 뒤 한계 → 걸리면 그 손은 이번 명령을 버리고 그 자리
    - 한 번에 크게 다른 목표 (관절 0.5 rad 넘게 — IK 가 튐) 는 버림
    - 명령 · 실측 차이 > pick.track_abort_deg → 세션 끝 (걸리거나 부딪힘)
@@ -239,9 +239,9 @@ class XRTeleop:
         if lag > float(P["track_abort_deg"]):
             self.stop(f"명령과 실측이 {lag:.1f}° 차이 — 걸렸거나 부딪힘")
             raise HTTPException(409, "명령 · 실측 차이 — 세션 끝")
-        # 그리퍼: 그립 누른 손만 트리거를 따름 (뗀 손은 그대로 — 잡은 것 안 떨어뜨림)
+        # 그리퍼: 트리거만 따름 (그립과 상관없이 — 당기면 닫힘, 놓으면 벌림). Quest 입력이 없으면 그대로
         for side in pc.SIDES:
-            if not press.get(side) or grip.get(side) is None:
+            if grip.get(side) is None:
                 continue
             closing = min(max(float(grip[side]), 0.0), 1.0)
             gq = pc.q_for_gap(pc.gap_mm(pc.Q_HI) * (1.0 - closing))
