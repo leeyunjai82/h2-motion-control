@@ -35,6 +35,7 @@ import pick_core as pc
 from pick_core import robot_env, P
 import recorder as rec
 import policy as pol
+import xr_real
 
 import cv2
 import numpy as np
@@ -363,7 +364,8 @@ class Runner:
             pass
 
     def busy(self):
-        return (self.th is not None and self.th.is_alive()) or (hasattr(self, "pol") and self.pol.running())
+        return ((self.th is not None and self.th.is_alive()) or (hasattr(self, "pol") and self.pol.running())
+                or (getattr(self, "xr", None) is not None and self.xr.active))
 
     # ----- 테이블 높이 -----
     def measure_table(self, u, v, reset=False):
@@ -872,6 +874,7 @@ def make_app(r: Runner):
     def api_stop():
         r.stop_evt.set()
         r.pol.stop()
+        r.xr.stop("정지 버튼")
         r.say("정지 요청")
         return {"ok": True}
 
@@ -1015,6 +1018,23 @@ def make_app(r: Runner):
         r.gripper_manual(q.side, q.action, q.size_mm)
         return {"ok": True}
 
+    # ----- VR 조작 (gripper/xr_virtual.py --real → 여기 → arm_server · 그리퍼) -----
+    @app.post("/api/xr/start")
+    def api_xr_start(body: dict):
+        return r.xr.start(float(body.get("max_vel", xr_real.X["real_max_vel"])), CAM_PITCH_MAX)
+
+    @app.post("/api/xr/stop")
+    def api_xr_stop():
+        return {"ok": True, "stopped": r.xr.stop("VR 끝 버튼")}
+
+    @app.post("/api/xr/cmd")
+    def api_xr_cmd(body: dict):
+        return r.xr.cmd(body.get("names") or [], body.get("q") or [], body.get("grip") or {}, body.get("press") or {})
+
+    @app.get("/api/xr/state")
+    def api_xr_state():
+        return r.xr.state()
+
     @app.get("/api/state")
     def api_state():
         with r.lk:
@@ -1035,6 +1055,7 @@ def make_app(r: Runner):
             d = g.get(s) or {}
             st["gripper"][s] = None if d.get("q") is None else {"q": d["q"], "mm": round(pc.gap_mm(d["q"]), 1), "ok": d.get("ok")}
         st["arm"] = r.arm_msg
+        st["xr"] = r.xr.state()
         if r.arm_q is not None:
             qm = r.mdl.to_model(r.arm_q)
             st["tcp"] = {s: np.round(r.mdl.tcp(qm, s).translation + pc.TCP_BIAS[s], 3).tolist() for s in pc.SIDES}
@@ -1080,6 +1101,13 @@ RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><i
 <button id="run" disabled>실행</button><button id="next" disabled>다음 단계 ▶</button><button id="home" disabled>복귀 (위로→준비)</button><br>
 선택한 팔: <button id="pready">준비 자세로</button><button id="pdef">기본 자세로</button><br>
 그리퍼 (선택한 손): <button id="gopen">벌림</button><button id="gclose">닫힘</button>
+</fieldset>
+<fieldset><legend>VR 조작 (Quest · xr_teleoperate)</legend>
+관절 속도 <select id="xrvel" style="background:#222;color:#eee"><option value="0.2">0.2</option><option value="0.3" selected>0.3</option><option value="0.5">0.5</option></select> rad/s
+<button id="xrstart">VR 시작</button><button id="xrstop" disabled>VR 끝</button>
+<div id="xrst" style="font-size:13px">꺼짐</div>
+<div style="font-size:12px">먼저 <code>python gripper/xr_virtual.py --real</code> 실행 · 테이블을 잰 뒤 [VR 시작]. 그립(중지)을 누른 손만 움직이고, 뗀 손은 그 자리 (그리퍼도 그대로).
+수집 켬이면 [VR 시작]~[VR 끝] 이 한 에피소드.</div>
 </fieldset>
 <fieldset><legend>데이터 수집 (ACT)</legend>
 <label><input type="checkbox" id="recon">수집 켬 — [실행] 하면 녹화 시작, 끝나면 저장 / 버리기</label><br>
@@ -1165,6 +1193,13 @@ async function poll(){try{const s=await (await fetch('/api/state')).json();
  $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
  $('run').disabled=!(planOk&&s.plan_id===planId&&!s.busy); $('next').disabled=!s.waiting; $('home').disabled=!s.can_home;
  ['gopen','gclose','pready','pdef'].forEach(k=>$(k).disabled=s.busy);}catch(e){} setTimeout(poll,300);}
+$('xrstart').onclick=async()=>{if(!confirm('실제 팔이 VR 손을 따라 움직입니다. 주변을 비우고 E-stop 을 손에 두세요. 시작할까요?'))return;
+ try{await post('/api/xr/start',{max_vel:+$('xrvel').value});}catch(e){alert(e.message);}};
+$('xrstop').onclick=()=>post('/api/xr/stop',{}).catch(e=>alert(e.message));
+setInterval(async()=>{try{const s=await (await fetch('/api/xr/state')).json();
+ const h=s.hands||{}; const hs=k=>h[k]?`<span class="${h[k].level==='stop'?'bad':h[k].level==='ok'?'ok':''}">${h[k].state}</span> ${h[k].reason||''}`:'';
+ $('xrst').innerHTML=s.active?`<b>${s.msg}</b> · 명령 ${s.n} · ${s.age_s}s 전<br>왼손 ${hs('left')}<br>오른손 ${hs('right')}`:s.msg;
+ $('xrstart').disabled=s.active; $('xrstop').disabled=!s.active;}catch(e){}},300);
 async function recSet(){try{await post('/api/rec',{enabled:$('recon').checked,name:$('recname').value.trim()});dsList();}
  catch(e){$('recon').checked=false;alert(e.message);}}
 $('recon').onchange=recSet; $('recname').onchange=()=>{if($('recon').checked)recSet();};
@@ -1244,6 +1279,7 @@ def main():
         print(f"[pick] 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
     r = Runner(mdl, cam, grip, a.sim or a.cam_only, cam_pitch=None if (a.sim or a.cam_only) else camp, wrist=wrist)
     r.cam_only = a.cam_only
+    r.xr = xr_real.XRTeleop(r)
     print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else '카메라만' if a.cam_only else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
           f"집게 {pc.MM_PER_RAD} mm/rad (계산값)")
     uvicorn.run(make_app(r), host="0.0.0.0", port=a.port, log_level="warning")

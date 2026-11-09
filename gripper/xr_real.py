@@ -1,0 +1,245 @@
+"""
+xr_real.py — VR 조작 (xr_teleoperate H2 IK) → 실제 팔 · 그리퍼.  잡기 웹 (pick_web.py) 안에서 돔
+
+  흐름: Quest → gripper/xr_virtual.py --real (televuer + H2_ArmIK, 30 Hz) → 잡기 웹 POST /api/xr/cmd
+        → 여기서 안전 검사 → arm_server /stream (팔) · Dex1 (그리퍼). 녹화는 잡기 웹 녹화기 그대로 (state/action 16 + 카메라).
+
+  시작은 사람이 잡기 웹 [VR 시작] 을 눌러야 함 (xr_virtual 은 세션이 열릴 때만 보냄).
+
+  안전 (겹겹이):
+   - 시작 조건: 실기 팔 (카메라만 · 다른 동작 중이면 거부) · arm_server hold · 테이블을 잼 · 카메라 숙임 · 485 보드 · 앞 에피소드 결정
+   - 팔 속도: arm_server 스트림 max_vel (기본 gripper.yaml xr_view.real_max_vel 0.3 rad/s, 상한 1.0)
+   - 데드맨: 그립(중지)을 누른 손만 움직임. 뗀 손 = 마지막 목표 그대로 · 그리퍼도 그대로 (잡은 것 안 떨어뜨림)
+   - 손별 검사: 몸통 · 테이블 (잰 평면) · 다른 팔 · 뒤 한계 → 걸리면 그 손은 이번 명령을 버리고 그 자리
+   - 한 번에 크게 다른 목표 (관절 0.5 rad 넘게 — IK 가 튐) 는 버림
+   - 명령 · 실측 차이 > pick.track_abort_deg → 세션 끝 (걸리거나 부딪힘)
+   - 값이 안 오면: arm_server 가 0.2 초 뒤 그 자리 멈춤, 1.5 초 넘으면 여기서 세션 끝
+   - [정지] · [VR 끝] · 오류 → 세션 끝 (팔은 마지막 목표에서 멈춤, 0 자세로 가지 않음)
+"""
+import math
+import threading
+import time
+import urllib.error
+
+import numpy as np
+import pinocchio as pin
+from fastapi import HTTPException
+
+import pick_core as pc
+from pick_core import P
+
+X = pc.CFG.get("xr_view") or {}
+_need = ("arm_gap_m", "back_limit_m", "table_x_min_m", "real_max_vel")
+_miss = [k for k in _need if k not in X]
+if _miss:
+    raise SystemExit(f"[xr] gripper.yaml xr_view: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
+MAX_VEL_CAP = 1.0           # VR 실기 스트림 max_vel 상한 [rad/s]
+JUMP_RAD = 0.5              # 한 명령에서 관절 목표가 이보다 크게 바뀌면 버림 (IK 튐)
+IDLE_END_S = 1.5            # 이 시간 넘게 명령이 없으면 세션 끝
+
+
+class XRTeleop:
+    def __init__(self, runner):
+        self.r = runner
+        self.mdl = pc.Model()            # 따로 만든 모델 — 녹화 · 계획 스레드와 pinocchio Data 를 같이 쓰지 않음 (검사 값이 섞이지 않게)
+        self.lk = threading.Lock()
+        self.active = False
+        self.tok = None
+        self.epoch = 0
+        self.q = None                  # 마지막으로 arm_server 가 받은 목표 (제어 순서, rad)
+        self.q0_named = {}
+        self.max_vel = float(X["real_max_vel"])
+        self.t_last = 0.0
+        self.n = 0
+        self.msg = "꺼짐"
+        self.hands = {s: {"state": "대기", "reason": "", "level": "idle"} for s in pc.SIDES}
+        self.grip_last = {s: None for s in pc.SIDES}
+        m = self.mdl.m
+        self.sh_jid = {s: m.getJointId(f"{s}_shoulder_pitch_joint") for s in pc.SIDES}
+        self.byname = {n: i for i, n in self.mdl.qname.items()}
+        threading.Thread(target=self._watchdog, daemon=True).start()
+
+    # ---------- 안전 검사 ----------
+    def _arm_pts(self, qm, side):
+        mdl = self.mdl
+        pin.forwardKinematics(mdl.m, mdl.d, qm)
+        pts = [mdl.d.oMi[mdl.jid[side][n]].translation.copy() for n in ("elbow", "wrist_roll", "wrist_yaw")]
+        pts.append(mdl.tcp(qm, side).translation.copy())
+        return pts
+
+    def check(self, qm, side):
+        """그 손이 이 자세로 가도 되는지 → 이유 목록 (비면 OK)."""
+        mdl, why = self.mdl, []
+        g = mdl.body_gap(qm, side)
+        if g is not None and g < float(P["body_clear_m"]):
+            why.append(f"몸통 {g * 100:.0f} cm")
+        T = mdl.tcp(qm, side)
+        env = pc.ENVELOPE @ T.rotation.T + T.translation
+        plane = self.r.table_plane
+        front = env[env[:, 0] > float(X["table_x_min_m"])]
+        if plane is not None and len(front):
+            zt = plane[0] + plane[1] * front[:, 0] + plane[2] * front[:, 1]
+            low = float(np.min(front[:, 2] - zt))
+            if low * 1000 < float(P["tip_clear_mm"]):
+                why.append(f"테이블 {low * 1000:.0f} mm")
+        a = self._arm_pts(qm, "left")
+        b = self._arm_pts(qm, "right")
+        ag = min(float(np.linalg.norm(x - y)) for x in a for y in b)
+        if ag < float(X["arm_gap_m"]):
+            why.append(f"다른 팔 {ag * 100:.0f} cm")
+        back = min(min(float(p[0]) for p in self._arm_pts(qm, side)), float(env[:, 0].min()))
+        if back < float(X["back_limit_m"]):
+            why.append(f"뒤로 {back * 100:.0f} cm")
+        return why
+
+    # ---------- 세션 ----------
+    def start(self, max_vel, cam_pitch_max):
+        r = self.r
+        with self.lk:
+            if self.active:
+                raise HTTPException(409, "이미 VR 조작 중")
+            if getattr(r, "cam_only", False):
+                raise HTTPException(409, "카메라만 모드 — 팔 없음 (start_gripper.sh 로 실행)")
+            if r.busy():
+                raise HTTPException(409, "다른 동작 중")
+            if r.rec.pending is not None:
+                raise HTTPException(409, "앞 에피소드를 [저장] 또는 [버리기] 먼저")
+            if r.table_plane is None:
+                raise HTTPException(409, "테이블을 먼저 재세요 ([테이블 점 추가]) — 테이블 높이 검사에 씀")
+            if not (0.0 < float(max_vel) <= MAX_VEL_CAP):
+                raise HTTPException(400, f"속도 0 ~ {MAX_VEL_CAP} rad/s")
+            ok, msg, _ = pc.arm_ready_check()
+            if not ok:
+                raise HTTPException(409, msg)
+            cp = r.cam_pitch.read() if r.cam_pitch else None
+            if cp is not None and abs(cp["diff"]) > cam_pitch_max:
+                raise HTTPException(409, f"카메라 숙임 기준과 {cp['diff']:+.2f}° — 거치대를 맞추세요")
+            if not r.sim:
+                import glob
+                if not glob.glob("/dev/ttyUSB*"):
+                    raise HTTPException(409, "485–USB 보드 포트(/dev/ttyUSB*) 없음")
+            b = pc.call("/stream/begin", {"max_vel": float(max_vel)})
+            self.tok = b["token"]
+            self.q = np.radians(np.asarray(b["target_deg"], dtype=float))
+            self.max_vel = float(max_vel)
+            pc.LAST_CMD.update(q=self.q.copy(), t=time.time())
+            qm = self.mdl.to_model(self.q)
+            self.q0_named = {self.mdl.qname[i]: float(qm[i]) for s in pc.SIDES for i in self.mdl.idx[s]}
+            self.grip_last = {s: None for s in pc.SIDES}
+            self.used = set()              # 실제로 움직인 손 — 녹화 meta side (학습 손 고르기에 씀)
+            self.hands = {s: {"state": "대기 (그립을 누르면 따라감)", "reason": "", "level": "idle"} for s in pc.SIDES}
+            self.n, self.t_last = 0, time.time()
+            self.epoch += 1
+            self.active = True
+            self.msg = f"VR 조작 중 (관절 {self.max_vel:.2f} rad/s)"
+        with r.lk:
+            r.phase, r.stage, r.waiting = "vr", "VR 조작", False
+        r.stage_idx = 1
+        if r.rec_on:
+            try:
+                r.rec.start(r.rec_name, r.rec_cameras(), r.rec_state_names(), r.rec_sample,
+                            {"side": "both", "mode": "vr", "stages": ["시작", "VR 조작"], "table_plane": r.table_plane,
+                             "max_vel": self.max_vel})
+                r.say(f"녹화 시작 → {r.rec_name} (VR)")
+            except (ValueError, RuntimeError) as e:
+                self.stop(f"녹화 시작 못 함: {e}")
+                raise HTTPException(409, f"녹화 시작 못 함: {e}")
+        r.say(f"VR 조작 시작 — 관절 {self.max_vel:.2f} rad/s, 그립을 누른 손만 움직임")
+        return {"ok": True, "epoch": self.epoch, "q": self.q0_named}
+
+    def stop(self, why="VR 끝"):
+        r = self.r
+        with self.lk:
+            if not self.active:
+                return False
+            self.active = False
+            tok, self.tok = self.tok, None
+            self.msg = f"꺼짐 — {why}"
+        try:
+            pc.call("/stream/end", {"token": tok}, timeout=2.0)
+        except Exception:  # noqa: BLE001 — arm_server 가 2 초 뒤 세션을 닫음, 팔은 마지막 목표에서 멈춤
+            pass
+        with r.lk:
+            r.phase, r.stage = "idle", f"VR 끝 ({why})"
+        r.say(f"VR 조작 끝 — {why} (팔은 마지막 목표에서 멈춤)")
+        if r.rec.active:
+            used = getattr(self, "used", set())
+            side = next(iter(used)) if len(used) == 1 else "both"     # 한 손만 썼으면 그 손 (학습 웹 손 고르기)
+            pnd = r.rec.finish(True, "vr", {"why": why, "n_cmd": self.n, "side": side, "hands_used": sorted(used)})
+            r.say(f"녹화 끝 ({pnd['n']} 프레임) — [저장] 또는 [버리기] 를 고르세요")
+        return True
+
+    def _watchdog(self):
+        while True:
+            time.sleep(0.2)
+            if self.active and time.time() - self.t_last > IDLE_END_S:
+                self.stop(f"VR 입력이 {IDLE_END_S} 초 넘게 없음")
+
+    # ---------- 한 명령 ----------
+    def cmd(self, names, q, grip, press):
+        r, mdl = self.r, self.mdl
+        with self.lk:
+            if not self.active:
+                raise HTTPException(409, f"VR 세션 없음 ({self.msg})")
+            qm_now = mdl.to_model(self.q)
+            qm_in = qm_now.copy()
+            for n, v in zip(names, q):
+                i = self.byname.get(n)
+                if i is not None and np.isfinite(v):
+                    qm_in[i] = float(v)
+            cand = qm_now.copy()
+            for side in pc.SIDES:
+                ix = mdl.idx[side]
+                if not press.get(side):
+                    self.hands[side] = {"state": "대기 (그립 안 누름)", "reason": "", "level": "idle"}
+                    continue
+                jump = float(np.max(np.abs(qm_in[ix] - qm_now[ix])))
+                if jump > JUMP_RAD:
+                    self.hands[side] = {"state": "멈춤", "reason": f"목표가 한 번에 {math.degrees(jump):.0f}° 바뀜 (IK 튐)", "level": "stop"}
+                    continue
+                trial = cand.copy()
+                trial[ix] = np.clip(qm_in[ix], mdl.lo[ix], mdl.hi[ix])
+                why = self.check(trial, side)
+                if why:
+                    self.hands[side] = {"state": "멈춤", "reason": " · ".join(why), "level": "stop"}
+                    continue
+                cand = trial
+                self.used.add(side)
+                self.hands[side] = {"state": "따라감", "reason": "", "level": "ok"}
+            tok = self.tok
+        try:
+            res = pc.call("/stream/cmd", {"token": tok, "deg": np.degrees(mdl.to_ctrl(cand)).tolist()}, timeout=1.0)
+        except urllib.error.HTTPError as e:
+            self.stop(f"arm_server 가 명령 거부 ({e.code})")
+            raise HTTPException(409, "arm_server 세션 끝 — 잡기 웹에서 [VR 시작] 다시")
+        except Exception as e:  # noqa: BLE001
+            self.stop(f"arm_server 응답 없음 ({type(e).__name__})")
+            raise HTTPException(409, "arm_server 응답 없음")
+        tgt = np.radians(np.asarray(res["target_deg"], dtype=float))
+        lag = float(np.max(np.abs(np.asarray(res["target_deg"]) - np.asarray(res["meas_deg"]))))
+        with self.lk:
+            self.q = tgt
+            self.n += 1
+            self.t_last = time.time()
+        pc.LAST_CMD.update(q=tgt.copy(), t=time.time())
+        if lag > float(P["track_abort_deg"]):
+            self.stop(f"명령과 실측이 {lag:.1f}° 차이 — 걸렸거나 부딪힘")
+            raise HTTPException(409, "명령 · 실측 차이 — 세션 끝")
+        # 그리퍼: 그립 누른 손만 트리거를 따름 (뗀 손은 그대로 — 잡은 것 안 떨어뜨림)
+        for side in pc.SIDES:
+            if not press.get(side) or grip.get(side) is None:
+                continue
+            closing = min(max(float(grip[side]), 0.0), 1.0)
+            gq = pc.q_for_gap(pc.gap_mm(pc.Q_HI) * (1.0 - closing))
+            if self.grip_last[side] is None or abs(gq - self.grip_last[side]) > 0.03:
+                if r.grip.set(side, gq):
+                    self.grip_last[side] = gq
+        qm = mdl.to_model(tgt)
+        return {"ok": True, "hands": self.hands, "vel_clip": bool(res.get("vel_clip")), "lag_deg": round(lag, 1),
+                "q": {mdl.qname[i]: float(qm[i]) for s in pc.SIDES for i in mdl.idx[s]}}
+
+    def state(self):
+        with self.lk:
+            age = None if not self.active else round(time.time() - self.t_last, 2)
+            return {"active": self.active, "epoch": self.epoch, "msg": self.msg, "max_vel": self.max_vel, "n": self.n,
+                    "age_s": age, "hands": self.hands, "q0": self.q0_named if self.active else None}

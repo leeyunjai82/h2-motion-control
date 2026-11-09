@@ -95,3 +95,26 @@ adb shell am start -a android.intent.action.VIEW -d "https://localhost:8012/?ws=
 - 우리 안전 검사 (몸통 · 테이블 · 다른 팔 · 뒤 한계, gripper.yaml `xr_view`) 를 "실제였으면 멈춤" 으로 표시만 함 — xr_teleoperate 에는 이 검사가 없음
 - xr_teleoperate 를 실제 로봇에 쓸 때 주의 (소스 확인): H2 관절 속도 제한 기본 30 rad/s · 종료 시 팔 관절 0 으로 이동 (go_home) · rt/lowcmd 직접 송신
   (arm_server 와 동시 사용 금지) · 녹화 형식이 우리 trainer 와 다름
+
+## VR 조작 — 실제 팔 (`xr_real.py`, 잡기 웹 [VR 시작])
+
+xr_teleoperate 입력 + H2 IK (`xr_virtual.py --real`) → 잡기 웹 `/api/xr/cmd` → 안전 검사 → arm_server `/stream` · Dex1.
+xr_teleoperate 의 로봇 제어부 (속도 30 rad/s · 끌 때 0 자세) 는 쓰지 않음. 녹화는 잡기 웹 녹화기 그대로 ([VR 시작]~[VR 끝] = 한 에피소드,
+meta side = 실제로 움직인 손).
+
+```bash
+./start_gripper.sh                                          # 터미널 1: 잡기 웹 (로봇 · 카메라)
+python gripper/xr_viewer.py --table-z <테이블 z>            # 터미널 2 (선택): 가상 뷰어 — 보낸 목표를 같이 그림
+python gripper/xr_virtual.py --xr ~/xr_teleoperate --real   # 터미널 3: Quest 입력 → 잡기 웹 (세션 열릴 때만 보냄)
+adb reverse tcp:8012 tcp:8012                               # Quest: https://localhost:8012/?ws=wss://localhost:8012 → 'Virtual Reality'
+```
+잡기 웹: 테이블 재기 → (수집 켬) → VR 조작 칸 속도 (0.2 / 0.3 / 0.5 rad/s) → [VR 시작] → 조작 → [VR 끝] → 저장 / 버리기.
+
+- Quest 화면: 머리 카메라 + 아래 양쪽 손목 카메라 (잡기 웹 영상), 위에 상태 (ROBOT ON / STOP: R:TABLE …)
+- 그립(중지) 누른 손만 움직임 · 뗀 손은 그 자리, 그리퍼도 그대로 (잡은 것 안 떨어뜨림). 트리거 = 그리퍼 (그립 누른 동안만)
+- 시작 조건: 실기 · 다른 동작 없음 · arm_server hold · 테이블 잼 · 카메라 숙임 · 485 보드 · 앞 에피소드 결정
+- 손별 멈춤: 몸통 (body_clear_m) · 테이블 (잰 평면 + tip_clear_mm, x > xr_view.table_x_min_m) · 다른 팔 (xr_view.arm_gap_m) ·
+  뒤 (xr_view.back_limit_m) · IK 튐 (0.5 rad) → 그 손은 그 명령을 버리고 그 자리
+- 세션 끝: [VR 끝] · [정지] · 입력 1.5 초 없음 · 명령 · 실측 차이 > track_abort_deg · arm_server 거부 → 팔은 마지막 목표에서 멈춤
+- 확인: 가짜 arm_server · 가짜 xr_teleoperate (IK · Quest 입력) · 잡기 웹 --sim 으로 끝까지 (세션 전 송신 0, 데드맨, 그리퍼 유지,
+  테이블 · 몸통 · 뒤 멈춤, 정지 버튼, 입력 끊김, 녹화 meta side). **실기 · 실제 Quest · 실제 H2_ArmIK 로는 아직**
