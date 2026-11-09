@@ -188,6 +188,16 @@ wait_http "http://localhost:50030/" 60 || exit 1
 if [ $VR -eq 1 ]; then
   XR_DIR="${XR_DIR:-$HOME/xr_teleoperate}"
   [ -d "$XR_DIR/teleop" ] || { echo "❌ xr_teleoperate 없음: $XR_DIR (XR_DIR 로 지정)" >&2; exit 1; }
+  # 앞에 띄운 xr_virtual 이 남아 8012 를 잡고 있으면 새 것이 포트를 못 열고 Quest 는 옛 것에 붙음 (입력이 안 옴) → 먼저 정리
+  if pgrep -f "gripper/xr_virtual.py" >/dev/null; then
+    echo "[start] 남아 있는 xr_virtual 끔"; pkill -f "gripper/xr_virtual.py"; sleep 2
+    pgrep -f "gripper/xr_virtual.py" >/dev/null && { pkill -9 -f "gripper/xr_virtual.py"; sleep 1; }
+  fi
+  if curl -sk -m 1 -o /dev/null https://localhost:8012/; then
+    echo "❌ 8012 포트를 다른 프로그램이 쓰는 중 — 그 프로그램을 끄고 다시:" >&2
+    ss -ltnp 2>/dev/null | grep ':8012 ' >&2
+    exit 1
+  fi
   echo "[start] xr_virtual    (Vuer 8012, Quest 입력 → 잡기 웹) ..."
   python -u gripper/xr_virtual.py --xr "$XR_DIR" --real --display pass-through > >(stamp >> "$LOG_DIR/${TAG}xr_virtual_$DAY.log") 2>&1 &
   PIDS+=($!); NAMES+=("xr_virtual")
