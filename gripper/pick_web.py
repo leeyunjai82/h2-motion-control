@@ -705,7 +705,10 @@ class Runner:
         if not ok:
             raise HTTPException(409, msg)
         pc.set_speed(min(self.speed, 2.0))     # 기본 ↔ 준비 자세는 ×2 까지
-        segs, info = pc.plan_pose(self.mdl, q_now, side, which)
+        if which == "ready":            # 손이 테이블 · 통 위면 먼저 위로 듦 (수집: 에피소드 끝 → [준비 자세로])
+            segs, info = pc.plan_ready(self.mdl, q_now, side, self.table_z)
+        else:
+            segs, info = pc.plan_pose(self.mdl, q_now, side, which)
         if segs is None:
             raise HTTPException(409, info)
         if not confirm:

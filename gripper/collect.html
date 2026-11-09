@@ -215,11 +215,11 @@ function render() {
   $("stop").disabled = !x.active;
   const rd = st.ready, ko = { right: "오른팔", left: "왼팔" };
   if (rd) {
-    const allAt = rd.right.at && rd.left.at, okBtn = ["right", "left"].every(s => rd[s].at || rd[s].ok_btn);
+    const allAt = rd.right.at && rd.left.at;
     $("rdy").innerHTML = allAt ? '<span class="ok">✓ 양팔 준비 자세</span>'
       : ["right", "left"].map(s => rd[s].at ? `${ko[s]} <span class="ok">✓</span>` : `${ko[s]} <span class="warn">${rd[s].dist_cm} cm</span>`).join(" · ") +
-        (okBtn ? "" : ' <span class="bad">— 손이 통 · 테이블 쪽: VR 로 준비 자세 근처까지 가져온 뒤</span>');
-    $("rdybtn").disabled = allAt || !okBtn || x.active || st.busy || r.active;
+        "";
+    $("rdybtn").disabled = allAt || x.active || st.busy || r.active;
     if (!x.active && !r.pending && !allAt) $("start").disabled = true;
   } else { $("rdy").innerHTML = '<span class="sub">팔 상태 없음</span>'; $("rdybtn").disabled = true; }
   $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}` : `<span class="sub">${x.msg}</span>`;

@@ -162,15 +162,33 @@ def at_ready(mdl, qm, side):
             np.linalg.norm(pin.log3(READY_R[side] @ T.rotation.T)) < AT_READY_ROT)
 
 
-READY_BTN_NEAR_M = 0.15   # 수집 화면 [준비 자세로]: 손이 준비 자세에서 이만큼 안 이거나 몸 가까이(x < FRONT_X)일 때만 (통 · 테이블 위에서는 안 됨)
+READY_NEAR_M = 0.15       # [준비 자세로]: 준비 자세에서 이만큼 안이거나 몸 가까이 (x < FRONT_X) 면 관절 보간, 아니면 먼저 위로 듦
 
 
 def ready_info(mdl, qm, side):
-    """→ {at: 준비 자세인지, dist_cm, ok_btn: [준비 자세로] 눌러도 되는 위치인지}"""
+    """→ {at: 준비 자세인지, dist_cm}"""
     T = mdl.tcp(qm, side)
     d = float(np.linalg.norm(T.translation - READY_TCP[side]))
-    return {"at": bool(at_ready(mdl, qm, side)), "dist_cm": round(d * 100, 1),
-            "ok_btn": bool(d < READY_BTN_NEAR_M or float(T.translation[0]) < FRONT_X)}
+    return {"at": bool(at_ready(mdl, qm, side)), "dist_cm": round(d * 100, 1)}
+
+
+def plan_ready(mdl, q_now_ctrl, side, floor_z):
+    """그 팔을 준비 자세로 → (구간 목록, 정보) 또는 (None, 이유).
+    손이 준비 자세 근처 · 몸 가까이 → plan_pose (관절 보간, 필요하면 경유 자세).
+    손이 몸 앞 (테이블 · 통 위) → plan_home: 수직으로 위로 (테이블 + 15 cm, 테이블을 안 쟀으면 지금보다 10 cm) → 준비 자세."""
+    qm = mdl.to_model(q_now_ctrl)
+    if at_ready(mdl, qm, side):
+        return None, "이미 준비 자세"
+    T = mdl.tcp(qm, side)
+    d = float(np.linalg.norm(T.translation - READY_TCP[side]))
+    if d < READY_NEAR_M or float(T.translation[0]) < FRONT_X:
+        return plan_pose(mdl, q_now_ctrl, side, "ready")
+    floor = floor_z if floor_z is not None else float(T.translation[2]) - 0.05
+    seq, why = plan_home(mdl, q_now_ctrl, side, floor)
+    if seq is None:
+        return None, f"위로 든 뒤 준비 자세 계획 불가 ({why}) — VR 로 손을 조금 들어 올린 뒤 다시"
+    segs = [sg for _, sg in seq]
+    return segs, {"sec": round(sum(sg.sec for sg in segs), 1), "lift": True}
 
 
 def default_q_ctrl():
