@@ -29,11 +29,12 @@ from importlib import metadata
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTextResponse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("TRAINER_PORT", "50100"))
 DATA = os.environ.get("TRAINER_DATA") or os.path.join(HERE, "data")
+VIEW = os.environ.get("TRAINER_VIEW") == "1"     # 보기 전용 (start_trainer_view.sh): 그래프 · 기록만, 학습 · 업로드 · 지우기 안 됨
 DS_DIR = os.path.join(DATA, "datasets")
 JOB_DIR = os.path.join(DATA, "jobs")
 UP_DIR = os.path.join(DATA, "uploads")
@@ -152,7 +153,8 @@ class Jobs:
                     j["status"], j["error"] = "interrupted", "서버가 학습 중에 꺼짐 (ckpt_last.pt 가 있으면 이어 학습 가능)"
                 self.jobs[j["id"]] = j
                 self._save(j)
-        threading.Thread(target=self._worker, daemon=True).start()
+        if not VIEW:                                    # 보기 전용이면 대기 중인 학습도 시작 안 함
+            threading.Thread(target=self._worker, daemon=True).start()
 
     def _save(self, j):
         d = os.path.join(JOB_DIR, j["id"])
@@ -301,6 +303,13 @@ jobs = Jobs()
 app = FastAPI(title="ACT trainer")
 
 
+@app.middleware("http")
+async def view_only(request: Request, call_next):
+    if VIEW and request.url.path.startswith("/api/") and request.method != "GET":
+        return JSONResponse({"detail": "보기 전용 — 학습하려면 ./trainer/start_trainer_xpu.sh 로 다시 띄우기"}, status_code=403)
+    return await call_next(request)
+
+
 
 @app.get("/", response_class=HTMLResponse)
 def index():
@@ -349,7 +358,7 @@ def api_info():
         gpus = [{"name": f"Intel XPU {xn}", "xpu": True}] if xn else [{"error": f"nvidia-smi: {e}"}]
     du = shutil.disk_usage(DATA)
     v = {"gpus": gpus, "torch": _ver("torch"), "torchvision": _ver("torchvision"), "openvino": _ver("openvino"),
-         "python": sys.version.split()[0], "disk_free_gb": round(du.free / 1e9, 1), "defaults": DEFAULT_TRAIN,
+         "python": sys.version.split()[0], "disk_free_gb": round(du.free / 1e9, 1), "defaults": DEFAULT_TRAIN, "view": VIEW,
          "queue": {"running": sum(j["status"] == "running" for j in jobs.jobs.values()),
                    "queued": sum(j["status"] == "queued" for j in jobs.jobs.values())}}
     _info_cache.update(t=time.time(), v=v)
@@ -452,5 +461,5 @@ def api_job_zip(jid: str):
 
 
 if __name__ == "__main__":
-    log(f"시작 — http://0.0.0.0:{PORT}/   데이터 {DATA}")
+    log(f"시작 — http://0.0.0.0:{PORT}/   데이터 {DATA}" + ("   [보기 전용 — 학습 안 함]" if VIEW else ""))
     uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")

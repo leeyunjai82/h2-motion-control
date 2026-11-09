@@ -6,6 +6,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>pitron trainer</title>
 <style>
+body.view .edit{display:none!important}
 :root{
   --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
   --ink:#c9d4e0; --dim:#6b7785;
@@ -108,10 +109,10 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
     <div class="card">
       <div class="card-h">Datasets <span class="tag" id="ds-tag">-</span></div>
       <div class="card-b">
-        <div class="row"><input class="in grow" type="file" id="ds-file" accept=".zip">
+        <div class="row edit"><input class="in grow" type="file" id="ds-file" accept=".zip">
           <button class="btn sm" onclick="uploadDs()">업로드</button></div>
         <div class="prog" id="up-prog" style="display:none"><b id="up-bar"></b></div>
-        <div class="hint" id="up-text">로봇 웹(:50030) Episodes 의 <b>데이터셋 zip</b> 을 그대로 올리세요.</div>
+        <div class="hint edit" id="up-text">로봇 웹(:50030) Episodes 의 <b>데이터셋 zip</b> 을 그대로 올리세요.</div>
         <div style="max-height:300px;overflow-y:auto;margin-top:8px"><table class="tbl" id="ds-tbl"></table></div>
       </div>
     </div>
@@ -125,7 +126,7 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
   </div>
 
   <div class="col">
-    <div class="card">
+    <div class="card edit">
       <div class="card-h">New Training · 학습 <span class="tag" id="sel-ds">데이터셋 선택</span></div>
       <div class="card-b">
         <div class="fld" style="margin-top:0">
@@ -148,7 +149,7 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
           <label class="sw"><input type="checkbox" id="t-augment"><span class="tr"></span><span>증강 (이동 ±2 %·밝기)</span></label>
           <label class="sw"><input type="checkbox" id="t-amp"><span class="tr"></span><span>bf16 AMP</span></label>
         </div>
-        <button class="btn primary" style="width:100%;margin-top:12px;padding:10px" onclick="addJob()">▶ 학습 큐에 넣기</button>
+        <button class="btn primary edit" style="width:100%;margin-top:12px;padding:10px" onclick="addJob()">▶ 학습 큐에 넣기</button>
         <div class="hint">기본값 = LeRobot ACT 기본 (lr 1e-5, batch 8, chunk 100, KL 10, 디코더 1 층). chunk 100 = 30 Hz 에서 3.3 초.
           끝나면 자동으로 OpenVINO IR 변환 → <b>model zip</b>.</div>
       </div>
@@ -165,8 +166,8 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
       <div class="card-b">
         <div class="row">
           <button class="btn primary grow" id="jd-dl" onclick="dlZip()">⬇ model zip (로봇으로)</button>
-          <button class="btn sm" id="jd-finish" onclick="jobAct('finish')" title="지금까지 학습한 것으로 변환·마무리">지금 마치기</button>
-          <button class="btn warn sm" id="jd-cancel" onclick="jobAct('cancel')">취소</button>
+          <button class="btn sm edit" id="jd-finish" onclick="jobAct('finish')" title="지금까지 학습한 것으로 변환·마무리">지금 마치기</button>
+          <button class="btn warn sm edit" id="jd-cancel" onclick="jobAct('cancel')">취소</button>
         </div>
         <div class="prog"><b id="jd-bar"></b></div>
         <div class="metrics">
@@ -207,11 +208,13 @@ const hms = s => s == null ? '-' : (s >= 3600 ? `${Math.floor(s/3600)}h${String(
 
 async function loadInfo(){
   const d = await api('GET', '/api/info'); if(!d) return;
+  document.body.classList.toggle('view', !!d.view);
+  if(d.view) chip('chip-q', '보기 전용', '학습 안 함', 'info');
   const g = (d.gpus || [])[0] || {};
   if(g.error) chip('chip-gpu', 'GPU', '없음', 'err');
   else if(g.xpu) chip('chip-gpu', 'GPU', g.name, 'ok');
   else chip('chip-gpu', 'GPU', `${g.name.replace('NVIDIA ','').replace('GeForce ','')} · ${(g.mem_used/1024).toFixed(1)}/${(g.mem_total/1024).toFixed(0)} GB · ${g.util}% · ${g.temp}°C`, g.util > 50 ? 'busy' : 'ok');
-  chip('chip-q', 'Queue', `${d.queue.running} 실행 · ${d.queue.queued} 대기`, d.queue.running ? 'busy' : 'ok');
+  if(!d.view) chip('chip-q', 'Queue', `${d.queue.running} 실행 · ${d.queue.queued} 대기`, d.queue.running ? 'busy' : 'ok');
   chip('chip-ver', 'torch', `${d.torch || '없음'} · ov ${d.openvino || '없음'}`, d.torch && d.openvino ? 'info' : 'err');
   chip('chip-disk', 'Disk', `${d.disk_free_gb} GB`, d.disk_free_gb < 20 ? 'err' : 'ok');
   const rows = [['GPU', g.error ? esc(g.error) : esc(g.name)], ['드라이버', g.driver || '-'],
@@ -234,7 +237,7 @@ async function loadDs(){
   $('ds-tbl').innerHTML = '<tr><th>데이터셋</th><th class="num">성공/전체</th><th class="num">분</th><th class="num">MB</th><th>이미지</th><th></th></tr>' +
     d.map(x => `<tr class="${x.name === selDs ? 'cur' : ''}" onclick="pickDs('${x.name}')"><td>${esc(x.name)}</td>
       <td class="num">${x.ok}/${x.episodes}</td><td class="num">${x.minutes}</td><td class="num">${x.size_mb}</td>
-      <td>${x.image ? (x.image.cams ? '그리퍼 ' + x.image.cams.length + '캠' : x.image.w + '×' + x.image.h) : '-'}</td><td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
+      <td>${x.image ? (x.image.cams ? '그리퍼 ' + x.image.cams.length + '캠' : x.image.w + '×' + x.image.h) : '-'}</td><td class="x edit" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
   $('sel-ds').textContent = selDs || '데이터셋 선택';
 }
 function pickDs(n){ selDs = n; loadDs(); }
@@ -276,7 +279,7 @@ async function loadJobs(){
       <td><span class="st ${j.status}">${j.status}</span></td>
       <td class="num">${j.status === 'running' ? Math.round(j.step / j.total * 100) + '%' : (j.step ? j.step : '-')}</td>
       <td class="num">${j.val_err_deg != null ? (+j.val_err_deg).toFixed(2) : '-'}</td>
-      <td class="x" onclick="event.stopPropagation();delJob('${j.id}')">✕</td></tr>`).join('');
+      <td class="x edit" onclick="event.stopPropagation();delJob('${j.id}')">✕</td></tr>`).join('');
 }
 function pickJob(id){ selJob = id; loadJobs(); loadJob(); }
 async function delJob(id){ if(!confirm(`작업 ${id} 와 결과 파일 삭제?`)) return; if(await api('DELETE', `/api/jobs/${id}`)){ if(selJob === id) selJob = ''; loadJobs(); } }
