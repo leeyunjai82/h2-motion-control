@@ -112,5 +112,7 @@ trainer/data/
 gripper/data/
 gripper/models/
 
-# 사용자 어댑터 CAD (공개 저장소에 안 올림)
-gripper/adapter/*.stl
+
+# VR HTTPS 자체 서명 인증서
+gripper/adapter/*.crt
+gripper/adapter/*.key

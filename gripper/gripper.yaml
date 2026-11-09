@@ -122,7 +122,7 @@ vr:
     wrist_face_m: 0.0577      # 손목 프레임 앞면 (손목 기준 x) — H2 손목 메시에 붙은 기본 손은 여기서 앞쪽을 안 그림
     adapter_m: [0.0437, 0.0617, 0.039]   # 손목 기준 x 시작 · 끝 · 지름 (앞 4 mm 만 손목 밖 — tcp_offset 주석) — 어댑터 STL 이 없을 때 원통으로 그림
     adapter_stl:              # 사용자 어댑터 STL (2026-11-05 받은 파일, mm, 42 × 57 × 두께 18 — 두께 방향 = 원본 z)
-      path: adapter/adapter.stl   # gripper/adapter/ — git 에 안 올림 (.gitignore). 원본 파일을 이 이름으로 복사
+      path: adapter/adapter.stl   # gripper/adapter/adapter.stl (사용자 설계, 저장소에 포함 — 2026-11-09 사용자 요청)
       scale: 0.001                # mm → m
       origin_mm: [-45.004, 73.478, 1.0]    # 원본에서 42 × 57 판 쪽 면 가운데 — 손목 앞 at_m 에 놓임 (사용자 2026-11-08: 판 쪽이 손목, Ø39 쪽이 Dex1)
       at_m: [0.0437, 0.0, 0.0]             # 손목 wrist_yaw 기준 그 점 위치 = 손목 앞면 57.7 + 보이는 4 − 18
