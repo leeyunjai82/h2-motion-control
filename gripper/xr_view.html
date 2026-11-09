@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>H2 가상 뷰어</title>
+<style>
+  body { font-family: sans-serif; margin: 0; background: #f4f4f4; color: #222; }
+  #wrap { display: flex; flex-wrap: wrap; }
+  #view { flex: 1 1 640px; min-width: 320px; height: 70vh; position: relative; }
+  #view canvas { display: block; width: 100%; height: 100%; }
+  #hud { position: absolute; left: 8px; top: 8px; background: #fffd; padding: 6px 10px; border-radius: 6px; font-size: 14px; line-height: 1.5; }
+  #side { flex: 0 1 380px; padding: 10px 14px; }
+  .ok { color: #1a8a2a; } .warn { color: #b77800; } .stop { color: #c62828; } .idle { color: #777; }
+  fieldset { border: 1px solid #ccc; border-radius: 6px; margin: 8px 0; }
+  label.s { display: grid; grid-template-columns: 70px 1fr 56px; align-items: center; gap: 6px; font-size: 13px; }
+  input[type=range] { width: 100%; }
+  button { font-size: 14px; padding: 4px 10px; margin: 2px; }
+  .note { font-size: 12px; color: #666; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="view"><div id="hud">불러오는 중…</div></div>
+  <div id="side">
+    <b>가상 H2 — xr_teleoperate 입력</b> <span class="note">(로봇 명령 없음)</span>
+    <div id="hands" class="note"></div>
+    <p><button onclick="fetch('/api/reset',{method:'POST'})">가상 팔 시작 자세로</button></p>
+    <p class="note">입력: <code>python gripper/xr_virtual.py</code> (Quest → xr_teleoperate H2 IK → 여기).<br>
+      마우스: 끌기 = 돌리기 · 휠 = 확대. 회색 상자 = 몸통, 빨간 면 = 몸통 최소 거리, 갈색 = 테이블,
+      Dex1-1 = Unitree 공식 메시, 손 상자 선 = 안전 검사용 그리퍼 범위 (빨강 = 실제였으면 멈춤).</p>
+  </div>
+</div>
+</div>
+<script src="/vendor/three.min.js"></script>
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const NAME = { right: "오른손", left: "왼손" };
+const LCOL = { ok: 0x2e9e44, warn: 0xe0a800, stop: 0xd32f2f, idle: 0x888888 };
+
+// ---------- 장면 ----------
+const view = $("view");
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(window.devicePixelRatio);
+view.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf7f7f7);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.01, 20);
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dl = new THREE.DirectionalLight(0xffffff, 0.7); dl.position.set(2, 3, 2); scene.add(dl);
+const root = new THREE.Group(); root.rotation.x = -Math.PI / 2; scene.add(root);   // 로봇 z 위 → three y 위
+root.add(new THREE.AxesHelper(0.2));
+
+function resize() {
+  const w = view.clientWidth, h = view.clientHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+window.addEventListener("resize", resize);
+
+// 궤도 카메라 (로봇 좌표 기준)
+const orbit = { az: -0.6, el: 0.45, r: 2.0, tgt: [0.3, 0, 0.1] };
+function placeCam() {
+  const { az, el, r, tgt } = orbit;
+  const x = tgt[0] + r * Math.cos(el) * Math.cos(az), y = tgt[1] + r * Math.cos(el) * Math.sin(az), z = tgt[2] + r * Math.sin(el);
+  camera.position.set(x, z, -y); camera.lookAt(tgt[0], tgt[2], -tgt[1]);
+}
+let drag = null;
+renderer.domElement.addEventListener("pointerdown", e => { drag = [e.clientX, e.clientY]; });
+window.addEventListener("pointerup", () => { drag = null; });
+window.addEventListener("pointermove", e => {
+  if (!drag) return;
+  orbit.az -= (e.clientX - drag[0]) * 0.01;
+  orbit.el = Math.max(-1.4, Math.min(1.4, orbit.el + (e.clientY - drag[1]) * 0.01));
+  drag = [e.clientX, e.clientY];
+});
+renderer.domElement.addEventListener("wheel", e => { e.preventDefault(); orbit.r = Math.max(0.4, Math.min(6, orbit.r * (e.deltaY > 0 ? 1.1 : 0.9))); }, { passive: false });
+
+function parseSTL(buf, cutX) {   // cutX: 메시 x 가 이보다 큰 삼각형은 버림 (H2 손목 메시의 기본 손)
+  const dv = new DataView(buf);
+  const n = dv.getUint32(80, true);
+  const geo = new THREE.BufferGeometry();
+  if (84 + n * 50 === buf.byteLength) {
+    const pos = new Float32Array(n * 9);
+    let m = 0;
+    for (let i = 0; i < n; i++) {
+      const o = 84 + i * 50 + 12;
+      if (cutX != null && Math.max(dv.getFloat32(o, true), dv.getFloat32(o + 12, true), dv.getFloat32(o + 24, true)) > cutX) continue;
+      for (let k = 0; k < 9; k++) pos[m * 9 + k] = dv.getFloat32(o + k * 4, true);
+      m++;
+    }
+    geo.setAttribute("position", new THREE.BufferAttribute(pos.subarray(0, m * 9), 3));
+  } else {   // ASCII
+    const txt = new TextDecoder().decode(buf), v = [];
+    const re = /vertex\s+([-\d.eE+]+)\s+([-\d.eE+]+)\s+([-\d.eE+]+)/g; let m;
+    while ((m = re.exec(txt))) v.push(+m[1], +m[2], +m[3]);
+    geo.setAttribute("position", new THREE.BufferAttribute(new Float32Array(v), 3));
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+const linkGroups = {}, hands = {};
+let info = null;
+async function load() {
+  info = await (await fetch("/api/view/info")).json();
+  const geos = {};
+  let done = 0;
+  for (const v of info.visuals) {
+    const gk = v.mesh + "|" + (v.cut_x ?? "");
+    if (!geos[gk]) geos[gk] = parseSTL(await (await fetch("/api/mesh/" + encodeURIComponent(v.mesh))).arrayBuffer(), v.cut_x);
+    let g = linkGroups[v.link];
+    if (!g) { g = new THREE.Group(); g.matrixAutoUpdate = false; root.add(g); linkGroups[v.link] = g; }
+    const col = new THREE.Color(v.rgba[0], v.rgba[1], v.rgba[2]);
+    const m = new THREE.Mesh(geos[gk], new THREE.MeshLambertMaterial({ color: col }));
+    m.matrixAutoUpdate = false;
+    const o = new THREE.Matrix4().fromArray(v.origin);
+    o.multiply(new THREE.Matrix4().makeScale(v.scale[0], v.scale[1], v.scale[2]));
+    m.matrix.copy(o);
+    g.add(m);
+    $("hud").textContent = `메시 ${++done} / ${info.visuals.length}`;
+  }
+  // 몸통 (앞면까지) + 최소 거리 선
+  const b = info.body;
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(b.front_x + 0.15, 2 * b.half_y, 0.7 - b.z_min),
+    new THREE.MeshBasicMaterial({ color: 0x888888, transparent: true, opacity: 0.18, depthWrite: false }));
+  torso.position.set((b.front_x - 0.15) / 2, 0, (0.7 + b.z_min) / 2); root.add(torso);
+  const cl = new THREE.Mesh(new THREE.PlaneGeometry(0.7 - b.z_min, 2 * b.half_y),
+    new THREE.MeshBasicMaterial({ color: 0xd32f2f, transparent: true, opacity: 0.12, side: THREE.DoubleSide, depthWrite: false }));
+  cl.rotation.y = Math.PI / 2; cl.position.set(b.front_x + b.clear, 0, (0.7 + b.z_min) / 2); root.add(cl);
+  // 테이블
+  const tb = new THREE.Mesh(new THREE.PlaneGeometry(0.85, 1.6),
+    new THREE.MeshBasicMaterial({ color: 0x8d6e63, transparent: true, opacity: 0.25, side: THREE.DoubleSide, depthWrite: false }));
+  tb.position.set(0.15 + 0.425, 0, info.table_z); root.add(tb);
+  // 손: Dex1-1 (Unitree URDF 메시, 손목에 장착) + 어댑터 원통 + 그리퍼 겉 범위 (안전 검사용, 선 = 상태 색) + 목표 원
+  const e = info.envelope, dx = info.dex1;
+  const dexGeo = {};
+  if (dx) for (const k of [dx.base.mesh, ...dx.fingers.map(f => f.mesh), ...(dx.adapter_mesh ? [dx.adapter_mesh] : [])])
+    if (!dexGeo[k]) dexGeo[k] = parseSTL(await (await fetch("/api/mesh/" + encodeURIComponent(k))).arrayBuffer());
+  const lam = rgba => new THREE.MeshLambertMaterial({ color: new THREE.Color(rgba[0], rgba[1], rgba[2]) });
+  for (const s of ["right", "left"]) {
+    const g = new THREE.Group(); g.matrixAutoUpdate = false; root.add(g);
+    const bg = new THREE.BoxGeometry(e.max[0] - e.min[0], e.max[1] - e.min[1], e.max[2] - e.min[2]);
+    const box = new THREE.LineSegments(new THREE.EdgesGeometry(bg), new THREE.LineBasicMaterial({ color: LCOL.idle }));
+    const fill = new THREE.Mesh(bg, new THREE.MeshBasicMaterial({ color: LCOL.idle, transparent: true, opacity: dx ? 0.12 : 0.5, depthWrite: false }));
+    for (const o of [box, fill]) o.position.set((e.max[0] + e.min[0]) / 2, (e.max[1] + e.min[1]) / 2, (e.max[2] + e.min[2]) / 2);
+    g.add(box); g.add(fill); g.add(new THREE.AxesHelper(0.04));
+    const tgt = new THREE.Mesh(new THREE.SphereGeometry(0.012, 16, 12), new THREE.MeshBasicMaterial({ color: 0x2e7d32 }));
+    tgt.visible = false; root.add(tgt);
+    let dex = null;
+    if (dx) {
+      const wg = new THREE.Group(); wg.matrixAutoUpdate = false; root.add(wg);          // 손목 (wrist_yaw_link)
+      if (dx.adapter_mesh) {                 // 사용자 어댑터 STL (서버가 손목 기준 m 로 바꿔 줌)
+        wg.add(new THREE.Mesh(dexGeo[dx.adapter_mesh], lam([0.30, 0.30, 0.33])));
+      } else {                               // 파일 없으면 원통 (어림)
+        const a = dx.adapter;
+        const cyl = new THREE.Mesh(new THREE.CylinderGeometry(a[2] / 2, a[2] / 2, a[1] - a[0], 24), lam([0.35, 0.35, 0.38]));
+        cyl.rotation.z = -Math.PI / 2; cyl.position.x = (a[0] + a[1]) / 2; wg.add(cyl);
+      }
+      const dg = new THREE.Group(); dg.matrixAutoUpdate = false; dg.matrix.fromArray(dx.mount); wg.add(dg);
+      dg.add(new THREE.Mesh(dexGeo[dx.base.mesh], lam(dx.base.rgba)));
+      const fingers = dx.fingers.map(f => { const m = new THREE.Mesh(dexGeo[f.mesh], lam(f.rgba)); dg.add(m); return m; });
+      dex = { wg, fingers };
+    }
+    hands[s] = { g, box, fill, tgt, dex };
+  }
+  resize();
+  poll();
+}
+
+async function poll() {
+  try {
+    const p = await (await fetch("/api/view/poses")).json();
+    for (const [n, m] of Object.entries(p.links)) if (linkGroups[n]) linkGroups[n].matrix.fromArray(m);
+    let hud = "";
+    for (const s of ["right", "left"]) {
+      const h = p.hands[s], o = hands[s];
+      o.g.matrix.fromArray(h.tcp);
+      o.box.material.color.setHex(LCOL[h.level] || LCOL.idle);
+      o.fill.material.color.setHex(LCOL[h.level] || LCOL.idle);
+      if (o.dex && p.links[`${s}_wrist_yaw_link`]) {
+        o.dex.wg.matrix.fromArray(p.links[`${s}_wrist_yaw_link`]);
+        info.dex1.fingers.forEach((f, i) => {
+          const d = f.upper * h.open;
+          o.dex.fingers[i].position.set(f.xyz[0] + f.axis[0] * d, f.xyz[1] + f.axis[1] * d, f.xyz[2] + f.axis[2] * d);
+        });
+      }
+      o.tgt.visible = !!h.target;
+      if (h.target) { o.tgt.position.set(...h.target); o.tgt.material.color.setHex(h.level === "stop" ? 0xd32f2f : 0x2e7d32); }
+      hud += `<div><b>${NAME[s]}</b> <span class="${h.level}">${h.state}</span> <span class="note">${h.reason || ""}</span></div>`;
+    }
+    $("hud").innerHTML = hud;
+    $("hands").innerHTML = hud;
+  } catch (e) { $("hud").innerHTML = '<span class="stop">서버 응답 없음</span>'; }
+  setTimeout(poll, 50);
+}
+
+function loop() { requestAnimationFrame(loop); placeCam(); renderer.render(scene, camera); }
+loop();
+load().catch(e => { $("hud").textContent = "불러오기 실패: " + e; });
+
+</script>
+</body>
+</html>

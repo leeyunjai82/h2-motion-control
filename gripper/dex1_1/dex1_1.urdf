@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- This URDF was automatically created by SolidWorks to URDF Exporter! Originally created by Stephen Brawner (brawner@gmail.com) 
+     Commit Version: 1.6.0-4-g7f85cfe  Build Version: 1.6.7995.38578
+     For more information, please see http://wiki.ros.org/sw_urdf_exporter -->
+<robot name="Dex1-1">
+  <link name="Dex1_base_link">
+    <inertial>
+      <origin xyz="0.038124 -5.1021E-05 7.257E-05" rpy="0 0 0"/>
+      <mass value="0.3649"/>
+      <inertia ixx="0.00013059" ixy="6.8208E-08" ixz="-8.5905E-08" iyy="9.1848E-05" iyz="-5.2808E-07" izz="7.1401E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Dex1_base_link.STL"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.79216 0.81961 0.93333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Dex1_base_link.STL"/>
+      </geometry>
+    </collision>
+  </link>
+  <link name="Dex1_finger_link_1">
+    <inertial>
+      <origin xyz="0.010081 -0.013559 -0.00195" rpy="0 0 0"/>
+      <mass value="0.092189"/>
+      <inertia ixx="2.5828E-05" ixy="-5.9643E-07" ixz="7.4348E-07" iyy="1.5329E-05" iyz="-7.9102E-08" izz="3.671E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Dex1_finger_link_1.STL"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.41176 0.41176 0.41176 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Dex1_finger_link_1.STL"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="Dex1_finger_joint_1" type="prismatic">
+    <origin xyz="0.0633 0.024916 0.010658" rpy="0 0 0"/>
+    <parent link="Dex1_base_link"/>
+    <child link="Dex1_finger_link_1"/>
+    <axis xyz="0 -1 0"/>
+    <limit lower="0" upper="0.041" effort="0" velocity="0"/>
+  </joint>
+  <link name="Dex1_finger_link_2">
+    <inertial>
+      <origin xyz="0.010081 0.013559 0.00195" rpy="0 0 0"/>
+      <mass value="0.092189"/>
+      <inertia ixx="2.5828E-05" ixy="5.9643E-07" ixz="-7.4348E-07" iyy="1.5329E-05" iyz="-7.9102E-08" izz="3.671E-05"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Dex1_finger_link_2.STL"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.89804 0.91765 0.92941 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Dex1_finger_link_2.STL"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="Dex1_finger_joint_2" type="prismatic">
+    <origin xyz="0.0633 -0.024916 -0.010658" rpy="0 0 0"/>
+    <parent link="Dex1_base_link"/>
+    <child link="Dex1_finger_link_2"/>
+    <axis xyz="0 1 0"/>
+    <limit lower="0" upper="0.041" effort="0" velocity="0"/>
+  </joint>
+  <link name="Camera">
+    <inertial>
+      <origin xyz="-0.015578 -0.0064842 -5.8235E-05" rpy="0 0 0"/>
+      <mass value="0.021494"/>
+      <inertia ixx="6.1432E-06" ixy="1.4654E-07" ixz="-2.1999E-08" iyy="3.395E-06" iyz="-2.18E-08" izz="4.1823E-06"/>
+    </inertial>
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Camera.STL"/>
+      </geometry>
+      <material name="">
+        <color rgba="0.792156862745098 0.819607843137255 0.933333333333333 1"/>
+      </material>
+    </visual>
+    <collision>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <mesh filename="meshes/Camera.STL"/>
+      </geometry>
+    </collision>
+  </link>
+  <joint name="Camera" type="fixed">
+    <origin xyz="0.068743 0 0.047476" rpy="1.5708 0.5236 0"/>
+    <parent link="Dex1_base_link"/>
+    <child link="Camera"/>
+    <axis xyz="0 0 0"/>
+  </joint>
+</robot>
