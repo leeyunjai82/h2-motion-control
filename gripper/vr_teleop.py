@@ -378,7 +378,7 @@ class View:
         if self.dex1:       # H2 URDF 의 wrist_yaw 메시에는 기본 다섯 손가락 손이 붙어 있음 — 어댑터 시작보다 앞쪽 삼각형은 안 그림
             for v in self.visuals:
                 if v["link"].endswith("_wrist_yaw_link"):
-                    v["cut_x"] = self.dex1["adapter"][0]
+                    v["cut_x"] = self.dex1["wrist_face"]
 
     def _dex1(self):
         """Dex1-1 (Unitree 공식 URDF) — 몸체 + 손가락 2 (직선 관절). 손목 wrist_yaw 기준 장착 자세. 없으면 None (상자만 그림)."""
@@ -419,7 +419,7 @@ class View:
         Tm[:3, :3] = pin.rpy.rpyToMatrix(*[math.radians(float(v)) for v in dv["mount_rpy_deg"]])
         Tm[0, 3] = float(pc.TCP_OFF[0]) - float(dv["origin_to_tcp_m"])
         out = {"base": links[base], "fingers": fingers, "mount": Tm.T.flatten().round(6).tolist(),
-               "adapter": [float(v) for v in dv["adapter_m"]], "adapter_mesh": None}
+               "adapter": [float(v) for v in dv["adapter_m"]], "adapter_mesh": None, "wrist_face": float(dv["wrist_face_m"])}
         stl = self._adapter_stl(dv.get("adapter_stl"))
         if stl is not None:
             self.mesh_bytes["adapter"] = stl
