@@ -15,7 +15,7 @@ xr_virtual.py — Unitree xr_teleoperate (Quest 입력 + H2 IK) → 가상 뷰�
       openssl req -x509 -nodes -days 3650 -newkey rsa:2048 -keyout key.pem -out cert.pem -subj "/CN=localhost"
 
   Quest (USB): adb reverse tcp:8012 tcp:8012 → https://localhost:8012/?ws=wss://localhost:8012 → 'Virtual Reality' (immersive)
-  조작: 컨트롤러 그립(중지)을 누른 순간의 손 자리를 기준으로, 거기서 움직인 만큼 (위치 · 회전 1:1) 로봇 손이 움직임 (상대 매핑 — 로봇 자세에 손을 맞출 필요 없음).
+  조작: 위치 = 그립(중지)을 누른 순간의 손 자리를 기준으로 움직인 만큼 (1:1, 로봇 자세에 손을 맞출 필요 없음) · 방향 = 컨트롤러 방향 그대로.
         그립(중지)을 누른 손만 팔이 따라감 · 트리거 = 그리퍼 (당기면 닫힘 · 놓으면 벌림). Quest 화면 = 머리 카메라 + 손목 카메라 두 개 (잡기 웹 영상)
 """
 import argparse
@@ -231,8 +231,10 @@ def main():
                    "right": arm_ik.reduced_robot.data.oMf[arm_ik.R_hand_id].homogeneous.copy()}
             press = {"left": a.no_deadman or float(d.left_ctrl_squeezeValue) > 0.5,
                      "right": a.no_deadman or float(d.right_ctrl_squeezeValue) > 0.5}
-            # 상대 매핑: 그립을 누른 순간의 사람 손 ↔ 로봇 손을 기준으로, 그 뒤 사람 손이 움직인 만큼 (위치 · 회전 1:1) 만 로봇 손이 움직임
-            #   → 사람은 편한 자리에서 그립을 누르면 됨 (로봇 자세에 손을 맞출 필요 없음). 그립을 놓았다 다시 누르면 기준을 새로 잡음
+            # 위치 = 상대: 그립을 누른 순간의 사람 손 ↔ 로봇 손 위치를 기준으로, 그 뒤 사람 손이 움직인 만큼 (1:1) 만 움직임
+            #   → 사람은 편한 자리에서 그립을 누르면 됨. 그립을 놓았다 다시 누르면 위치 기준만 새로 잡음
+            # 방향 = 절대: 그리퍼 방향 = 사람 손 (컨트롤러) 방향 그대로 (xr_teleoperate 와 같음) — 다시 눌러도 틀어짐이 쌓이지 않음.
+            #   누른 순간 방향이 다르면 관절 속도 제한 (max_vel) 으로 천천히 사람 손 방향으로 돎
             human = {"left": np.asarray(d.left_wrist_pose, dtype=float), "right": np.asarray(d.right_wrist_pose, dtype=float)}
             tgt = {}
             for sd in ("left", "right"):
@@ -244,7 +246,7 @@ def main():
                     anchor[sd] = (human[sd].copy(), now[sd].copy())
                 h0, r0 = anchor[sd]
                 t = np.eye(4)
-                t[:3, :3] = human[sd][:3, :3] @ h0[:3, :3].T @ r0[:3, :3]
+                t[:3, :3] = human[sd][:3, :3]
                 t[:3, 3] = r0[:3, 3] + (human[sd][:3, 3] - h0[:3, 3])
                 tgt[sd] = t
             q_cmd = q_last
