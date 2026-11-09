@@ -113,6 +113,3 @@ gripper/data/
 gripper/models/
 
 
-# VR HTTPS 자체 서명 인증서
-gripper/adapter/*.crt
-gripper/adapter/*.key

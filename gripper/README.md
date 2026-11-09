@@ -73,25 +73,3 @@ gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side
 카메라만 확인 (로봇 꺼짐 · 충전 중): `source activate_tv.sh && python gripper/pick_web.py --cam-only` → D435i · 손목 카메라 화면만.
 
 로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
-
-## xr_teleoperate 가상 실행 — `xr_virtual.py` + `xr_viewer.py` (로봇 명령 없음)
-
-Unitree xr_teleoperate 의 Quest 입력 처리 (televuer) 와 H2 IK (`H2_ArmIK`) 를 그대로 쓰고, 로봇 대신 가상 H2 3D 뷰어로 보냄.
-xr_teleoperate H2 URDF 와 이 저장소 URDF 는 팔 관절 이름 · 원점 · 한계가 같음 (2026-11-09 비교).
-
-준비 (한 번): `git clone --recurse-submodules https://github.com/unitreerobotics/xr_teleoperate ~/xr_teleoperate`,
-`cd ~/xr_teleoperate/teleop/televuer && pip install -e .`, `pip install 'vuer[all]==0.0.60' "params-proto>=2.13,<3"`
-(params-proto 3.x 는 vuer 0.0.60 과 안 맞음), 인증서 `~/.config/xr_teleoperate/{cert,key}.pem`.
-
-```bash
-python gripper/xr_viewer.py --table-z -1.0                  # 터미널 1: 뷰어 http://localhost:50040/
-python gripper/xr_virtual.py --xr ~/xr_teleoperate          # 터미널 2: Vuer :8012 + H2 IK → 뷰어
-adb reverse tcp:8012 tcp:8012                               # Quest USB
-adb shell am start -a android.intent.action.VIEW -d "https://localhost:8012/?ws=wss://localhost:8012" com.oculus.browser
-```
-- 조작은 xr_teleoperate 와 같음 (헤드셋을 머리에 쓰고 컨트롤러 쥔 손 = 로봇 손, 머리 기준 절대 위치 · 배율 없음, 트리거 = 그리퍼)
-- 뷰어: H2 URDF + Unitree Dex1-1 메시 (`dex1_1/`, BSD-3) + 사용자 어댑터 STL (`adapter/adapter.stl`) — 손목 앞면 57.7 mm 부터 기본 손 잘라 냄,
-  어댑터 4 mm 만 손목 밖, Dex1 원점 = tcp_offset 0.1844 − 0.123
-- 우리 안전 검사 (몸통 · 테이블 · 다른 팔 · 뒤 한계, gripper.yaml `xr_view`) 를 "실제였으면 멈춤" 으로 표시만 함 — xr_teleoperate 에는 이 검사가 없음
-- xr_teleoperate 를 실제 로봇에 쓸 때 주의 (소스 확인): H2 관절 속도 제한 기본 30 rad/s · 종료 시 팔 관절 0 으로 이동 (go_home) · rt/lowcmd 직접 송신
-  (arm_server 와 동시 사용 금지) · 녹화 형식이 우리 trainer 와 다름
