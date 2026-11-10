@@ -43,7 +43,7 @@ DEFAULT_TRAIN = {
     "dim_feedforward": 3200, "n_heads": 8, "n_encoder_layers": 4, "augment": True, "val_frac": 0.1,
     "seed": 1, "num_workers": 8, "amp": True, "device": "auto", "eval_every": 2000, "ckpt_every": 5000, "log_every": 50,
     "pretrained_backbone": True, "only_ok": True,
-    "side": "right",          # 그리퍼 데이터셋만: 학습할 손 left / right (그 손 7 관절 + 그리퍼 = 8) 또는 both (16)
+    "side": "both",           # 그리퍼 데이터셋만: 학습할 손 both (양손 16 — 기본, 오른손 · 왼손 에피소드를 모델 하나로) · left · right (그 손 8)
 }
 _finish_now = False
 
@@ -317,12 +317,22 @@ def main():
                  "end_pose": end_pose,
                  "config": cfg.to_dict(), "train": tc, "torch": torch.__version__, "device": dev_name}
 
-    def save(final_loss, val):
-        tmp = ckpt_path + ".tmp"
+    best_path = os.path.join(a.out, "ckpt_best.pt")      # 검증 L1 이 가장 낮았던 시점 — 끝나면 이걸로 model zip (없으면 마지막)
+    best = {"val": float("inf"), "step": None}
+
+    def save(final_loss, val, path=None):
+        path = path or ckpt_path
+        tmp = path + ".tmp"
         meta = dict(base_meta, steps=step, final_loss=final_loss, val_l1=val[0], val_err_deg=val[1])
         torch.save({"model": model.state_dict(), "opt": opt.state_dict(), "config": cfg.to_dict(),
                     "stats": stats, "step": step, "meta": meta}, tmp)
-        os.replace(tmp, ckpt_path)
+        os.replace(tmp, path)
+
+    def keep_best(val):
+        if val[0] is not None and val[0] < best["val"]:
+            best.update(val=val[0], step=step)
+            save(last_loss, val, best_path)
+            log(f"가장 좋은 검증 L1 {val[0]:.4f} (step {step}) — 저장")
 
     total = int(tc["steps"])
     emit(phase="train", step=step, total=total, msg="학습 시작")
@@ -363,14 +373,21 @@ def main():
         if vloader is not None and (step % int(tc["eval_every"]) == 0 or step == total):
             val = evaluate(model, vloader, a_std, dev)
             emit(phase="train", step=step, total=total, val_l1=round(val[0], 5), val_err_deg=round(val[1], 3))
+            keep_best(val)
         if step % int(tc["ckpt_every"]) == 0:
             save(last_loss, val)
     if vloader is not None and val[0] is None:
         val = evaluate(model, vloader, a_std, dev)
+        keep_best(val)
     save(last_loss, val)
     log(f"학습 끝 step {step}, loss {last_loss:.4f}, val L1 {val[0]}, val 오차 {val[1]}°")
     del loader, vloader
-    export(a.out, ckpt_path)
+    use = best_path if (best["step"] is not None and os.path.isfile(best_path)) else ckpt_path
+    if use == best_path:
+        log(f"model zip = 검증 L1 이 가장 낮았던 step {best['step']} (L1 {best['val']:.4f})"
+            + ("" if best["step"] == step else f" — 마지막 step {step} 보다 좋았음"))
+        emit(phase="train", step=step, total=total, msg=f"가장 좋은 step {best['step']} 로 변환")
+    export(a.out, use)
 
 
 if __name__ == "__main__":
