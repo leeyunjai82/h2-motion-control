@@ -185,10 +185,31 @@ def plan_ready(mdl, q_now_ctrl, side, floor_z):
         return plan_pose(mdl, q_now_ctrl, side, "ready")
     floor = floor_z if floor_z is not None else float(T.translation[2]) - 0.05
     seq, why = plan_home(mdl, q_now_ctrl, side, floor)
-    if seq is None:
-        return None, f"위로 든 뒤 준비 자세 계획 불가 ({why}) — VR 로 손을 조금 들어 올린 뒤 다시"
-    segs = [sg for _, sg in seq]
-    return segs, {"sec": round(sum(sg.sec for sg in segs), 1), "lift": True}
+    if seq is not None:
+        segs = [sg for _, sg in seq]
+        return segs, {"sec": round(sum(sg.sec for sg in segs), 1), "lift": True}
+    # 직선 경로가 안 되면 (VR 로 끝낸 손목 자세가 한계 근처 → 직선 중 관절이 튐): 위로 든 자리를 IK 로 구해 관절 보간으로 올린 뒤
+    #   그 자리에서 plan_pose (관절 보간 · 필요하면 경유 자세, 몸 앞 낮은 곳 지나는지 검사)
+    up_z = max(float(T.translation[2]), floor + 0.15)
+    q_up, ep, er = mdl.ik(qm, side, np.array([T.translation[0], T.translation[1], up_z]), T.rotation, iters=600)
+    if ep > IK_POS_TOL:      # 같은 방향으로 못 들면 준비 자세 방향으로 들기
+        q_up, ep, er = mdl.ik(qm, side, np.array([T.translation[0], T.translation[1], up_z]), READY_R[side], iters=600)
+    if ep > IK_POS_TOL:
+        return None, f"위로 든 뒤 준비 자세 계획 불가 ({why}; 위로 든 자리 IK {ep * 1000:.0f} mm) — VR 로 손을 조금 들어 올린 뒤 다시"
+    q_up2 = qm.copy()
+    q_up2[mdl.idx[side]] = q_up[mdl.idx[side]]
+    lift = joint_seg("위로 (관절)", qm, q_up2, n=60)
+    low, _ = _sweep(mdl, side, [lift])
+    if low is not None and low < mdl.lowest(qm, side) - 0.01:       # 올리는 중 그리퍼가 시작보다 1 cm 넘게 내려가면 안 됨
+        return None, f"위로 든 뒤 준비 자세 계획 불가 ({why}; 관절로 올리면 그리퍼가 내려감) — VR 로 손을 조금 들어 올린 뒤 다시"
+    segs2, info2 = plan_pose(mdl, mdl.to_ctrl(q_up2), side, "ready")
+    if segs2 is None:
+        if "이미" in str(info2):
+            segs2 = []
+        else:
+            return None, f"위로 든 뒤 준비 자세 계획 불가 ({why}; {info2}) — VR 로 손을 조금 들어 올린 뒤 다시"
+    segs = [lift] + segs2
+    return segs, {"sec": round(sum(sg.sec for sg in segs), 1), "lift": True, "joint_lift": True}
 
 
 def default_q_ctrl():
