@@ -12,7 +12,11 @@ OV="${1:-}"
 [ -n "$OV" ] || { echo "사용: $0 <openvino 버전 — 로봇 tv 환경과 같게>" >&2; exit 1; }
 ENV_NAME="${TRAINER_ENV:-act_xpu}"
 PYVER="3.11"
-TORCH_PKGS="${TORCH_PKGS:-torch torchvision}"
+# torch 버전: openmimic (같은 ACT · 카메라 3 대 · 배치 8) 에서 XPU 학습이 실기로 확인된 2.11.x 에 맞춤
+#   (themakerrobot/openmimic docs/INTEL.md — Ubuntu 26.04 · Windows Lunar Lake, torch 2.11.0+xpu).
+#   2026-11-10 이 PC (Panther Lake B390, Ubuntu 24.04, 커널 7.0) 에서 torch 2.15.0+xpu 로 학습 시작 직후 와이파이 펌웨어 오류 → 시스템 멈춤.
+#   최신으로 다시 하려면: TORCH_PKGS="torch torchvision" ./trainer/install_trainer_xpu.sh <버전>
+TORCH_PKGS="${TORCH_PKGS:-torch<2.12 torchvision<0.27}"
 TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/xpu}"
 step() { echo; echo "==== $* ===="; }
 die() { echo "❌ $*" >&2; exit 1; }
@@ -58,7 +62,7 @@ fi
 # ---------------------------------------------------------------- ④ torch (XPU)
 step "④ $TORCH_PKGS ($TORCH_INDEX)"
 # shellcheck disable=SC2086
-"$PY" -m pip install $TORCH_PKGS --index-url "$TORCH_INDEX"
+"$PY" -m pip install --force-reinstall $TORCH_PKGS --index-url "$TORCH_INDEX"
 
 # ---------------------------------------------------------------- ⑤ 나머지
 step "⑤ requirements.txt + openvino==$OV"
