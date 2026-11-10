@@ -142,6 +142,7 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
           <div><span class="mini">lr</span><input class="in" id="t-lr" type="number" step="0.000001"></div>
           <div><span class="mini">검증 비율</span><input class="in" id="t-val_frac" type="number" step="0.05"></div>
           <div><span class="mini">dataloader workers</span><input class="in" id="t-num_workers" type="number"></div>
+          <div><span class="mini">학습 장치</span><select class="in" id="t-device"><option value="auto">자동 (CUDA→Intel→CPU)</option><option value="cpu">CPU</option><option value="xpu">Intel GPU (XPU)</option><option value="cuda">NVIDIA (CUDA)</option></select></div>
           <div><span class="mini">검증 주기 step</span><input class="in" id="t-eval_every" type="number" step="500"></div>
         </div>
         <div class="row" style="gap:18px">
@@ -222,7 +223,7 @@ async function loadInfo(){
   if(!DEF){
     DEF = d.defaults;
     for(const k of ['steps','batch_size','chunk_size','kl_weight','lr','val_frac','num_workers','eval_every']) $('t-' + k).value = DEF[k];
-    $('t-image').value = DEF.image; $('t-side').value = DEF.side || 'right'; $('t-augment').checked = DEF.augment; $('t-amp').checked = DEF.amp;
+    $('t-image').value = DEF.image; $('t-side').value = DEF.side || 'right'; $('t-device').value = DEF.device || 'auto'; $('t-augment').checked = DEF.augment; $('t-amp').checked = DEF.amp;
   }
 }
 
@@ -260,7 +261,7 @@ function uploadDs(){
 // ---------------- 작업 ----------------
 async function addJob(){
   if(!selDs){ toast('데이터셋을 고르세요', true); return; }
-  const p = {name: $('t-name').value.trim(), image: $('t-image').value, side: $('t-side').value, augment: $('t-augment').checked, amp: $('t-amp').checked};
+  const p = {name: $('t-name').value.trim(), image: $('t-image').value, side: $('t-side').value, device: $('t-device').value, augment: $('t-augment').checked, amp: $('t-amp').checked};
   for(const k of ['steps','batch_size','chunk_size','num_workers','eval_every']) p[k] = parseInt($('t-' + k).value);
   for(const k of ['kl_weight','lr','val_frac']) p[k] = parseFloat($('t-' + k).value);
   const d = await api('POST', '/api/jobs', {dataset: selDs, params: p});

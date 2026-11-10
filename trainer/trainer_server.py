@@ -46,6 +46,8 @@ from train_act import DEFAULT_TRAIN   # noqa: E402 — 학습 설정 기본값 (
 # 로봇 PC (start_trainer_xpu.sh) 처럼 코어 · 메모리가 적은 PC: 데이터 로더 수 기본값을 줄임 (8 개면 CPU · 메모리를 다 써서 SSH 까지 끊김 — 2026-11-10)
 if os.environ.get("TRAINER_NUM_WORKERS"):
     DEFAULT_TRAIN = dict(DEFAULT_TRAIN, num_workers=int(os.environ["TRAINER_NUM_WORKERS"]))
+if os.environ.get("TRAINER_DEVICE"):          # 학습 장치 기본값 (웹에서 바꿀 수 있음) — 로봇 PC 는 cpu (Intel GPU 학습 중 시스템 멈춤, 2026-11-10)
+    DEFAULT_TRAIN = dict(DEFAULT_TRAIN, device=os.environ["TRAINER_DEVICE"])
 TRAIN_THREADS = os.environ.get("TRAINER_THREADS")      # 학습 프로세스 CPU 연산 스레드 수 (없으면 torch 기본 = 코어 수)
 
 
