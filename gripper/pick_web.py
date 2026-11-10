@@ -1141,7 +1141,7 @@ def make_app(r: Runner):
 
     @app.post("/api/xr/stop")
     def api_xr_stop():
-        return {"ok": True, "stopped": r.xr.stop("VR 끝 버튼")}
+        return {"ok": True, "stopped": r.xr.stop("VR 끝 버튼", go_home=True)}
 
     @app.post("/api/xr/cmd")
     def api_xr_cmd(body: dict):

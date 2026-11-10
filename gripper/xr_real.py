@@ -14,7 +14,9 @@ xr_real.py — VR 조작 (xr_teleoperate H2 IK) → 실제 팔 · 그리퍼.  �
    - 한 번에 크게 다른 목표 (관절 0.5 rad 넘게 — IK 가 튐) 는 버림
    - 명령 · 실측 차이 > pick.track_abort_deg → 세션 끝 (걸리거나 부딪힘)
    - 값이 안 오면: arm_server 가 0.2 초 뒤 그 자리 멈춤, 1.5 초 넘으면 여기서 세션 끝
-   - [정지] · [VR 끝] · 오류 → 세션 끝 (팔은 마지막 목표에서 멈춤, 0 자세로 가지 않음)
+   - [정지] · 입력 끊김 · 안전 검사 · 오류 → 세션 끝 (팔은 마지막 목표에서 멈춤, 0 자세로 가지 않음)
+   - [■ 끝] 버튼 (사람이 누름) 만 → 쓴 손을 준비 자세로 자동 복귀 (pc.plan_ready: 위로 든 뒤 이동), 녹화에 포함
+     → 에피소드 = 넣고 · 돌아오기 (연속 동작용). 복귀 중 [정지] 는 그 자리 멈춤, 녹화는 거기서 끝
 """
 import math
 import threading
@@ -158,7 +160,7 @@ class XRTeleop:
         if r.rec_on:
             try:
                 r.rec.start(r.rec_name, r.rec_cameras(), r.rec_state_names(), r.rec_sample,
-                            {"side": "both", "mode": "vr", "stages": ["시작", "VR 조작"], "table_plane": r.table_plane,
+                            {"side": "both", "mode": "vr", "stages": ["시작", "VR 조작", "준비 자세 복귀"], "table_plane": r.table_plane,
                              "max_vel": self.max_vel})
                 r.say(f"녹화 시작 → {r.rec_name} (VR)")
             except (ValueError, RuntimeError) as e:
@@ -167,7 +169,8 @@ class XRTeleop:
         r.say(f"VR 조작 시작 — 관절 {self.max_vel:.2f} rad/s, 그립을 누른 손만 움직임" + (" · ⚠ 테이블 검사 끔" if self.no_table else ""))
         return {"ok": True, "epoch": self.epoch, "q": self.q0_named}
 
-    def stop(self, why="VR 끝"):
+    def stop(self, why="VR 끝", go_home=False):
+        """세션 끝. go_home = 사람이 [■ 끝] 을 눌렀을 때만 True → 쓴 손을 준비 자세로 (녹화는 복귀 끝까지)."""
         r = self.r
         with self.lk:
             if not self.active:
@@ -179,15 +182,65 @@ class XRTeleop:
             pc.call("/stream/end", {"token": tok}, timeout=2.0)
         except Exception:  # noqa: BLE001 — arm_server 가 2 초 뒤 세션을 닫음, 팔은 마지막 목표에서 멈춤
             pass
+        used, n_cmd = set(getattr(self, "used", set())), self.n
         with r.lk:
             r.phase, r.stage = "idle", f"VR 끝 ({why})"
+        if go_home and used:
+            r.stop_evt.clear()
+            r.th = threading.Thread(target=self._go_home, args=(sorted(used), why, n_cmd), daemon=True)
+            r.th.start()                     # r.th 가 도는 동안 busy() — VR 시작 · 다른 동작 안 됨, [정지] 로 멈춤
+            return True
         r.say(f"VR 조작 끝 — {why} (팔은 마지막 목표에서 멈춤)")
-        if r.rec.active:
-            used = getattr(self, "used", set())
-            side = next(iter(used)) if len(used) == 1 else "both"     # 한 손만 썼으면 그 손 (학습 웹 손 고르기)
-            pnd = r.rec.finish(True, "vr", {"why": why, "n_cmd": self.n, "side": side, "hands_used": sorted(used)})
-            r.say(f"녹화 끝 ({pnd['n']} 프레임) — [저장] 또는 [버리기] 를 고르세요")
+        self._finish_rec(used, why, n_cmd)
         return True
+
+    def _finish_rec(self, used, why, n_cmd, extra=None):
+        r = self.r
+        if r.rec.active:
+            side = next(iter(used)) if len(used) == 1 else "both"     # 한 손만 썼으면 그 손 (학습 웹 손 고르기)
+            pnd = r.rec.finish(True, "vr", {"why": why, "n_cmd": n_cmd, "side": side, "hands_used": sorted(used), **(extra or {})})
+            r.say(f"녹화 끝 ({pnd['n']} 프레임) — [저장] 또는 [버리기] 를 고르세요")
+
+    def _go_home(self, sides, why, n_cmd):
+        """[■ 끝] 뒤: 쓴 손마다 준비 자세로 (잡기 웹 [준비 자세로] 와 같은 pc.plan_ready). 녹화는 계속 → 끝나면 저장 결정."""
+        r = self.r
+        with r.lk:
+            r.phase, r.stage = "running", "준비 자세로 복귀"
+        r.stage_idx = 2                      # 녹화 stage: 0 시작 · 1 VR 조작 · 2 복귀
+        res = "준비 자세 복귀 끝"
+        try:
+            t_end = time.time() + 3.0
+            while True:                      # 앞 스트림이 닫힐 때까지
+                ok, msg, q_now = pc.arm_ready_check()
+                if ok or time.time() > t_end:
+                    break
+                time.sleep(0.1)
+            if not ok:
+                raise RuntimeError(msg)
+            pc.set_speed(min(float(r.speed), 2.0))
+            floor = r.table_z if not getattr(self, "no_table", False) else None
+            for side in sides:
+                ok, msg, q_now = pc.arm_ready_check()
+                if not ok:
+                    raise RuntimeError(msg)
+                segs, info = pc.plan_ready(self.mdl, q_now, side, floor)     # XR 전용 모델 (녹화 스레드와 Data 안 겹침)
+                if segs is None:
+                    if "이미" in str(info):
+                        continue
+                    raise RuntimeError(f"{side} {info}")
+                for sg in segs:
+                    with r.lk:
+                        r.stage = f"{side} {sg.name}"
+                    ok2, m2 = pc.run_seg(self.mdl, sg, r.stop_evt)
+                    r.say(f"복귀 {side} {sg.name}: {m2}")
+                    if not ok2:
+                        raise RuntimeError(m2)
+        except Exception as e:  # noqa: BLE001
+            res = f"복귀 중 멈춤 — {e}"
+        with r.lk:
+            r.phase, r.stage = ("done" if res.endswith("끝") else "stopped"), res
+        r.say(f"VR 조작 끝 — {why} · {res}")
+        self._finish_rec(set(sides), why, n_cmd, {"home": res})
 
     def _watchdog(self):
         while True:
