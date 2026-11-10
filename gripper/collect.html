@@ -14,7 +14,7 @@
 html,body{height:100%}
 body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;background:var(--bg);color:var(--ink);
   font-size:13px;line-height:1.45;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
-  min-height:100vh;display:flex;flex-direction:column}
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
 .topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;
   background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
 .logo{font-weight:700;letter-spacing:.5px;font-size:15px;color:var(--accent)}.logo b{color:var(--ink)}
@@ -29,9 +29,17 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .chip.ok{color:var(--ok);border-color:#1f5a43}.chip.info{color:var(--accent);border-color:#0b5a70}
 .chip.busy{color:var(--amber);border-color:#6a4a1f}.chip.err{color:var(--warn);border-color:#5a2b2b}
 .dsbar{display:flex;gap:10px;align-items:center}
-.grid{display:grid;grid-template-columns:5fr 3fr 3fr;gap:14px;padding:14px;flex:1;min-height:0}
-.col{display:flex;flex-direction:column;gap:12px;min-width:0}
+.grid{display:grid;grid-template-columns:5fr 3fr 3fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
+.card.fill{flex:1 1 0;min-height:160px;display:flex;flex-direction:column}
+.card.fill>.card-b{flex:1;min-height:0;display:flex;flex-direction:column}
+.camgrid{flex:1;min-height:0;display:grid;grid-template-rows:3fr 2fr;gap:8px}
+.camcell{min-height:0;display:flex;flex-direction:column}
+.camcell img{flex:1;min-height:0;width:100%;height:100%;object-fit:contain}
+.camrow{min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+pre.log{flex:1;min-height:80px;overflow:auto;background:#05080c;border:1px solid var(--line);border-radius:8px;padding:8px;
+  font-size:11px;line-height:1.45;color:#a9b6c4;white-space:pre-wrap;word-break:break-all;font-family:inherit}
 .card.alert{border-color:var(--amber)}
 .card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
   padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--panel2);gap:8px}
@@ -61,8 +69,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .ok{color:var(--ok)}.warn{color:var(--amber)}.bad{color:var(--warn)}.sub{color:var(--dim);font-size:11.5px}
 .msg{font-size:12px;min-height:18px;margin-top:8px}
 .big-num{font-size:22px;font-weight:700;color:var(--ink)}.big-num small{font-size:12px;font-weight:400;color:var(--dim);margin-left:8px}
-.cams img{width:100%;display:block;border-radius:8px;background:#05080c;border:1px solid var(--line)}
-.wrists{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:8px}
+.cams img{display:block;border-radius:8px;background:#05080c;border:1px solid var(--line)}
 .camlbl{font-size:10px;color:var(--dim);margin:4px 2px 0;letter-spacing:.5px}
 .hands{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
 .hand{font-size:11px;padding:4px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line)}
@@ -86,6 +93,11 @@ input[type=file].in{width:100%}
 .ctlrow{display:flex;gap:10px;align-items:center;margin:10px 0}
 .ctlrow input[type=range]{flex:1;accent-color:var(--accent)}
 ::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+/* 낮은 화면 · 좁은 화면: 한 화면에 안 들어가면 페이지 스크롤 (카메라는 비율대로) */
+@media(max-width:1300px),(max-height:720px){
+  body{height:auto;min-height:100vh;overflow:auto}.grid{overflow:visible;flex:none}.col{overflow:visible}
+  .card.fill{flex:none}.camgrid{display:block}.camcell img{height:auto}.camrow{margin-top:8px}pre.log{max-height:240px}
+}
 @media(max-width:1300px){.grid{grid-template-columns:1fr 1fr}.col.cams{grid-column:1/-1}}
 @media(max-width:760px){.grid{grid-template-columns:1fr}.topbar .right{margin-left:0;width:100%}
   #epm .box{inset:6px;grid-template-columns:1fr;grid-template-rows:auto 30vh minmax(0,1fr)}}
@@ -111,14 +123,15 @@ input[type=file].in{width:100%}
 
 <div class="grid">
   <div class="col cams">
-    <div class="card">
+    <div class="card fill">
       <div class="card-h">Cameras <span class="tag">머리 · 손목</span></div>
       <div class="card-b">
-        <img id="vhead" src="/video" alt="머리 카메라">
-        <div class="camlbl">BODY · 머리 카메라</div>
-        <div class="wrists">
-          <div><img id="vwl" src="/video_wrist/wrist_left" alt="왼손 카메라"><div class="camlbl">WRIST_LEFT · 왼손</div></div>
-          <div><img id="vwr" src="/video_wrist/wrist_right" alt="오른손 카메라"><div class="camlbl">WRIST_RIGHT · 오른손</div></div>
+        <div class="camgrid">
+          <div class="camcell"><img id="vhead" src="/video" alt="머리 카메라"><div class="camlbl">BODY · 머리 카메라</div></div>
+          <div class="camrow">
+            <div class="camcell"><img id="vwl" src="/video_wrist/wrist_left" alt="왼손 카메라"><div class="camlbl">WRIST_LEFT · 왼손</div></div>
+            <div class="camcell"><img id="vwr" src="/video_wrist/wrist_right" alt="오른손 카메라"><div class="camlbl">WRIST_RIGHT · 오른손</div></div>
+          </div>
         </div>
       </div>
     </div>
@@ -167,6 +180,11 @@ input[type=file].in{width:100%}
         </div>
       </div>
     </div>
+
+    <div class="card fill">
+      <div class="card-h">Log <span class="tag" id="log-tag">잡기 웹</span></div>
+      <div class="card-b"><pre class="log" id="log">—</pre></div>
+    </div>
   </div>
 
   <div class="col">
@@ -198,9 +216,10 @@ input[type=file].in{width:100%}
       </div>
     </div>
 
-    <div class="card">
-      <div class="card-h">Robot</div>
-      <div class="card-b"><div class="sub" id="robot" style="font-size:12px">—</div></div>
+    <div class="card fill">
+      <div class="card-h">Robot <span class="tag" id="robot-tag">-</span></div>
+      <div class="card-b"><div id="robot" style="font-size:12px;line-height:1.8">—</div>
+        <div class="hint" style="margin-top:auto">Space 시작 / 끝 · S 저장 · D 버리기 · 에피소드 보기 중에는 Space = 재생</div></div>
     </div>
   </div>
 </div>
@@ -327,9 +346,20 @@ function render() {
   chip("chip-xr", "VR", x.active ? "조작 중" : ret ? "복귀 중" : "꺼짐", x.active || ret ? "busy" : "");
   chip("chip-rec", "녹화", r.active ? `${(r.n / 30).toFixed(0)} 초` : r.pending ? "결정 대기" : r.on ? "켬" : "꺼짐", r.active ? "err" : r.pending ? "busy" : r.on ? "info" : "");
   chip("chip-tbl", "테이블", st.table_z == null ? "안 잼" : `z ${st.table_z.toFixed(3)}`, st.table_z == null ? "busy" : "ok");
-  const g = st.gripper || {}; const gm = k => g[k] ? `${g[k].mm} mm` : "상태 없음";
-  $("robot").innerHTML = `팔 ${st.arm}<br>그리퍼 왼 ${gm("left")} · 오른 ${gm("right")}<br>테이블 ${st.table_z == null ? "<span class='warn'>안 잼</span>" : `z ${st.table_z.toFixed(3)}`}` +
-    (st.cam_pitch ? ` · 카메라 숙임 차이 ${st.cam_pitch.diff > 0 ? "+" : ""}${st.cam_pitch.diff.toFixed(2)}°` : "");
+  const g = st.gripper || {}; const gm = k => g[k] ? `${g[k].mm} mm` : "<span class='warn'>상태 없음</span>";
+  const tcp = st.tcp || {}; const tp = k => tcp[k] ? tcp[k].map(v => v.toFixed(2)).join(", ") : "-";
+  const rr = st.ready || {}; const rdy = k => rr[k] ? (rr[k].at ? "<span class='ok'>준비 자세</span>" : `준비 자세에서 ${rr[k].dist_cm} cm`) : "-";
+  $("robot").innerHTML =
+    `<span class="mini" style="display:inline">팔</span> ${armOk ? "<span class='ok'>ok</span>" : `<span class='bad'>${st.arm}</span>`} · 단계 ${st.stage || st.phase || "-"}<br>` +
+    `<span class="mini" style="display:inline">그리퍼</span> 왼 ${gm("left")} · 오른 ${gm("right")}<br>` +
+    `<span class="mini" style="display:inline">집게 위치</span> 왼 [${tp("left")}] · 오른 [${tp("right")}] m<br>` +
+    `<span class="mini" style="display:inline">팔 자세</span> 왼 ${rdy("left")} · 오른 ${rdy("right")}<br>` +
+    `<span class="mini" style="display:inline">테이블</span> ${st.table_z == null ? "<span class='warn'>안 잼</span>" : `z ${st.table_z.toFixed(3)} (점 ${st.table_n || "-"})`}` +
+    (st.cam_pitch ? `<br><span class="mini" style="display:inline">카메라 숙임 차이</span> ${st.cam_pitch.diff > 0 ? "+" : ""}${st.cam_pitch.diff.toFixed(2)}°` : "");
+  $("robot-tag").textContent = armOk ? "연결" : "끊김";
+  const lg = $("log"), atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 4;
+  const txt = (st.log || []).join("\n") || "—";
+  if (lg.textContent !== txt) { lg.textContent = txt; if (atEnd) lg.scrollTop = lg.scrollHeight; }
 }
 
 $("mup").onclick = async () => {
