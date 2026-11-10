@@ -35,7 +35,8 @@ import yaml
 _XRV = (yaml.safe_load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gripper.yaml"), encoding="utf-8")) or {}).get("xr_view") or {}
 if "hand_offset_m" not in _XRV:
     sys.exit("[xr] gripper.yaml xr_view.hand_offset_m (사람 손 → 로봇 손 위치 오프셋) 없음")
-HAND_OFF = np.asarray(_XRV["hand_offset_m"], dtype=float)
+_ho = [float(v) for v in _XRV["hand_offset_m"]]     # [앞, 바깥, 위] — 바깥 = 왼손 +y · 오른손 −y (좌우 대칭)
+HAND_OFF = {"left": np.array([_ho[0], _ho[1], _ho[2]]), "right": np.array([_ho[0], -_ho[1], _ho[2]])}
 
 
 # ---------------- 영상 (잡기 웹 MJPEG → Quest) ----------------
@@ -243,7 +244,7 @@ def main():
                     tgt[sd] = now[sd]
                     continue
                 t = np.asarray(d.left_wrist_pose if sd == "left" else d.right_wrist_pose, dtype=float).copy()
-                t[:3, 3] = t[:3, 3] + HAND_OFF
+                t[:3, 3] = t[:3, 3] + HAND_OFF[sd]
                 tgt[sd] = t
             q_cmd = q_last
             if press["left"] or press["right"]:
