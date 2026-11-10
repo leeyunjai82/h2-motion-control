@@ -1039,9 +1039,9 @@ def make_app(r: Runner):
         return info
 
     @app.post("/api/policy/start")
-    def api_policy_start():
+    def api_policy_start(body: Optional[dict] = None):
         try:
-            r.pol.start()
+            r.pol.start(repeat=bool((body or {}).get("repeat")))
         except RuntimeError as e:
             raise HTTPException(409, str(e))
         return {"ok": True}

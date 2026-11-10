@@ -48,7 +48,10 @@ DEFAULTS = {
     "hold_end_s": 1.0,
     "min_run_s": 8.0,        # 시작 직후는 끝 판정 안 함 (시작 자세 = 끝 자세 근처라서)
     "start_tol_deg": 3.0,    # 시작 전 팔이 start_pose 와 이보다 다르면 먼저 천천히 맞춤
+    "repeat_gap_s": 2.0,     # 반복 실행: 한 회가 정상으로 끝난 뒤 다음 회까지 쉬는 시간 [s]
+    "repeat_max": 20,        # 반복 실행: 최대 회수 (안전)
 }
+END_OK = "끝 자세 도착"     # 이 이유로 끝난 회만 다음 회로 이어감 (안전 필터 · 정지 · 오류 · 최대 시간은 멈춤)
 
 
 # ---------------- 모델 파일 ----------------
@@ -277,17 +280,44 @@ class PolicyRunner:
         return np.concatenate([np.r_[q14[csl], gq[side]] for side, csl, _, _, _ in self.policy.parts])
 
     # ----- 실행 -----
-    def start(self):
+    def start(self, repeat=False, run_no=1):
+        """repeat: 한 회가 '끝 자세 도착' 으로 끝나면 repeat_gap_s 쉬고 다음 회를 자동으로 (시작 조건을 매번 다시 검사).
+        안전 필터 · [정지] · 오류 · 최대 시간으로 끝나면 반복도 멈춤. 최대 repeat_max 회."""
         bad = self.check()
         if bad:
             raise RuntimeError("; ".join(bad))
+        if run_no == 1:
+            self.user_stop = False
+        self.repeat = bool(repeat)
         self.stop_evt.clear()
-        self.state = {"running": True, "step": 0, "infer_ms": None, "why_end": "", "phase": "시작 자세로"}
+        self.state = {"running": True, "step": 0, "infer_ms": None, "why_end": "", "phase": "시작 자세로",
+                      "run_no": run_no, "repeat": self.repeat}
         self.th = threading.Thread(target=self._run, daemon=True)
         self.th.start()
 
     def stop(self):
+        self.user_stop = True            # 반복 중이면 다음 회도 안 함
+        self.repeat = False
         self.stop_evt.set()
+        if self.state.get("waiting_next"):
+            self.state.update(waiting_next=False, phase="", why_end=f"{self.state.get('why_end', '')} · 반복 멈춤 (정지)")
+
+    def _next_run(self, run_no):
+        """반복: 쉬었다가 다음 회. 그 사이 [정지] · 시작 조건 실패면 멈춤."""
+        r, cfg = self.r, self.cfg
+        t_end = time.time() + float(cfg["repeat_gap_s"])
+        while time.time() < t_end:
+            if self.user_stop:
+                return
+            time.sleep(0.1)
+        if self.user_stop:
+            return
+        try:
+            self.start(repeat=True, run_no=run_no)
+            r.say(f"정책 반복 — {run_no} 회째 시작")
+        except RuntimeError as e:
+            self.state.update(why_end=f"{self.state.get('why_end', '')} · 반복 멈춤: {e}")
+            r.say(f"정책 반복 멈춤 — 시작 조건: {e}")
 
     def _infer_loop(self, ens):
         """최신 관측 → 추론 → ens.add(관측한 틱, 예측). 제어 루프와 따로 (추론이 느려도 제어는 30 Hz)."""
@@ -424,5 +454,12 @@ class PolicyRunner:
                 except Exception:  # noqa: BLE001
                     pass
             self.stop_evt.set()          # 추론 스레드도 끝냄
+            run_no = int(self.state.get("run_no", 1))
             self.state.update(running=False, why_end=why, phase="")
             r.say(f"정책 끝 — {why} (팔은 그 자리, 그리퍼는 그 상태)")
+            if getattr(self, "repeat", False) and not getattr(self, "user_stop", False):
+                if why.startswith(END_OK) and run_no < int(self.cfg["repeat_max"]):
+                    self.state.update(phase=f"다음 회 대기 ({self.cfg['repeat_gap_s']:.0f} 초)", waiting_next=True)
+                    threading.Thread(target=self._next_run, args=(run_no + 1,), daemon=True).start()
+                else:
+                    self.state.update(why_end=why + (" · 반복 멈춤" if not why.startswith(END_OK) else f" · 반복 {run_no} 회 끝 (최대)"))

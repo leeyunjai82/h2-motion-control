@@ -208,6 +208,7 @@ input[type=file].in{width:100%}
         </div>
         <div class="msg" id="minfo">불러온 모델 없음</div>
         <div class="sub" id="mcheck"></div>
+        <label class="sw" style="margin-top:10px"><input type="checkbox" id="prepeat" checked><span class="tr"></span><span>반복 — 정상으로 끝나면 다음 회 자동 (2 초 뒤)</span></label>
         <div class="btns">
           <button class="btn primary big" id="pstart" disabled>▶ 정책 시작</button>
           <button class="btn warn big" id="pstop" disabled>■ 정지</button>
@@ -374,8 +375,10 @@ $("mup").onclick = async () => {
   } catch (e) { alert(e.message); $("minfo").textContent = "실패: " + e.message; }
 };
 $("pstart").onclick = async () => {
-  if (!confirm("실제 팔이 정책대로 움직입니다. 주변을 비우고 E-stop 을 손에 두세요. 시작할까요?")) return;
-  try { await post("/api/policy/start"); } catch (e) { alert(e.message); }
+  const rep = $("prepeat").checked;
+  if (!confirm("실제 팔이 정책대로 움직입니다. 주변을 비우고 E-stop 을 손에 두세요." +
+               (rep ? "\n반복 켬: 한 회가 정상으로 끝나면 2 초 뒤 다음 회를 자동으로 시작합니다 ([■ 정지] 로 멈춤)." : "") + "\n시작할까요?")) return;
+  try { await post("/api/policy/start", { repeat: rep }); } catch (e) { alert(e.message); }
 };
 $("pstop").onclick = () => post("/api/policy/stop").catch(e => alert(e.message));
 
@@ -385,10 +388,13 @@ function renderModel() {
                            : ($("minfo").textContent.startsWith("올리는") || $("minfo").textContent.startsWith("불러오는") ? $("minfo").textContent : "불러온 모델 없음");
   const bad = p.check || [];
   $("mcheck").innerHTML = m && !p.running ? (bad.length ? bad.map(b => `<div class="warn">· ${b}</div>`).join("") : '<span class="ok">시작 조건 OK</span>') : "";
-  $("pstart").disabled = !m || p.running || bad.length > 0;
-  $("pstop").disabled = !p.running;
-  $("pstate").innerHTML = p.running ? `<span class="ok">● 실행 중</span> ${p.phase || ""} · ${p.step} 스텝 · 추론 ${p.infer_ms ?? "-"} ms`
-                                    : (p.why_end ? `<span class="sub">끝: ${p.why_end}</span>` : "");
+  const waitNext = !p.running && p.waiting_next && /다음 회/.test(p.phase || "");
+  $("pstart").disabled = !m || p.running || waitNext || bad.length > 0;
+  $("pstop").disabled = !p.running && !waitNext;
+  const runNo = p.repeat ? `${p.run_no} 회째 · ` : "";
+  $("pstate").innerHTML = p.running ? `<span class="ok">● 실행 중</span> ${runNo}${p.phase || ""} · ${p.step} 스텝 · 추론 ${p.infer_ms ?? "-"} ms`
+                        : waitNext ? `<span class="warn">● ${p.phase}</span> <span class="sub">— 끝: ${p.why_end}</span>`
+                        : (p.why_end ? `<span class="sub">끝: ${p.why_end}</span>` : "");
   $("pol-tag").textContent = p.running ? "실행 중" : m ? "준비" : "-";
   const name = $("ds").value.trim();
   $("dl").href = name ? `/api/dataset/zip?name=${encodeURIComponent(name)}&only_ok=true` : "#";
