@@ -35,6 +35,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
 .card.fill{flex:1 1 0;min-height:260px;display:flex;flex-direction:column}
 .card.fill>.card-b{flex:1;min-height:0;display:flex;flex-direction:column}
+.scroll{flex:1;min-height:60px;overflow-y:auto}              /* 카드 남는 높이를 채우고 넘치면 스크롤 (데이터셋 · 작업 목록) */
 .card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
   padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--panel2);gap:8px}
 .card-h .tag{color:var(--accent);font-weight:700;text-transform:none;letter-spacing:.3px}
@@ -83,7 +84,7 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}#toast.err{border-color:var(--warn);color:var(--warn)}
 @media(max-width:1200px),(max-height:699px){
   body{height:auto;min-height:100vh;overflow:auto}.grid{overflow:visible;flex:none}.col{overflow:visible}
-  .card.fill{flex:none}
+  .card.fill{flex:none}.scroll{max-height:320px}
 }
 @media(max-width:1200px){.grid{grid-template-columns:1fr 1fr}}
 @media(max-width:700px){.grid{grid-template-columns:1fr}.fld{grid-template-columns:1fr 1fr}.topbar{flex-wrap:wrap}.topbar .right{margin-left:0;width:100%}}
@@ -105,21 +106,21 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 
 <div class="grid">
   <div class="col">
-    <div class="card">
+    <div class="card fill">
       <div class="card-h">Datasets <span class="tag" id="ds-tag">-</span></div>
       <div class="card-b">
         <div class="row"><input class="in grow" type="file" id="ds-file" accept=".zip">
           <button class="btn sm" onclick="uploadDs()">업로드</button></div>
         <div class="prog" id="up-prog" style="display:none"><b id="up-bar"></b></div>
-        <div class="hint" id="up-text">로봇 웹(:50030) Episodes 의 <b>데이터셋 zip</b> 을 그대로 올리세요.</div>
-        <div style="max-height:300px;overflow-y:auto;margin-top:8px"><table class="tbl" id="ds-tbl"></table></div>
+        <div class="hint" id="up-text">수집 화면(:50030/collect) 의 <b>데이터셋 zip</b> 을 그대로 올리세요.</div>
+        <div class="scroll" style="margin-top:8px"><table class="tbl" id="ds-tbl"></table></div>
       </div>
     </div>
     <div class="card">
       <div class="card-h">System</div>
       <div class="card-b"><table class="tbl" id="sys-tbl" style="cursor:default"></table>
-        <div class="hint">순서: ① 로봇 웹(:50030)에서 데이터셋 zip 받기 → ② 여기 업로드 → ③ 학습 큐 →
-          ④ 끝나면 model zip → 로봇 웹 Models 에 업로드 · 로드 · 정책 시작.<br>
+        <div class="hint">순서: ① 수집 화면(:50030/collect)에서 데이터셋 zip 받기 → ② 여기 업로드 → ③ 학습 큐 →
+          ④ 끝나면 model zip → 수집 화면 [모델 올려서 추론] → 정책 시작.<br>
           OpenVINO 는 로봇 PC 와 같은 버전으로 (trainer/README.md).</div></div>
     </div>
   </div>
@@ -154,9 +155,9 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
           끝나면 자동으로 OpenVINO IR 변환 → <b>model zip</b>.</div>
       </div>
     </div>
-    <div class="card">
+    <div class="card fill">
       <div class="card-h">Jobs <span class="tag" id="job-tag"></span></div>
-      <div class="card-b"><div style="max-height:340px;overflow-y:auto"><table class="tbl" id="job-tbl"></table></div></div>
+      <div class="card-b"><div class="scroll"><table class="tbl" id="job-tbl"></table></div></div>
     </div>
   </div>
 
