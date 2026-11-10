@@ -29,7 +29,7 @@ import pick_core as pc
 from pick_core import P
 
 X = pc.CFG.get("xr_view") or {}
-_need = ("arm_gap_m", "back_limit_m", "table_x_min_m", "real_max_vel")
+_need = ("arm_gap_m", "back_limit_m", "table_x_min_m", "real_max_vel", "grip_open_mm")
 _miss = [k for k in _need if k not in X]
 if _miss:
     raise SystemExit(f"[xr] gripper.yaml xr_view: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
@@ -39,7 +39,9 @@ IDLE_END_S = 1.5            # 이 시간 넘게 명령이 없으면 세션 끝
 if "object_mm" not in P:
     raise SystemExit("[xr] gripper.yaml pick.object_mm (잡는 물건 크기) 없음")
 OBJ_MM = float(P["object_mm"])
-GRIP_OPEN_MM = min(OBJ_MM + float(P["open_margin_mm"]), pc.gap_mm(pc.Q_HI))   # 트리거 놓음 = 이만큼 벌림 (50 + 25 = 75 mm)
+GRIP_OPEN_MM = min(float(X["grip_open_mm"]), pc.gap_mm(pc.Q_HI))   # 트리거 놓음 = 이만큼 벌림 (gripper.yaml xr_view.grip_open_mm — 스크립트 잡기와 따로)
+if GRIP_OPEN_MM <= OBJ_MM + 4:
+    raise SystemExit(f"[xr] xr_view.grip_open_mm {GRIP_OPEN_MM} — 물건 {OBJ_MM} mm 보다 4 mm 넘게 커야 함")
 GRIP_CLOSE_MM = max(OBJ_MM - float(P["squeeze_mm"]), pc.gap_mm(pc.Q_LO))      # 트리거 끝까지 = 이만큼만 닫음 (50 − 8 = 42 mm)
 SQUEEZE_Q = float(P["squeeze_mm"]) / pc.MM_PER_RAD   # 그리퍼를 지금 손가락 위치보다 이만큼만 더 조임 (≈ 8 mm) — 물건에 막혀도
                                                       #   완전 닫힘까지 억지로 조이지 않음 (계속 힘이 걸리면 과열). 자동 잡기의 squeeze_mm 와 같음
@@ -262,7 +264,7 @@ class XRTeleop:
     def grip_target(self, closing, q_meas):
         """트리거 닫힘 비율 · 지금 손가락 q → 보낼 목표 q. 닫는 쪽은 지금 위치보다 SQUEEZE_Q 까지만 (물건에 막히면 거기서 멈춤)."""
         c = min(max(float(closing), 0.0), 1.0)
-        want = pc.q_for_gap(GRIP_OPEN_MM - c * (GRIP_OPEN_MM - GRIP_CLOSE_MM))     # 트리거 0 → 75 mm · 1 → 42 mm (물건 50 mm 고정)
+        want = pc.q_for_gap(GRIP_OPEN_MM - c * (GRIP_OPEN_MM - GRIP_CLOSE_MM))     # 트리거 0 → grip_open_mm · 1 → 42 mm (물건 50 mm 고정)
         if q_meas is None:
             return None                     # 그리퍼 상태를 모르면 안 보냄
         return min(max(max(want, float(q_meas) - SQUEEZE_Q), pc.Q_LO), pc.Q_HI)
