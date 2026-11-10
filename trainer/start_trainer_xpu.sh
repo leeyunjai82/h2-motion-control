@@ -4,4 +4,7 @@
 #   학습 장치는 Intel XPU (Arc 내장 그래픽). 학습하는 동안 로봇 서버 · 수집은 끄고 쓸 것
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export TRAINER_ENV=act_xpu
+# 로봇 PC 는 코어 · 메모리가 적음 — 데이터 로더 2 개 · CPU 연산 스레드 4 개 (학습이 PC 를 다 차지해 SSH 가 끊기지 않게). 바꾸려면 앞에 지정
+export TRAINER_NUM_WORKERS="${TRAINER_NUM_WORKERS:-2}"
+export TRAINER_THREADS="${TRAINER_THREADS:-4}"
 exec "$HERE/start_trainer.sh" "$@"

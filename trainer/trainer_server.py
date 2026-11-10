@@ -43,6 +43,10 @@ NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
 EP_FILE_RE = re.compile(r"^episodes/ep_\d{6}/(episode\.npz|meta\.json|thumb\.jpg)$")
 sys.path.insert(0, HERE)
 from train_act import DEFAULT_TRAIN   # noqa: E402 — 학습 설정 기본값 (torch import 는 train_act 안에서 하므로 여기서도 로드됨)
+# 로봇 PC (start_trainer_xpu.sh) 처럼 코어 · 메모리가 적은 PC: 데이터 로더 수 기본값을 줄임 (8 개면 CPU · 메모리를 다 써서 SSH 까지 끊김 — 2026-11-10)
+if os.environ.get("TRAINER_NUM_WORKERS"):
+    DEFAULT_TRAIN = dict(DEFAULT_TRAIN, num_workers=int(os.environ["TRAINER_NUM_WORKERS"]))
+TRAIN_THREADS = os.environ.get("TRAINER_THREADS")      # 학습 프로세스 CPU 연산 스레드 수 (없으면 torch 기본 = 코어 수)
 
 
 
@@ -214,8 +218,12 @@ class Jobs:
                "--out", d, "--config", cfgp]
         logf = open(os.path.join(d, "train.log"), "a", encoding="utf-8")
         logf.write(f"$ {' '.join(cmd)}\n")
+        env = dict(os.environ)
+        if TRAIN_THREADS:
+            env.update(OMP_NUM_THREADS=TRAIN_THREADS, MKL_NUM_THREADS=TRAIN_THREADS)
+        # nice 15: 학습이 CPU 를 다 써도 SSH · 이 웹 · 다른 프로그램이 먼저 돌게 (학습 속도는 남는 CPU 만큼)
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                     start_new_session=True, cwd=HERE)
+                                     start_new_session=True, cwd=HERE, env=env, preexec_fn=lambda: os.nice(15))
         last_save = 0.0
         tail = []
         for line in self.proc.stdout:
