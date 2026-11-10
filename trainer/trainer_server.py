@@ -76,7 +76,7 @@ def ds_summary(name):
         if m.get("ok"):
             ok += 1
             frames += int(m.get("n", 0))
-            dur += float(m.get("duration", 0))
+            dur += float(m.get("duration", m.get("duration_s", 0)))     # 박스 데이터셋 duration · 그리퍼 duration_s
         img = img or m.get("image") or ({"cams": m.get("cameras"), "side": m.get("side")} if m.get("cameras") else None)
         npz = os.path.join(ep_dir, n, "episode.npz")
         size += os.path.getsize(npz) if os.path.exists(npz) else 0

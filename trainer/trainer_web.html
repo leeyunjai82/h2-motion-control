@@ -234,7 +234,7 @@ async function loadDs(){
   $('ds-tbl').innerHTML = '<tr><th>데이터셋</th><th class="num">성공/전체</th><th class="num">분</th><th class="num">MB</th><th>이미지</th><th></th></tr>' +
     d.map(x => `<tr class="${x.name === selDs ? 'cur' : ''}" onclick="pickDs('${x.name}')"><td>${esc(x.name)}</td>
       <td class="num">${x.ok}/${x.episodes}</td><td class="num">${x.minutes}</td><td class="num">${x.size_mb}</td>
-      <td>${x.image ? (x.image.cams ? '그리퍼 ' + x.image.cams.length + '캠' : x.image.w + '×' + x.image.h) : '-'}</td><td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
+      <td>${x.image ? (x.image.cams ? '그리퍼 ' + Object.keys(x.image.cams).length + '캠' : x.image.w + '×' + x.image.h) : '-'}</td><td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td></tr>`).join('');
   $('sel-ds').textContent = selDs || '데이터셋 선택';
 }
 function pickDs(n){ selDs = n; loadDs(); }
