@@ -1,5 +1,8 @@
 <!DOCTYPE html>
-<!-- Version: 2.31
+<!-- Version: 2.32
+  2.32 - 왼쪽 열 아래 빈 칸에 Log 카드 (모드 · 잡기 단계 · 결과 · 알림을 시각과 함께, 이 브라우저에서만 기록) ·
+         Handover 아래 글자 줄바꿈 안 함 (좁은 화면에서 '내려놓 / 기' 로 잘리던 것) · Grab Mode OFF 면 [Grab Now] 흐리게 · 누를 수 없음
+  2.31
   2.31 - Head Vision 두 눈 화면에 안경테 (사용자 2026-10-13, 시안 A). 화면은 네모 그대로 — 테·코다리·다리만 둘레에 그림.
          /pair 스트림 하나를 받아 왼눈·오른눈 반쪽을 각각 캔버스에 그림 (스트림 두 개 안 염). CROP 은 그대로
   2.30 - Handover 버튼 Left / Right 추가 (로봇 앞에 선 사람 기준, 각도 = robot.yaml grab.handover_side_deg)
@@ -209,7 +212,14 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
 .ctl .btn{padding:8px 4px;line-height:1.35;white-space:nowrap}
 .ctl .btn .sub{display:block;font-size:10px;opacity:.75}
 #ho-seg .btn{display:flex;flex-direction:column;align-items:center;justify-content:center}
-#ho-seg .btn .sub{display:block;font-size:10px;opacity:.75}
+#ho-seg .btn .sub{display:block;font-size:10px;opacity:.75;white-space:nowrap}
+#ho-seg .btn{padding-left:3px;padding-right:3px;min-width:0;white-space:nowrap}
+@media(max-width:1500px){#ho-seg .ic{display:none}}          /* 좁으면 아이콘 빼고 글자만 (Center 가 칸 밖으로 넘치던 것) */
+.btn.primary:disabled{background:var(--panel2);color:var(--dim);border:1px solid var(--line);font-weight:400;cursor:not-allowed}
+.card.fill.log{min-height:110px}
+pre.evlog{flex:1;min-height:60px;overflow:auto;margin:0;background:#05080c;border:1px solid var(--line);border-radius:8px;padding:7px 8px;
+  font-family:inherit;font-size:11px;line-height:1.5;color:#a9b6c4;white-space:pre-wrap;word-break:break-all}
+pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:var(--warn)}pre.evlog .bz{color:var(--amber)}
 .btn{font-family:inherit;font-size:12px;background:var(--panel2);border:1px solid var(--line);
   color:var(--ink);padding:9px;border-radius:7px;cursor:pointer;transition:.12s}
 .btn:hover{border-color:var(--accent);color:var(--accent)}
@@ -294,6 +304,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
   .topbar{padding:8px 16px}
 }
 @media(max-height:820px){
+  .card.fill.log{min-height:70px}
   .ctl .btn .sub{display:none}
   .btn{padding:5px 7px}
   .in{padding:2px 6px}
@@ -311,6 +322,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
   .grid{overflow:visible;flex:none}
   .col{overflow:visible}
   .card.fill,.card.fill.cam,.card.fill.robot,.card.stretch{flex:none;min-height:0}
+  pre.evlog{max-height:180px}
   .cam-wrap{flex:none;aspect-ratio:4/3}
   .robot-frame{flex:none;aspect-ratio:4/3}
 }
@@ -365,7 +377,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
           <button class="btn" id="mode-none" onclick="setMode('none')">OFF</button>
           <button class="btn" id="mode-box" onclick="setMode('box')">Box</button>
         </div>
-        <button class="btn primary full" style="margin-top:9px" onclick="grabManual()">✋ Grab Now</button>
+        <button class="btn primary full" id="grab-now" style="margin-top:9px" onclick="grabManual()" disabled title="Box 모드에서">✋ Grab Now</button>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <label class="sw">
             <input type="checkbox" id="auto-chk" onchange="toggleAuto()"><span class="tr"></span>
@@ -395,10 +407,10 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
       <div class="card-h">Handover</div>
       <div class="card-b">
         <div class="seg" id="ho-seg" style="display:flex">
-          <button class="btn" id="ho-left" style="flex:1" onclick="setHandover('left')">◀ Left<span class="sub ho-deg">15°</span></button>
-          <button class="btn on" id="ho-center" style="flex:1" onclick="setHandover('center')">■ Center<span class="sub">건네기</span></button>
-          <button class="btn" id="ho-right" style="flex:1" onclick="setHandover('right')">▶ Right<span class="sub ho-deg">15°</span></button>
-          <button class="btn" id="ho-place" style="flex:1" onclick="setHandover('place')">⤓ Place<span class="sub">내려놓기</span></button>
+          <button class="btn" id="ho-left" style="flex:1" onclick="setHandover('left')"><span class="ic">◀ </span>Left<span class="sub ho-deg">15°</span></button>
+          <button class="btn on" id="ho-center" style="flex:1" onclick="setHandover('center')"><span class="ic">■ </span>Center<span class="sub">건네기</span></button>
+          <button class="btn" id="ho-right" style="flex:1" onclick="setHandover('right')"><span class="ic">▶ </span>Right<span class="sub ho-deg">15°</span></button>
+          <button class="btn" id="ho-place" style="flex:1" onclick="setHandover('place')"><span class="ic">⤓ </span>Place<span class="sub">내려놓기</span></button>
         </div>
         <div class="hint" style="margin-top:6px">Left / Right = 로봇 앞에 선 사람 기준</div>
       </div>
@@ -423,6 +435,11 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
           </tbody>
         </table>
       </div>
+    </div>
+
+    <div class="card grow fill log">
+      <div class="card-h">Log <span style="color:var(--dim)" id="evlog-n">0</span></div>
+      <div class="card-b"><pre class="evlog" id="evlog"></pre></div>
     </div>
   </div>
 
@@ -477,6 +494,17 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
 
 <script>
 const host=location.hostname;
+// ---- Log 카드: 이 화면에서 본 일 (모드 · 잡기 단계 · 결과 · 알림) — 브라우저 안에서만, 최근 80 줄 ----
+const EV=[];
+function logEv(msg,cls){
+  const t=new Date().toTimeString().slice(0,8);
+  EV.push(`<span class="t">${t}</span> ${cls?`<span class="${cls}">${msg}</span>`:msg}`);
+  if(EV.length>80)EV.shift();
+  const el=document.getElementById('evlog');if(!el)return;
+  const atEnd=el.scrollTop+el.clientHeight>=el.scrollHeight-4;
+  el.innerHTML=EV.join('\n');document.getElementById('evlog-n').textContent=EV.length;
+  if(atEnd)el.scrollTop=el.scrollHeight;
+}
 let curMode='none';
 document.getElementById('link-dash').href=`http://${host}:50003/dashboard`;
 document.getElementById('link-box').href=`http://${host}:50010/`;
@@ -593,7 +621,7 @@ function devBadges(id,items){
 }
 
 let toastTimer;
-function toast(m,ms){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');
+function toast(m,ms){const el=document.getElementById('toast');el.textContent=m;el.classList.add('show');logEv(m);
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),ms||1800);}
 
 // ---- mode + feed ----
@@ -608,7 +636,9 @@ function applyMode(m){
   if(curMode!==m){chk.checked=false;
     document.getElementById('auto-lbl').textContent='Auto Grab : OFF';
     document.getElementById('auto-lbl').style.color='var(--dim)';}
+  if(curMode!==m)logEv('Mode → '+m.toUpperCase(),m==='none'?'':'bz');
   curMode=m;
+  document.getElementById('grab-now').disabled=(m==='none');
   document.getElementById('mode-tag').textContent=m.toUpperCase();
   setChip('chip-mode','Mode',m.toUpperCase(),m==='none'?'':'info');
   ['none','box'].forEach(k=>document.getElementById('mode-'+k).classList.toggle('on',k===m));
@@ -721,7 +751,7 @@ document.addEventListener('keydown',e=>{
   e.preventDefault();stopAll();});
 
 // ---- status poll ----
-let pollFail=0;
+let pollFail=0, lastStKey=null, lastHistT=null, connLost=false;
 // 잡기 진행 단계: 지난 단계 초록, 현재 단계 주황 깜빡임
 function renderStages(names,cur){
   const el=document.getElementById('stages');
@@ -733,12 +763,19 @@ function renderStages(names,cur){
 function pollStatus(){
   fetch('/status').then(r=>r.json()).then(d=>{
     pollFail=0;
+    if(connLost){connLost=false;logEv('로봇 서버 다시 연결됨','ok');}
     d.busy=d.grab_busy;
     if(armReady!==d.arm_ready){armReady=d.arm_ready;pollArm();}
     document.getElementById('livedot').className='dot live';
     setChip('chip-conn','연결','OK','ok');
     const sl=document.getElementById('statusline');
     renderStages(d.stages||[],d.busy?d.stage_idx:-1);
+    const stKey=d.busy?`${d.stage_idx}`:(d.is_running?'motion':'idle');
+    if(stKey!==lastStKey){
+      if(d.busy)logEv(`잡기 ${d.stage_idx+1}/${(d.stages||[]).length} ${d.stage||''}`,'bz');
+      else if(d.is_running)logEv('모션 실행','bz');
+      else if(lastStKey!==null&&lastStKey!=='idle')logEv('대기');
+      lastStKey=stKey;}
     if(d.busy){sl.classList.add('busy');
       document.getElementById('grab-msg').textContent=d.stage?`Grabbing — ${d.stage_idx+1}/${d.stages.length} ${d.stage}`:'Grabbing...';
       setChip('chip-task','작업','잡는 중','busy');}
@@ -746,6 +783,7 @@ function pollStatus(){
     else{sl.classList.remove('busy');setChip('chip-task','작업','대기','');}
   }).catch(()=>{pollFail++;
     if(pollFail>=2){document.getElementById('livedot').className='dot err';
+      if(!connLost){connLost=true;logEv('로봇 서버 응답 없음','ng');}
       setChip('chip-conn','연결','끊김','err');setChip('chip-task','작업','-','');}});
 }
 setInterval(pollStatus, 500);
@@ -815,8 +853,11 @@ function pollHistory(){
   fetch('/grab_history').then(r=>r.json()).then(d=>{
     const el=document.getElementById('timing');
     const h=d.history||[];
-    if(!h.length){el.style.display='none';return;}
+    if(!h.length){el.style.display='none';if(lastHistT===null)lastHistT='';return;}
     const last=h[0];
+    const hk=`${last.total}|${last.ok}|${h.length}`;
+    if(lastHistT!==null&&hk!==lastHistT)logEv(`잡기 ${last.ok?'완료':'중단'} — ${last.total.toFixed(1)} 초`,last.ok?'ok':'ng');
+    lastHistT=hk;
     const seg=last.stages.map(([n,t])=>{const i=d.stages.indexOf(n);
       return `<i title="${n} ${t.toFixed(1)}s" style="flex:${Math.max(t,0.05)};background:${STAGE_COLORS[i]||'#555'}"></i>`;}).join('');
     el.innerHTML=`<div class="hd"><span>마지막 잡기</span><b>${last.total.toFixed(1)}s</b>`+
