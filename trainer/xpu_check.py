@@ -7,6 +7,8 @@ xpu_check.py — 학습과 같은 ACT 모델을 가짜 입력으로 한 단계�
     ~/miniconda3/envs/act_xpu/bin/python trainer/xpu_check.py                  # Intel GPU, 배치 8, 카메라 3 대 (학습과 같은 크기)
     ~/miniconda3/envs/act_xpu/bin/python trainer/xpu_check.py --device cpu     # 비교용
     옵션: --batch 8 --iters 10 --no-pretrained (ImageNet 가중치 안 받음)
+          --augment            학습과 같은 이미지 증강 (GPU 에서 affine_grid · grid_sample · 밝기) 을 매 step 에
+          --dataset <폴더>     가짜 입력 대신 실제 데이터셋 (trainer/data/datasets/<이름>) 을 학습과 같은 방식으로 읽음 (workers 0)
 
   단계: ① 모델 만들기 (CPU) ② 장치로 올리기 ③ 앞으로 계산 (no_grad) ④ 앞으로 + 역전파 ⑤ 가중치 갱신 ⑥ 반복 N 번 (step 당 시간)
   2026-11-10: 이 PC (Panther Lake B390) 에서 학습이 첫 50 step 전에 멈춤 (GPU 는 쉬는 상태, python 1 개 CPU 100 %) → 어느 단계인지 찾기
@@ -39,13 +41,15 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--no-pretrained", action="store_true")
+    ap.add_argument("--augment", action="store_true")
+    ap.add_argument("--dataset")
     a = ap.parse_args()
     say(f"로그 → {LOG}")
 
     say("import torch ...")
     import torch
     from act_model import ACT, ACTConfig
-    from train_act import DEFAULT_TRAIN
+    from train_act import DEFAULT_TRAIN, augment_batch
     say(f"torch {torch.__version__}")
     if a.device == "xpu":
         x = getattr(torch, "xpu", None)
@@ -63,6 +67,15 @@ def main():
     tc = DEFAULT_TRAIN
     cams = [{"name": "body", "h": 240, "w": 424}, {"name": "wrist_left", "h": 240, "w": 320}, {"name": "wrist_right", "h": 240, "w": 320}]
     SD, B = 16, a.batch
+    loader = None
+    if a.dataset:
+        from dataset import load_gripper_episodes, compute_stats_gripper, GripperEpisodeDataset
+        say(f"   실제 데이터셋 읽기 {a.dataset} ...")
+        eps, info, dcams, _ = load_gripper_episodes(a.dataset, "both", only_ok=True)
+        stats = compute_stats_gripper(eps, 30)
+        cams = dcams                     # 모델 카메라 크기 = 데이터셋 (학습과 같음)
+        say(f"   에피소드 {len(eps)}, 카메라 {[(c['name'], c['w'], c['h']) for c in dcams]}")
+
     say(f"① 모델 만들기 (CPU) — 카메라 {[(c['name'], c['w'], c['h']) for c in cams]}, state {SD}, chunk {tc['chunk_size']}, 배치 {B}")
     cfg = ACTConfig(state_dim=SD, action_dim=SD, image_h=240, image_w=320, chunk_size=int(tc["chunk_size"]), cameras=cams,
                     dim_model=int(tc["dim_model"]), dim_feedforward=int(tc["dim_feedforward"]), n_heads=int(tc["n_heads"]),
@@ -77,12 +90,31 @@ def main():
     say("   완료")
 
     g = torch.Generator().manual_seed(0)
-    imgs = [torch.randn(B, 3, c["h"], c["w"], generator=g).to(dev) for c in cams]
+    imgs_u8 = [torch.randint(0, 256, (B, 3, c["h"], c["w"]), generator=g, dtype=torch.uint8) for c in cams]
     st = torch.randn(B, SD, generator=g).to(dev)
     act = torch.randn(B, cfg.chunk_size, SD, generator=g).to(dev)
     pad = torch.zeros(B, cfg.chunk_size, dtype=torch.bool).to(dev)
-    sync()
-    say("   입력 올림")
+    if a.dataset:
+        ds = GripperEpisodeDataset(eps, cfg.chunk_size, cams, stats)
+        loader = iter(torch.utils.data.DataLoader(ds, batch_size=B, shuffle=True, drop_last=True, num_workers=0))
+
+    def batch():
+        """→ (이미지 목록, state, action, pad) — 학습과 같게 uint8 → 장치 → (증강) → 정규화"""
+        if loader is not None:
+            t = time.time()
+            b = next(loader)
+            td = time.time() - t
+            u8, s_, a_, p_ = b["images"], b["state"].to(dev), b["action"].to(dev), b["is_pad"].to(dev)
+        else:
+            td, u8, s_, a_, p_ = 0.0, imgs_u8, st, act, pad
+        t = time.time()
+        im = [augment_batch(x.to(dev), a.augment) for x in u8]
+        sync()
+        return im, s_, a_, p_, td, time.time() - t
+
+    imgs, st0, act0, pad0, td, ta = batch()
+    say(f"   입력 올림 (데이터 {td:.2f}s · 장치·{'증강·' if a.augment else ''}정규화 {ta:.2f}s)")
+    st, act, pad = st0, act0, pad0
 
     say("③ 앞으로 계산 (no_grad, 첫 실행 — 커널 준비가 여기서 오래 걸릴 수 있음) ...")
     model.eval()
@@ -115,6 +147,8 @@ def main():
     say(f"⑥ 반복 {a.iters} 번 ...")
     ts = []
     for i in range(a.iters):
+        if a.augment or loader is not None:
+            imgs, st, act, pad, td, ta = batch()
         t = time.time()
         loss, l1, kl = model.loss(imgs, st, act, pad)
         loss.backward()
@@ -123,7 +157,8 @@ def main():
         opt.zero_grad(set_to_none=True)
         sync()
         ts.append(time.time() - t)
-        say(f"   {i + 1}/{a.iters}: {ts[-1]:.2f}s  loss {loss.item():.4f}")
+        extra = f"  (데이터 {td:.2f}s · 증강·정규화 {ta:.2f}s)" if (a.augment or loader is not None) else ""
+        say(f"   {i + 1}/{a.iters}: {ts[-1]:.2f}s  loss {loss.item():.4f}{extra}")
     say(f"✓ 끝 — step 당 평균 {sum(ts) / len(ts):.2f}s (처음 1 번 빼면 {sum(ts[1:]) / max(1, len(ts) - 1):.2f}s)")
 
 
