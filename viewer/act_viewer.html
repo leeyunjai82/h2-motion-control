@@ -12,7 +12,7 @@
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%}
 body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;background:var(--bg);color:var(--ink);
-  font-size:13px;line-height:1.4;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
+  font-size:14px;line-height:1.4;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
   height:100vh;display:flex;flex-direction:column;overflow:hidden}
 .topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
   background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
@@ -27,7 +27,17 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .chip.ok{color:var(--ok);border-color:#1f5a43}.chip.info{color:var(--accent);border-color:#0b5a70}
 .chip.busy{color:var(--amber);border-color:#6a4a1f}.chip.err{color:var(--warn);border-color:#5a2b2b}
-.grid{display:grid;grid-template-columns:5fr 5fr 3.2fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
+.grid{display:grid;grid-template-columns:36fr 44fr 20fr;gap:14px;padding:0 14px 14px;flex:1;min-height:0;overflow:hidden}
+/* 핵심 숫자 (크게) */
+.kpis{display:grid;grid-template-columns:1.5fr repeat(5,1fr);gap:12px;padding:14px;flex:none}
+.kpis .ttl{display:flex;flex-direction:column;justify-content:center;min-width:0}
+.kpis h1{font-size:30px;letter-spacing:.5px;line-height:1.1;color:var(--ink);white-space:nowrap}.kpis h1 b{color:var(--accent)}
+.kpis p{font-size:14px;color:var(--dim);margin-top:6px}
+.k{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:10px 16px;min-width:0;box-shadow:inset 0 3px 0 var(--accent-deep)}
+.k span{display:block;font-size:12px;letter-spacing:1.5px;color:var(--dim)}
+.k b{display:block;font-size:40px;line-height:1.15;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.k small{display:block;font-size:12px;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.k.hl{border-color:#0b5a70;box-shadow:inset 0 3px 0 var(--accent),0 0 18px rgba(0,183,235,.15)}.k.hl b{color:var(--accent)}
 .col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
 .card.fill{flex:1 1 0;min-height:200px;display:flex;flex-direction:column}
@@ -61,7 +71,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .metrics .m{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 8px;min-width:0}
 .metrics .m span{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.5px}
 .metrics .m b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
-.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin-top:10px;font-size:11.5px}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 10px;font-size:11.5px}
 .kv span{color:var(--dim)}.kv b{font-weight:400;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .checks{display:flex;flex-direction:column;gap:5px;font-size:11.5px}
 .checks div{display:flex;gap:8px;align-items:baseline}
@@ -71,28 +81,27 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 /* 3D */
 #view{position:relative;flex:1;min-height:0;background:radial-gradient(circle at 50% 35%,#152230 0%,#0a0e13 70%)}
 #view canvas{display:block;width:100%;height:100%}
-.hero{position:absolute;left:16px;top:14px;pointer-events:none;text-shadow:0 1px 6px #000,0 0 2px #000}
-.hero h1{font-size:22px;letter-spacing:1px;color:var(--ink)}.hero h1 b{color:var(--accent)}
-.hero p{font-size:12px;color:var(--dim);margin-top:4px}.hero p b{color:var(--ink);font-weight:700}
-.ov{position:absolute;left:16px;bottom:14px;pointer-events:none;display:flex;gap:6px;flex-wrap:wrap}
-.ov span{background:#000a;border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:12px}
-.ov span b{color:var(--accent)}
+.ov{position:absolute;left:16px;right:16px;bottom:16px;pointer-events:none;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.ov>div{background:#000b;border:1px solid var(--line);border-radius:10px;padding:8px 14px}
+.ov .ep{font-size:14px;color:var(--dim)}.ov .ep b{font-size:30px;color:#fff;margin:0 4px}
+.ov .stg{font-size:24px;font-weight:700;color:#04121f;background:var(--accent);border-color:var(--accent)}
+.ov .grp{font-size:13px;color:var(--dim)}.ov .grp b{font-size:24px;color:#fff;margin:0 2px 0 6px}
 #load3d{position:absolute;right:14px;top:14px;font-size:11px;color:var(--dim)}
 /* 카메라 */
 .cams{flex:1;min-height:0;display:grid;grid-template-rows:3fr 2fr;gap:8px}
 .cams .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}
 .cam{position:relative;background:#05080c;border:1px solid var(--line);border-radius:8px;overflow:hidden;min-height:0}
 .cam canvas{position:absolute;inset:0;width:100%;height:100%}
-.cam .lb{position:absolute;left:8px;top:6px;font-size:10px;letter-spacing:1px;color:var(--accent);background:#000a;padding:2px 7px;border-radius:5px}
+.cam .lb{position:absolute;left:8px;top:6px;font-size:12px;letter-spacing:1px;color:var(--accent);background:#000a;padding:2px 7px;border-radius:5px}
 /* 관절 그래프 */
-.plots{display:grid;grid-template-rows:1fr 1fr .8fr;gap:6px;height:100%}
+.plots{display:grid;grid-template-columns:1fr 1fr .8fr;gap:8px;flex:1;min-height:0}
 .plot{position:relative;background:#0c1117;border:1px solid var(--line);border-radius:8px;min-height:0}
 .plot canvas{position:absolute;inset:0;width:100%;height:100%}
-.tl{display:flex;align-items:center;gap:10px;margin-top:10px}
+.tl{display:flex;align-items:center;gap:12px;margin-top:12px}
 .tl input[type=range]{flex:1;accent-color:var(--accent)}
-.tl .tm{font-size:11px;color:var(--dim);white-space:nowrap}
-.stages{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
-.stages span{font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.tl .tm{font-size:14px;color:var(--dim);white-space:nowrap}
+.stages{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}
+.stages span{font-size:15px;padding:4px 14px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
 .stages span.on{color:#04121f;background:var(--accent);border-color:var(--accent);font-weight:700}
 .drop{position:fixed;inset:0;background:rgba(0,183,235,.12);border:3px dashed var(--accent);display:none;
   align-items:center;justify-content:center;font-size:20px;color:var(--accent);z-index:50;pointer-events:none}
@@ -102,7 +111,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 #toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel2);
   border:1px solid var(--accent);color:var(--accent);padding:9px 16px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none;z-index:99;max-width:80vw}
 #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}#toast.err{border-color:var(--warn);color:var(--warn)}
-@media(max-width:1500px){.grid{grid-template-columns:4fr 4fr 3.4fr}.hero h1{font-size:18px}}
+@media(max-width:1500px){.grid{grid-template-columns:34fr 42fr 24fr}.kpis h1{font-size:22px}.k b{font-size:30px}}
 @media(max-width:1200px),(max-height:699px){
   body{height:auto;min-height:100vh;overflow:auto}.grid{overflow:visible;flex:none;grid-template-columns:1fr 1fr}.col{overflow:visible}
   .card.fill{flex:none;height:520px}.scroll{max-height:320px}
@@ -128,12 +137,20 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
   </div>
 </div>
 
+<div class="kpis">
+  <div class="ttl"><h1>ACT <b>imitation learning</b></h1><p>시연 데이터 → ACT 학습 → OpenVINO 모델</p></div>
+  <div class="k"><span>DEMONSTRATIONS</span><b id="k-demo">-</b><small id="k-demo-s">시연 (성공 에피소드)</small></div>
+  <div class="k"><span>DEMO TIME</span><b id="k-time">-</b><small id="k-time-s">-</small></div>
+  <div class="k"><span>CAMERAS</span><b id="k-cam">-</b><small id="k-cam-s">-</small></div>
+  <div class="k"><span>TRAINING STEPS</span><b id="k-step">-</b><small id="k-step-s">-</small></div>
+  <div class="k hl"><span>VALIDATION ERROR</span><b id="k-err">-</b><small id="k-err-s">검증 에피소드 관절 오차</small></div>
+</div>
+
 <div class="grid">
   <div class="col">
     <div class="card fill">
       <div class="card-h">Robot <span class="tag">Unitree H2 · Dex1-1 · URDF</span></div>
       <div id="view">
-        <div class="hero"><h1>ACT <b>imitation learning</b></h1><p id="hero-sub">zip 을 viewer/data 에 넣거나 화면에 끌어다 놓으세요</p></div>
         <div id="load3d"></div>
         <div class="ov" id="ov"></div>
       </div>
@@ -141,7 +158,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
   </div>
 
   <div class="col">
-    <div class="card fill" style="flex-grow:1.25">
+    <div class="card fill" style="flex-grow:1.7">
       <div class="card-h">Cameras <span class="tag" id="cam-tag">-</span></div>
       <div class="card-b"><div class="cams" id="cams"><div class="empty">데이터셋을 열면 에피소드 영상이 나옵니다</div></div></div>
     </div>
@@ -303,12 +320,8 @@ function selDs(ds){
   const cams=Object.entries(inf.cameras||{}).map(([n,c])=>`${n} ${c.w}×${c.h}`).join(' · ');
   $('chip-ds').className='chip ok';$('chip-ds').innerHTML=`Dataset <b>${esc(ds.name)}</b>`;
   $('ds-tag').textContent=ds.name;
-  $('ds-b').innerHTML=`<div class="metrics">
-      <div class="m"><span>EPISODES</span><b>${ok.length}<small style="color:var(--dim);font-size:10px"> / ${eps.length}</small></b></div>
-      <div class="m"><span>TIME</span><b>${fmtT(okDur)}</b></div>
-      <div class="m"><span>FRAMES</span><b>${frames.toLocaleString()}</b></div>
-      <div class="m"><span>FPS</span><b>${num(inf.fps,0)}</b></div></div>
-    <div class="kv"><span>format</span><b>${esc(inf.format)}</b><span>cameras</span><b title="${esc(cams)}">${esc(cams)}</b>
+  $('ds-b').innerHTML=`<div class="kv"><span>episodes</span><b>성공 ${ok.length} / 전체 ${eps.length}</b>
+      <span>frames</span><b>${frames.toLocaleString()} · ${num(inf.fps,0)} fps</b><span>format</span><b>${esc(inf.format)}</b><span>cameras</span><b title="${esc(cams)}">${esc(cams)}</b>
       <span>state</span><b>${(inf.state_names||[]).length} (팔 7 + 그리퍼) × 2</b><span>hand</span><b>${esc(cnt('side'))}</b>
       <span>result</span><b>${esc(cnt('result'))}</b><span>created</span><b>${esc(inf.created||'-')}</b>
       <span>all eps</span><b>${eps.length} (${fmtT(dur)}) · 실패 ${eps.length-ok.length}</b></div>`;
@@ -327,12 +340,7 @@ function selMd(md){
   const cams=(m.cameras||[]).map(c=>`${c.name} ${c.w}×${c.h}`).join(' · ');
   const arch=`d${cf.dim_model??tr.dim_model??'-'} · heads ${cf.n_heads??'-'} · enc ${cf.n_encoder_layers??'-'} · dec ${cf.n_decoder_layers??'-'}`;
   const trn=['batch_size','lr','kl_weight','augment','val_frac','amp'].filter(k=>k in tr).map(k=>`${k} ${tr[k]}`).join(' · ');
-  $('md-b').innerHTML=`<div class="metrics">
-      <div class="m"><span>STEPS</span><b>${m.steps!=null?(+m.steps).toLocaleString():'-'}</b></div>
-      <div class="m"><span>VAL ERR</span><b>${num(m.val_err_deg,2)}°</b></div>
-      <div class="m"><span>VAL L1</span><b>${num(m.val_l1,4)}</b></div>
-      <div class="m"><span>CHUNK</span><b>${m.chunk_size??'-'}</b></div></div>
-    <div class="kv"><span>name</span><b title="${esc(m.name)}">${esc(m.name)}</b><span>dataset</span><b>${esc(m.dataset)}</b>
+  $('md-b').innerHTML=`<div class="kv"><span>val L1</span><b>${num(m.val_l1,4)} · chunk ${m.chunk_size??'-'}</b><span>name</span><b title="${esc(m.name)}">${esc(m.name)}</b><span>dataset</span><b>${esc(m.dataset)}</b>
       <span>episodes</span><b>${m.episodes??'-'} (검증 ${m.val_episodes??'-'}) · ${m.frames!=null?(+m.frames).toLocaleString():'-'} frames</b>
       <span>hand</span><b>${esc(m.side||'-')} · state ${m.state_dim??'-'} → action ${m.action_dim??'-'}</b>
       <span>cameras</span><b title="${esc(cams)}">${esc(cams||'-')}</b><span>network</span><b>ACT · ${esc(arch)}</b>
@@ -342,11 +350,20 @@ function selMd(md){
       <span>created</span><b>${esc(m.exported||m.created||'-')}</b></div>`;
   updateHero();renderChecks();
 }
-function updateHero(){
-  const parts=[];
-  if(curDs){const ok=okEps(curDs);parts.push(`<b>${ok.length}</b> demonstrations · <b>${fmtT(ok.reduce((s,e)=>s+(+e.meta.duration_s||0),0))}</b>`);}
-  if(curMd)parts.push(`model <b>${esc(curMd.name)}</b> · <b>${num(curMd.meta.steps,0)}</b> steps · val err <b>${num(curMd.meta.val_err_deg,2)}°</b>`);
-  $('hero-sub').innerHTML=parts.length?parts.join('<br>'):'zip 을 viewer/data 에 넣거나 화면에 끌어다 놓으세요';
+function updateHero(){                                  // 위쪽 큰 숫자
+  if(curDs){
+    const ok=okEps(curDs),cams=Object.keys(curDs.info.cameras||{});
+    $('k-demo').textContent=ok.length;
+    $('k-time').textContent=fmtT(ok.reduce((s,e)=>s+(+e.meta.duration_s||0),0));
+    $('k-time-s').textContent=`${ok.reduce((s,e)=>s+(+e.meta.n||0),0).toLocaleString()} frames · ${num(curDs.info.fps,0)} fps`;
+    $('k-cam').textContent=cams.length;$('k-cam-s').textContent=cams.join(' · ');
+  }
+  if(curMd){
+    const m=curMd.meta;
+    $('k-step').textContent=m.steps!=null?(+m.steps).toLocaleString():'-';
+    $('k-step-s').textContent=`ACT · chunk ${m.chunk_size??'-'} · ${m.episodes??'-'} episodes`;
+    $('k-err').textContent=m.val_err_deg!=null?`${num(m.val_err_deg,2)}°`:'-';
+  }
 }
 const SIDE_IDX={left:[...Array(8).keys()],right:[...Array(8).keys()].map(i=>i+8),both:[...Array(16).keys()]};
 function renderChecks(){
@@ -418,8 +435,9 @@ function setFrame(i){
   poseRobot(st);
   const sn=(ep.meta.stages||[])[sg];
   const g=st.length>=16&&GRIP?[st[7],st[15]].map(q=>(q*GRIP.mm_per_rad).toFixed(0)):null;
-  $('ov').innerHTML=`<span><b>${ep.id}</b> ${esc(ep.meta.side||'')}</span>`+(sn?`<span>stage <b>${esc(sn)}</b></span>`:'')+
-    (g?`<span>gripper L <b>${g[0]}</b> · R <b>${g[1]}</b> mm</span>`:'');
+  const okl=okEps(curDs),k=okl.findIndex(e=>e.id===ep.id);
+  $('ov').innerHTML=`<div class="ep">EP<b>${k>=0?k+1:ep.id.replace('ep_','')}</b>/ ${okl.length}</div>`+(sn?`<div class="stg">${esc(sn)}</div>`:'')+
+    (g?`<div class="grp">GRIPPER L<b>${g[0]}</b>R<b>${g[1]}</b>mm</div>`:'');
   drawCams(ep,i);overlayPlots(ep,i);
 }
 
@@ -472,12 +490,12 @@ function drawPlots(ep){
     let lo=Infinity,hi=-Infinity;
     for(let i=0;i<ep.n;i++)for(const k of idx){for(const a of [ep.state,ep.action]){const v=conv(a[i*ep.D+k]);if(v<lo)lo=v;if(v>hi)hi=v;}}
     if(!isFinite(lo)){lo=-1;hi=1;}if(hi-lo<1e-6){hi+=1;lo-=1;}const pad=(hi-lo)*.08;lo-=pad;hi+=pad;
-    const L=36*dpr,R=8*dpr,T=16*dpr,B=6*dpr,x=i=>L+(W-L-R)*i/Math.max(1,ep.n-1),y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo));
+    const L=40*dpr,R=8*dpr,T=20*dpr,B=6*dpr,x=i=>L+(W-L-R)*i/Math.max(1,ep.n-1),y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo));
     // 단계 띠
     if(ep.stage){let s0=0;for(let i=1;i<=ep.n;i++){if(i===ep.n||ep.stage[i]!==ep.stage[s0]){g.fillStyle=PAL[(ep.stage[s0]%PAL.length+PAL.length)%PAL.length]+'22';g.fillRect(x(s0),T,x(i-1)-x(s0)+1,H-T-B);s0=i;}}}
-    g.strokeStyle='#2a3340';g.lineWidth=1;g.font=`${10*dpr}px ui-monospace,monospace`;g.fillStyle='#6b7785';
+    g.strokeStyle='#2a3340';g.lineWidth=1;g.font=`${12*dpr}px ui-monospace,monospace`;g.fillStyle='#6b7785';
     for(let k=0;k<=2;k++){const v=lo+(hi-lo)*k/2,yy=y(v);g.beginPath();g.moveTo(L,yy);g.lineTo(W-R,yy);g.stroke();g.fillText(v.toFixed(0),3*dpr,yy+3*dpr);}
-    g.fillStyle='#c9d4e0';g.fillText(`${pl.title} ${pl.unit}`,L,11*dpr);
+    g.fillStyle='#c9d4e0';g.fillText(`${pl.title} ${pl.unit}`,L,14*dpr);
     idx.forEach((k,c)=>{
       const col=pl.grip?(c?'#ffb454':'#00b7eb'):PAL[c%PAL.length];
       for(const [a,dash,al] of [[ep.action,[4*dpr,3*dpr],.55],[ep.state,[],1]]){
@@ -486,7 +504,7 @@ function drawPlots(ep){
       }
       g.globalAlpha=1;g.setLineDash([]);
     });
-    if(pl.grip){g.fillStyle='#00b7eb';g.fillText('L',W-40*dpr,11*dpr);g.fillStyle='#ffb454';g.fillText('R',W-26*dpr,11*dpr);}
+    if(pl.grip){const lx=L+g.measureText(`${pl.title} ${pl.unit}`).width+12*dpr;g.fillStyle='#00b7eb';g.fillText('L',lx,14*dpr);g.fillStyle='#ffb454';g.fillText('R',lx+14*dpr,14*dpr);}
     plotCache[pl.id]={off,x};
   }
 }
