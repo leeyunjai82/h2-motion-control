@@ -336,7 +336,7 @@ function selMd(md){
       <span>episodes</span><b>${m.episodes??'-'} (검증 ${m.val_episodes??'-'}) · ${m.frames!=null?(+m.frames).toLocaleString():'-'} frames</b>
       <span>hand</span><b>${esc(m.side||'-')} · state ${m.state_dim??'-'} → action ${m.action_dim??'-'}</b>
       <span>cameras</span><b title="${esc(cams)}">${esc(cams||'-')}</b><span>network</span><b>ACT · ${esc(arch)}</b>
-      <span>train</span><b title="${esc(trn)}">${esc(trn||'-')}</b><span>device</span><b title="${esc(m.device)}">${esc(m.device||'-')}</b>
+      <span>train</span><b title="${esc(trn)}">${esc(trn||'-')}</b>
       <span>OpenVINO</span><b>${esc(m.openvino||'-')} · 변환 오차 ${num(m.export_max_abs_diff_deg,3)}°</b>
       <span>file</span><b>policy.bin ${md.bin?(md.bin/1e6).toFixed(1)+' MB':'-'}</b>
       <span>created</span><b>${esc(m.exported||m.created||'-')}</b></div>`;
