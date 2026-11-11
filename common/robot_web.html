@@ -1,5 +1,7 @@
 <!DOCTYPE html>
-<!-- Version: 2.32
+<!-- Version: 2.33
+  2.33 - SEE → THINK → ACT 흐름 카드 · 잡기 기록 숫자 · 카메라 위 인식 표시 · 사람 인식 요약 · On-device AI 표 · 시연 모드 (DEMO)
+  2.32
   2.32 - 왼쪽 열 아래 빈 칸에 Log 카드 (모드 · 잡기 단계 · 결과 · 알림을 시각과 함께, 이 브라우저에서만 기록) ·
          Handover 아래 글자 줄바꿈 안 함 (좁은 화면에서 '내려놓 / 기' 로 잘리던 것) · Grab Mode OFF 면 [Grab Now] 흐리게 · 누를 수 없음
   2.31
@@ -206,6 +208,45 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
 @keyframes sgb{50%{opacity:.6}}
 .statusline.busy{border-color:var(--amber);color:var(--amber)}
 
+/* SEE → THINK → ACT */
+.pipe{display:grid;grid-template-columns:1fr auto 1fr auto 1fr;align-items:stretch;gap:6px;padding:10px}
+.pc{background:var(--panel2);border:1px solid var(--line);border-radius:9px;padding:9px 11px;min-width:0;transition:.25s;position:relative}
+.pc .ph{display:flex;align-items:baseline;gap:8px;font-size:10px;letter-spacing:1.5px;color:var(--dim)}
+.pc .ph b{font-size:13px;letter-spacing:2px;color:var(--ink)}
+.pc .pm{font-size:15px;font-weight:700;margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--ink)}
+.pc .ps{font-size:11px;color:var(--dim);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pc.on{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 18px rgba(0,183,235,.35)}
+.pc.on .ph b{color:var(--accent)}
+#pc-act.on{border-color:var(--amber);box-shadow:0 0 0 1px var(--amber),0 0 18px rgba(255,180,84,.35)}
+#pc-act.on .ph b{color:var(--amber)}
+.pc.off{opacity:.45}
+.parr{display:flex;align-items:center;color:var(--dim);font-size:18px}
+.pbar{height:5px;border-radius:3px;background:#0c1117;margin-top:7px;overflow:hidden}
+.pbar i{display:block;height:100%;width:0;background:var(--amber);transition:width .3s}
+.kpi{display:flex;gap:18px;padding:0 12px 10px;font-size:11px;color:var(--dim);flex-wrap:wrap}
+.kpi b{color:var(--ink);font-size:13px}
+@media(max-width:1500px){.pc .ph span{display:none}.pc .pm{font-size:13.5px}.kpi{gap:12px}.kpi span:last-child{display:none}}
+/* 카메라 위 인식 표시 */
+.cam-hud{position:absolute;left:10px;bottom:10px;z-index:3;display:none;gap:6px;flex-direction:column;align-items:flex-start;pointer-events:none}
+.cam-hud .b{background:rgba(5,8,12,.78);border:1px solid var(--ok);color:var(--ok);border-radius:7px;padding:4px 10px;font-weight:700;font-size:15px}
+.cam-hud .b small{font-size:11px;font-weight:400;color:var(--ink);margin-left:6px}
+.cam-wrap.found{box-shadow:inset 0 0 0 2px var(--ok)}
+.cam-wrap.grab{box-shadow:inset 0 0 0 3px var(--amber)}
+/* 사람 인식 요약 */
+.human{font-size:11.5px;color:var(--ink);margin-top:7px;line-height:1.6}
+.human .tg{display:inline-block;padding:1px 8px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);margin:0 4px 3px 0}
+.human .tg.hand{border-color:var(--amber);color:var(--amber)}
+/* On-device AI 표 */
+.pt .bar{height:7px}
+/* 시연 모드: 개발용 칸 숨기고 흐름 · 카메라 크게 */
+.demo-btn{font:inherit;font-size:11px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);cursor:pointer}
+.demo-btn.on{color:#04121f;background:var(--accent);border-color:var(--accent);font-weight:700}
+body.demo .dev-only{display:none!important}
+body.demo .pc .pm{font-size:19px}
+body.demo .pc .ps{font-size:12.5px}
+body.demo .statusline{font-size:15px}
+body.demo .stages .sg{font-size:12px;padding:5px 8px}
+
 /* buttons */
 .seg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
 .seg.two{grid-template-columns:1fr 1fr}
@@ -357,8 +398,9 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
       <span class="chip" id="chip-task">작업 <b>-</b></span>
       <span class="chip" id="chip-sys" onclick="toggleSys(event)">System <b>-</b></span>
     </div>
+    <button class="demo-btn" id="demo-btn" onclick="toggleDemo()" title="시연 모드: 개발용 칸 숨김">DEMO</button>
     <span id="lang-slot"></span>
-    <a id="link-dash" href="#">dashboard ↗</a>
+    <a id="link-dash" class="dev-only" href="#">dashboard ↗</a>
   </div>
 </div>
 <div class="card sys-pop" id="sys-pop" hidden>
@@ -383,14 +425,14 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
             <input type="checkbox" id="auto-chk" onchange="toggleAuto()"><span class="tr"></span>
             <span id="auto-lbl" style="color:var(--dim);white-space:nowrap">Auto Grab : OFF</span>
           </label>
-          <span class="hint" style="white-space:nowrap">
+          <span class="hint dev-only" style="white-space:nowrap">
             <a id="link-box" href="#" target="_blank" style="color:var(--accent2)" title="Box 인식">:50010</a>
           </span>
         </div>
       </div>
     </div>
 
-    <div class="card">
+    <div class="card dev-only">
       <div class="card-h">Wrist RPY <span style="color:var(--dim)">deg</span></div>
       <div class="card-b">
         <div class="wtab">
@@ -424,7 +466,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
     </div>
 
     <div class="card">
-      <div class="card-h">Performance <span style="color:var(--dim)">이 PC</span></div>
+      <div class="card-h">On-device AI <span style="color:var(--dim)">CPU · GPU · NPU</span></div>
       <div class="card-b" style="padding-top:8px;padding-bottom:8px">
         <table class="pt">
           <thead><tr><th>장치</th><th>사용률</th><th>모델</th></tr></thead>
@@ -445,11 +487,25 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
 
   <!-- ===== CENTER: camera ===== -->
   <div class="col col-center">
+    <div class="card" id="pipe-card">
+      <div class="pipe">
+        <div class="pc off" id="pc-see"><div class="ph"><b>SEE</b><span>perception</span></div>
+          <div class="pm" id="see-m">-</div><div class="ps" id="see-s"></div><div class="ps" id="see-h"></div></div>
+        <div class="parr">›</div>
+        <div class="pc off" id="pc-think"><div class="ph"><b>THINK</b><span>decision</span></div>
+          <div class="pm" id="think-m">-</div><div class="ps" id="think-s"></div></div>
+        <div class="parr">›</div>
+        <div class="pc off" id="pc-act"><div class="ph"><b>ACT</b><span>motion</span></div>
+          <div class="pm" id="act-m">-</div><div class="ps" id="act-s"></div><div class="pbar"><i id="act-bar"></i></div></div>
+      </div>
+      <div class="kpi" id="kpi"><span>Grabs <b id="k-n">0</b></span><span>Success <b id="k-ok">-</b></span><span>Avg <b id="k-avg">-</b></span><span>Last <b id="k-last">-</b></span><span style="margin-left:auto">since page open</span></div>
+    </div>
     <div class="card grow fill cam">
-      <div class="card-h">Camera View <span class="hd-r"><span id="dev-cam"></span><button class="segbtn" id="seg-btn" onclick="toggleSeg()" title="seg 표시 (끄면 파지점 + 인식 분포)">SEG</button><span class="tag" id="feed-tag">OFF</span></span></div>
+      <div class="card-h">Camera View <span class="hd-r"><span id="dev-cam"></span><button class="segbtn dev-only" id="seg-btn" onclick="toggleSeg()" title="seg 표시 (끄면 파지점 + 인식 분포)">SEG</button><span class="tag" id="feed-tag">OFF</span></span></div>
       <div class="card-b">
         <div class="cam-wrap">
           <span class="cam-badge" id="cam-badge" style="display:none">●REC</span>
+          <div class="cam-hud" id="cam-hud"></div>
           <img id="detect-feed" style="display:none">
           <div class="ai-ov" id="ai-ov"></div>
           <div class="cam-empty" id="feed-none">Select a Grab Mode<br>to show the camera view</div>
@@ -467,12 +523,13 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
   <!-- ===== RIGHT: robot 3D + control ===== -->
   <div class="col">
     <div class="card" id="card-vision" style="display:none">
-      <div class="card-h">Head Vision <span class="hd-r"><span id="dev-vision"></span><button class="segbtn" id="crop-btn" onclick="toggleCrop()" title="CROP: 인식된 것만 잘라 한 줄 / 끄면 두 눈 전체 화면">CROP</button><a id="link-vision" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
+      <div class="card-h">Head Vision <span class="hd-r"><span id="dev-vision"></span><button class="segbtn dev-only" id="crop-btn" onclick="toggleCrop()" title="CROP: 인식된 것만 잘라 한 줄 / 끄면 두 눈 전체 화면">CROP</button><a id="link-vision" class="dev-only" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
       <div class="card-b vision-b"><img id="vision-strip" class="vision-full" alt="">
         <div class="glasses" id="glasses" style="display:none">
           <span class="temple l"></span><span class="lens l"><canvas id="eye-l"></canvas></span>
           <span class="bridge"></span><span class="lens r"><canvas id="eye-r"></canvas></span><span class="temple r"></span>
-        </div><img id="pair-src" class="pair-src" alt=""></div>
+        </div><img id="pair-src" class="pair-src" alt="">
+        <div class="human" id="human"></div></div>
     </div>
     <div class="card grow fill robot">
       <div class="card-h">Robot View <a id="link-robotonly" href="#" target="_blank" style="color:var(--accent2)">↗</a></div>
@@ -481,7 +538,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
       </div>
     </div>
 
-    <div class="card" id="card-motions">
+    <div class="card dev-only" id="card-motions">
       <div class="card-h">Motions <span style="cursor:pointer" onclick="refreshMotions()">⟳</span></div>
       <div class="card-b">
         <div class="mlist" id="mlist"><div class="hint" style="text-align:center">Loading...</div></div>
@@ -762,7 +819,7 @@ function renderStages(names,cur){
 }
 function pollStatus(){
   fetch('/status').then(r=>r.json()).then(d=>{
-    pollFail=0;
+    pollFail=0;ST=d;
     if(connLost){connLost=false;logEv('로봇 서버 다시 연결됨','ok');}
     d.busy=d.grab_busy;
     if(armReady!==d.arm_ready){armReady=d.arm_ready;pollArm();}
@@ -792,8 +849,9 @@ pollStatus();
 // Box 모드일 때 detect_box(50010) 에서 박스 좌표(cm) 폴링
 function pollCoord(){
   const co=document.getElementById('coord');
-  if(curMode==='none'){co.textContent='';devBadges('dev-cam',[]);return;}
+  if(curMode==='none'){DET=null;co.textContent='';devBadges('dev-cam',[]);return;}
   fetch(`http://${host}:50010/status`).then(r=>r.json()).then(d=>{
+    DET=d;
     if(d.found&&d.torso){
       const x=(d.torso.x*100).toFixed(1),y=(d.torso.y*100).toFixed(1),z=(d.torso.z*100).toFixed(1);
       let s=`X ${x}  Y ${y}  Z ${z} cm`;
@@ -805,7 +863,7 @@ function pollCoord(){
     devBadges('dev-cam',d.perf?[['',devName(d.perf.exec,d.perf.device)]]:[]);
     useDev('box',d.perf&&d.perf.active?devName(d.perf.exec,d.perf.device):null,d.perf&&d.perf.infer_ms);
     if('show_seg' in d)setSeg(d.show_seg);
-  }).catch(()=>{co.textContent='';renderAI(null);devBadges('dev-cam',[]);useDev('box',null);});
+  }).catch(()=>{DET=null;co.textContent='';renderAI(null);devBadges('dev-cam',[]);useDev('box',null);});
 }
 setInterval(pollCoord, 400);
 // ---- SEG 표시 (detect_box 화면: 켜면 seg 영역·윗면·꼭짓점, 끄면 파지점 + 최근 2 초 인식 분포) ----
@@ -853,6 +911,7 @@ function pollHistory(){
   fetch('/grab_history').then(r=>r.json()).then(d=>{
     const el=document.getElementById('timing');
     const h=d.history||[];
+    kpiAdd(h);
     if(!h.length){el.style.display='none';if(lastHistT===null)lastHistT='';return;}
     const last=h[0];
     const hk=`${last.total}|${last.ok}|${h.length}`;
@@ -868,6 +927,72 @@ function pollHistory(){
   }).catch(()=>{});
 }
 setInterval(pollHistory,2000);pollHistory();
+
+// ---- SEE → THINK → ACT · 잡기 기록 · 카메라 위 인식 표시 · 사람 인식 ----
+let DET=null, ST=null, HUM=[], LASTG=null;
+const KPI={n:0,ok:0,sum:0,seen:new Set()};
+function hoDir(){const b=document.querySelector('#ho-seg .btn.on');return b?b.id.replace('ho-',''):'center';}
+function setPC(id,m,sub,state){const el=document.getElementById('pc-'+id);el.className='pc'+(state?' '+state:'');
+  document.getElementById(id+'-m').textContent=m;document.getElementById(id+'-s').textContent=sub||'';}
+function renderPipe(){
+  const off=curMode==='none';
+  const found=!!(DET&&DET.found), p=DET&&DET.perf||{};
+  const conf=p.conf==null?null:Math.round(p.conf*100);
+  const busy=!!(ST&&ST.grab_busy), n=(ST&&ST.stages||[]).length, idx=ST?ST.stage_idx:-1;
+  const auto=document.getElementById('auto-chk').checked;
+  const ppl=Math.max(HUM.filter(h=>h.eye==='left').length,HUM.filter(h=>h.eye==='right').length), hands=HUM.filter(h=>h.label==='raise hand').length;
+  // SEE
+  const size=p.W_cm==null?'':`${(+p.W_cm).toFixed(0)}×${(+p.D_cm).toFixed(0)}×${(+p.H_cm).toFixed(0)} cm`;
+  const dist=found&&DET.torso?Math.hypot(DET.torso.x,DET.torso.y)*100:null;
+  document.getElementById('see-h').textContent=off||!(ppl||hands)?'':`people ${ppl}${hands?` · hand up ${hands}`:''}`;
+  setPC('see',off?'Grab Mode OFF':found?`Box ${conf==null?'':conf+'%'}`:'Searching box…',
+    off?'':(found?[size,dist==null?'':dist.toFixed(0)+' cm'].filter(Boolean).join(' · '):'camera + AI'),
+    off?'off':(!busy&&!found?'on':''));
+  // THINK
+  const dir={center:'→ center',left:'→ left',right:'→ right',place:'→ table'}[hoDir()];
+  setPC('think',off?'-':busy?'Grab · both arms':found?(auto?'Auto grab: go':'Ready to grab'):'Waiting for target',
+    off?'':`${dir} · auto ${auto?'ON':'OFF'}`, off?'off':(!busy&&found?'on':''));
+  // ACT
+  let am='Idle', as='';
+  if(busy){am=`${idx+1}/${n} ${ST.stage||''}`;as='grabbing';}
+  else if(LASTG){am=`Last ${LASTG.ok?'✓':'✗'} ${LASTG.total.toFixed(1)} s`;}
+  setPC('act',off&&!busy?'-':am,as,busy?'on':(off?'off':''));
+  document.getElementById('act-bar').style.width=busy&&n?`${(idx+1)/n*100}%`:'0';
+  // 카메라 위
+  const hud=document.getElementById('cam-hud'), cw=document.querySelector('.cam-wrap');
+  cw.classList.toggle('grab',busy);cw.classList.toggle('found',!busy&&found&&!off);
+  if(!off&&found){hud.innerHTML=`<span class="b">BOX ${conf==null?'':conf+'%'}${size?`<small>${size}</small>`:''}</span>`+(busy?`<span class="b" style="border-color:var(--amber);color:var(--amber)">${idx+1}/${n} ${ST.stage||''}</span>`:'');hud.style.display='flex';}
+  else hud.style.display='none';
+}
+function kpiAdd(h){
+  for(const g of h.slice().reverse()){const k=`${g.end}`;if(KPI.seen.has(k))continue;KPI.seen.add(k);
+    if(KPI.primed){KPI.n++;if(g.ok)KPI.ok++;KPI.sum+=g.total;}}
+  KPI.primed=true;
+  LASTG=h[0]||LASTG;
+  if(!document.getElementById('k-n'))return;
+  document.getElementById('k-n').textContent=KPI.n;
+  document.getElementById('k-ok').textContent=KPI.n?`${KPI.ok} (${Math.round(KPI.ok/KPI.n*100)}%)`:'-';
+  document.getElementById('k-avg').textContent=KPI.n?`${(KPI.sum/KPI.n).toFixed(1)} s`:'-';
+  document.getElementById('k-last').textContent=LASTG?`${LASTG.total.toFixed(1)} s ${LASTG.ok?'✓':'✗'}`:'-';
+}
+function pollHuman(){
+  if(document.getElementById('card-vision').style.display==='none'){HUM=[];document.getElementById('human').innerHTML='';return;}
+  fetch(`http://${host}:50013/detections`).then(r=>r.json()).then(d=>{
+    HUM=Array.isArray(d)?d:[];
+    const tags=HUM.map(h=>{
+      const who=h.age!=null?` · ${h.male==null?'':(h.male>=0.5?'M ':'F ')}${Math.round(h.age)}`:'';
+      return `<span class="tg${h.label==='raise hand'?' hand':''}">${h.label}${who} · ${Math.round(h.conf*100)}%</span>`;});
+    document.getElementById('human').innerHTML=tags.length?tags.join(''):'<span style="color:var(--dim)">no people</span>';
+  }).catch(()=>{HUM=[];});
+}
+setInterval(pollHuman,1000);
+function toggleDemo(on){
+  const v=on==null?!document.body.classList.contains('demo'):on;
+  document.body.classList.toggle('demo',v);document.getElementById('demo-btn').classList.toggle('on',v);
+  try{localStorage.setItem('pm_demo',v?'1':'0');}catch(e){}
+}
+try{if(localStorage.getItem('pm_demo')==='1')toggleDemo(true);}catch(e){}
+setInterval(renderPipe,300);
 
 // ---- init ----
 fetch('/active_mode').then(r=>r.json()).then(d=>applyMode(d.mode||'none')).catch(()=>{});
