@@ -1,0 +1,668 @@
+<!DOCTYPE html>
+<html lang="ko"><head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>pitron · act viewer</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
+  --ink:#c9d4e0; --dim:#6b7785;
+  --accent:#00b7eb; --accent2:#7fd8f5; --accent-tint:rgba(0,183,235,.20); --accent-deep:#08465a;
+  --ok:#3ddc97; --warn:#ff6b6b; --amber:#ffb454; --r:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;background:var(--bg);color:var(--ink);
+  font-size:13px;line-height:1.4;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
+.logo{font-weight:700;letter-spacing:.5px;font-size:15px;color:var(--accent)}.logo b{color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim)}
+.dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.err{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.topbar .right{margin-left:auto;display:flex;gap:10px;align-items:center;font-size:11px;color:var(--dim)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:4px 10px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--dim);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:700}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.ok{color:var(--ok);border-color:#1f5a43}.chip.info{color:var(--accent);border-color:#0b5a70}
+.chip.busy{color:var(--amber);border-color:#6a4a1f}.chip.err{color:var(--warn);border-color:#5a2b2b}
+.grid{display:grid;grid-template-columns:5fr 5fr 3.2fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
+.card.fill{flex:1 1 0;min-height:200px;display:flex;flex-direction:column}
+.card.fill>.card-b{flex:1;min-height:0;display:flex;flex-direction:column}
+.scroll{flex:1;min-height:60px;overflow-y:auto}
+.card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
+  padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--panel2);gap:8px}
+.card-h .tag{color:var(--accent);font-weight:700;text-transform:none;letter-spacing:.3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.card-b{padding:13px}
+.btn{font-family:inherit;font-size:12px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+  padding:6px 10px;border-radius:7px;cursor:pointer;transition:.12s;white-space:nowrap}
+.btn:hover{border-color:var(--accent);color:var(--accent)}.btn:active{transform:translateY(1px)}
+.btn.primary{background:var(--accent);color:#04121f;border:none;font-weight:700}.btn.primary:hover{background:#33c5ef;color:#04121f}
+.in{background:#0c1117;border:1px solid var(--line);color:var(--ink);padding:4px 6px;border-radius:6px;font-family:inherit;font-size:11px;max-width:220px}
+.in:focus{outline:none;border-color:var(--accent2)}
+.sw{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;font-size:11px;color:var(--dim)}
+.sw input{display:none}
+.sw .tr{width:34px;height:18px;border-radius:9px;background:var(--line);position:relative;transition:.15s;flex:none}
+.sw .tr::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dim);transition:.15s}
+.sw input:checked+.tr{background:var(--accent-deep)}.sw input:checked+.tr::after{left:18px;background:var(--accent)}
+.hint{font-size:11px;color:var(--dim);line-height:1.5}.hint b{color:var(--ink);font-weight:400}
+.tbl{width:100%;border-collapse:collapse;font-size:11.5px}
+.tbl th{font-weight:400;color:var(--dim);font-size:10px;text-align:left;padding:0 5px 4px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel)}
+.tbl td{padding:5px;border-bottom:1px solid var(--line);vertical-align:middle;white-space:nowrap}
+.tbl tr.ep{cursor:pointer}.tbl tr.ep:hover td{background:var(--panel2)}
+.tbl tr.cur td{background:var(--accent-tint)}
+.tbl .num{text-align:right}
+.st{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid currentColor}
+.st.ok{color:var(--ok)}.st.no{color:var(--warn)}
+.metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.metrics .m{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 8px;min-width:0}
+.metrics .m span{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.5px}
+.metrics .m b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:block}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;margin-top:10px;font-size:11.5px}
+.kv span{color:var(--dim)}.kv b{font-weight:400;text-align:right;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.checks{display:flex;flex-direction:column;gap:5px;font-size:11.5px}
+.checks div{display:flex;gap:8px;align-items:baseline}
+.checks i{font-style:normal;width:14px;flex:none;text-align:center}
+.checks .ok i{color:var(--ok)}.checks .warn i{color:var(--amber)}.checks .bad i{color:var(--warn)}
+.checks small{color:var(--dim);display:block}
+/* 3D */
+#view{position:relative;flex:1;min-height:0;background:radial-gradient(circle at 50% 35%,#152230 0%,#0a0e13 70%)}
+#view canvas{display:block;width:100%;height:100%}
+.hero{position:absolute;left:16px;top:14px;pointer-events:none;text-shadow:0 1px 6px #000,0 0 2px #000}
+.hero h1{font-size:22px;letter-spacing:1px;color:var(--ink)}.hero h1 b{color:var(--accent)}
+.hero p{font-size:12px;color:var(--dim);margin-top:4px}.hero p b{color:var(--ink);font-weight:700}
+.ov{position:absolute;left:16px;bottom:14px;pointer-events:none;display:flex;gap:6px;flex-wrap:wrap}
+.ov span{background:#000a;border:1px solid var(--line);border-radius:7px;padding:4px 10px;font-size:12px}
+.ov span b{color:var(--accent)}
+#load3d{position:absolute;right:14px;top:14px;font-size:11px;color:var(--dim)}
+/* 카메라 */
+.cams{flex:1;min-height:0;display:grid;grid-template-rows:3fr 2fr;gap:8px}
+.cams .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}
+.cam{position:relative;background:#05080c;border:1px solid var(--line);border-radius:8px;overflow:hidden;min-height:0}
+.cam canvas{position:absolute;inset:0;width:100%;height:100%}
+.cam .lb{position:absolute;left:8px;top:6px;font-size:10px;letter-spacing:1px;color:var(--accent);background:#000a;padding:2px 7px;border-radius:5px}
+/* 관절 그래프 */
+.plots{display:grid;grid-template-rows:1fr 1fr .8fr;gap:6px;height:100%}
+.plot{position:relative;background:#0c1117;border:1px solid var(--line);border-radius:8px;min-height:0}
+.plot canvas{position:absolute;inset:0;width:100%;height:100%}
+.tl{display:flex;align-items:center;gap:10px;margin-top:10px}
+.tl input[type=range]{flex:1;accent-color:var(--accent)}
+.tl .tm{font-size:11px;color:var(--dim);white-space:nowrap}
+.stages{display:flex;gap:4px;margin-top:8px;flex-wrap:wrap}
+.stages span{font-size:10.5px;padding:2px 8px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.stages span.on{color:#04121f;background:var(--accent);border-color:var(--accent);font-weight:700}
+.drop{position:fixed;inset:0;background:rgba(0,183,235,.12);border:3px dashed var(--accent);display:none;
+  align-items:center;justify-content:center;font-size:20px;color:var(--accent);z-index:50;pointer-events:none}
+.drop.on{display:flex}
+.empty{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;color:var(--dim);font-size:12px;line-height:1.7}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+#toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--panel2);
+  border:1px solid var(--accent);color:var(--accent);padding:9px 16px;border-radius:8px;opacity:0;transition:.25s;pointer-events:none;z-index:99;max-width:80vw}
+#toast.show{opacity:1;transform:translateX(-50%) translateY(0)}#toast.err{border-color:var(--warn);color:var(--warn)}
+@media(max-width:1500px){.grid{grid-template-columns:4fr 4fr 3.4fr}.hero h1{font-size:18px}}
+@media(max-width:1200px),(max-height:699px){
+  body{height:auto;min-height:100vh;overflow:auto}.grid{overflow:visible;flex:none;grid-template-columns:1fr 1fr}.col{overflow:visible}
+  .card.fill{flex:none;height:520px}.scroll{max-height:320px}
+}
+@media(max-width:800px){.grid{grid-template-columns:1fr}.topbar{flex-wrap:wrap}.topbar .right{margin-left:0;width:100%;flex-wrap:wrap}}
+</style></head>
+<body>
+<div class="topbar">
+  <span class="dot" id="livedot"></span>
+  <span class="logo">pitron<b>·act</b></span>
+  <span style="color:var(--dim);font-size:11px">dataset · model viewer</span>
+  <div class="chips">
+    <span class="chip" id="chip-ds">Dataset <b>-</b></span>
+    <span class="chip" id="chip-md">Model <b>-</b></span>
+    <span class="chip" id="chip-ep">Episode <b>-</b></span>
+  </div>
+  <div class="right">
+    <button class="btn primary" id="play" onclick="togglePlay()">▶ Play</button>
+    <select class="in" id="speed" onchange="P.speed=+this.value"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    <label class="sw"><input type="checkbox" id="auto" checked><span class="tr"></span>AUTO</label>
+    <button class="btn" onclick="$('pick').click()">zip 열기</button>
+    <input type="file" id="pick" accept=".zip" multiple style="display:none">
+  </div>
+</div>
+
+<div class="grid">
+  <div class="col">
+    <div class="card fill">
+      <div class="card-h">Robot <span class="tag">Unitree H2 · Dex1-1 · URDF</span></div>
+      <div id="view">
+        <div class="hero"><h1>ACT <b>imitation learning</b></h1><p id="hero-sub">zip 을 viewer/data 에 넣거나 화면에 끌어다 놓으세요</p></div>
+        <div id="load3d"></div>
+        <div class="ov" id="ov"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card fill" style="flex-grow:1.25">
+      <div class="card-h">Cameras <span class="tag" id="cam-tag">-</span></div>
+      <div class="card-b"><div class="cams" id="cams"><div class="empty">데이터셋을 열면 에피소드 영상이 나옵니다</div></div></div>
+    </div>
+    <div class="card fill">
+      <div class="card-h">Joints <span class="tag">실선 = 실측 state · 점선 = 지령 action</span></div>
+      <div class="card-b">
+        <div class="plots"><div class="plot"><canvas id="pl-l"></canvas></div><div class="plot"><canvas id="pl-r"></canvas></div><div class="plot"><canvas id="pl-g"></canvas></div></div>
+        <div class="tl"><input type="range" id="slider" min="0" max="0" value="0"><span class="tm" id="tm">0.0 / 0.0 s</span></div>
+        <div class="stages" id="stages"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <div class="card-h">Dataset <select class="in" id="sel-ds" style="display:none"></select><span class="tag" id="ds-tag">-</span></div>
+      <div class="card-b" id="ds-b"><div class="hint">수집 페이지 (/collect) <b>[Dataset zip]</b> 으로 받은 파일</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h">Model <select class="in" id="sel-md" style="display:none"></select><span class="tag" id="md-tag">-</span></div>
+      <div class="card-b" id="md-b"><div class="hint">학습 웹 (:50100) 에서 받은 <b>model zip</b> — 실행하지 않고 정보만 봅니다</div></div>
+    </div>
+    <div class="card">
+      <div class="card-h">Check <span class="tag">dataset ↔ model</span></div>
+      <div class="card-b"><div class="checks" id="checks"><div class="hint">데이터셋과 모델을 둘 다 열면 서로 맞는지 봅니다</div></div></div>
+    </div>
+    <div class="card fill">
+      <div class="card-h">Episodes <span class="tag" id="ep-tag">-</span></div>
+      <div class="card-b" style="padding:6px 8px"><div class="scroll"><table class="tbl"><thead><tr><th>#</th><th></th><th>hand</th><th class="num">time</th><th class="num">frames</th><th>result</th></tr></thead><tbody id="ep-list"></tbody></table></div></div>
+    </div>
+  </div>
+</div>
+<div class="drop" id="drop">zip 놓기 — 데이터셋 · 모델</div>
+<div id="toast"></div>
+
+<script src="/vendor/three.min.js"></script>
+<script>
+"use strict";
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let toastT=null;
+function toast(msg,err){const t=$('toast');t.textContent=msg;t.className='show'+(err?' err':'');clearTimeout(toastT);toastT=setTimeout(()=>t.className='',err?6000:2500);}
+const fmtT=s=>s==null?'-':s>=60?`${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`:`${(+s).toFixed(1)} s`;
+const num=(v,k=2)=>v==null||!isFinite(v)?'-':(+v).toFixed(k);
+const DEG=180/Math.PI;
+
+// ================= zip (필요한 부분만 읽음 — 파일 · HTTP Range · 메모리) =================
+class Src{constructor(size,read){this.size=size;this.read=read;}}
+const fileSrc=f=>new Src(f.size,(s,e)=>f.slice(s,e).arrayBuffer());
+const memSrc=b=>new Src(b.byteLength,async(s,e)=>b.slice(s,e));
+function urlSrc(url,size){
+  return new Src(size,async(s,e)=>{
+    if(e<=s)return new ArrayBuffer(0);
+    const r=await fetch(url,{headers:{Range:`bytes=${s}-${e-1}`}});
+    if(!r.ok)throw new Error(`${url} HTTP ${r.status}`);
+    const b=await r.arrayBuffer();
+    return r.status===206?b:b.slice(s,e);
+  });
+}
+const u16=(d,o)=>d.getUint16(o,true),u32=(d,o)=>d.getUint32(o,true),u64=(d,o)=>u32(d,o)+u32(d,o+4)*4294967296;
+async function zipDir(src){
+  const tail=Math.min(src.size,65557),tb=await src.read(src.size-tail,src.size),d=new DataView(tb);
+  let p=-1;for(let i=tail-22;i>=0;i--)if(u32(d,i)===0x06054b50){p=i;break;}
+  if(p<0)throw new Error('zip 이 아님');
+  let n=u16(d,p+10),cs=u32(d,p+12),co=u32(d,p+16);
+  if(n===0xffff||cs===0xffffffff||co===0xffffffff){             // zip64
+    const lb=new DataView(await src.read(src.size-tail+p-20,src.size-tail+p));
+    if(u32(lb,0)!==0x07064b50)throw new Error('zip64 끝 정보 없음');
+    const eo=u64(lb,8),e=new DataView(await src.read(eo,eo+56));
+    n=u64(e,32);cs=u64(e,40);co=u64(e,48);
+  }
+  const cd=new DataView(await src.read(co,co+cs)),out={},td=new TextDecoder();
+  let q=0;
+  for(let k=0;k<n;k++){
+    if(u32(cd,q)!==0x02014b50)throw new Error('zip 목록 깨짐');
+    let method=u16(cd,q+10),csize=u32(cd,q+20),usize=u32(cd,q+24),lho=u32(cd,q+42);
+    const nl=u16(cd,q+28),el=u16(cd,q+30),cl=u16(cd,q+32);
+    const name=td.decode(new Uint8Array(cd.buffer,cd.byteOffset+q+46,nl));
+    for(let x=q+46+nl;x<q+46+nl+el;){                           // zip64 추가 정보 (0xFFFFFFFF 인 칸만 순서대로)
+      const id=u16(cd,x),sz=u16(cd,x+2);let y=x+4;
+      if(id===1){if(usize===0xffffffff){usize=u64(cd,y);y+=8;}if(csize===0xffffffff){csize=u64(cd,y);y+=8;}if(lho===0xffffffff){lho=u64(cd,y);}}
+      x+=4+sz;
+    }
+    out[name]={name,method,csize,usize,lho};
+    q+=46+nl+el+cl;
+  }
+  return out;
+}
+async function entryStart(src,e){const h=new DataView(await src.read(e.lho,e.lho+30));return e.lho+30+u16(h,26)+u16(h,28);}
+async function entryBytes(src,e){
+  const s=await entryStart(src,e);let b=await src.read(s,s+e.csize);
+  if(e.method===8)b=await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+  else if(e.method!==0)throw new Error(`압축 방식 ${e.method} 못 읽음: ${e.name}`);
+  return b;
+}
+const parseJSON=t=>JSON.parse(t.replace(/\bNaN\b|-?\bInfinity\b/g,'null'));
+async function entryJSON(src,e){return parseJSON(new TextDecoder().decode(await entryBytes(src,e)));}
+// .npy → {shape, data} (jpeg 는 복사 없이 Uint8Array)
+function npy(b){
+  const d=new DataView(b),ver=new Uint8Array(b,6,1)[0],hl=ver===1?u16(d,8):u32(d,8),st=ver===1?10:12;
+  const h=new TextDecoder().decode(new Uint8Array(b,st,hl));
+  const ds=/'descr':\s*'([^']+)'/.exec(h)[1].replace('|','<'),shape=/'shape':\s*\(([^)]*)\)/.exec(h)[1].split(',').map(s=>s.trim()).filter(Boolean).map(Number);
+  if(/'fortran_order':\s*True/.test(h))throw new Error('fortran_order 배열 못 읽음');
+  const o=st+hl,T={'<f4':Float32Array,'<f8':Float64Array,'<i2':Int16Array,'<i4':Int32Array,'<i8':BigInt64Array,'<u1':Uint8Array,'<b1':Uint8Array}[ds];
+  if(!T)throw new Error('npy 형식 '+ds);
+  if(T===Uint8Array)return{shape,data:new Uint8Array(b,o)};
+  let a=new T(b.slice(o));
+  if(T===BigInt64Array)a=Float64Array.from(a,Number);
+  return{shape,data:a};
+}
+
+// ================= 데이터셋 · 모델 =================
+const DS=[],MD=[];let curDs=null,curMd=null;
+async function openZip(label,src){
+  const dir=await zipDir(src),names=Object.keys(dir);
+  const info=names.find(n=>/^[^/]+\/info\.json$/.test(n));
+  if(info){
+    const pre=info.split('/')[0],inf=await entryJSON(src,dir[info]);
+    const ids=names.map(n=>(n.match(new RegExp(`^${pre}/episodes/(ep_\\d+)/meta\\.json$`))||[])[1]).filter(Boolean).sort();
+    const eps=[];let k=0;
+    await Promise.all(Array.from({length:8},async()=>{while(k<ids.length){const id=ids[k++];
+      const npz=dir[`${pre}/episodes/${id}/episode.npz`];if(!npz)continue;
+      eps.push({id,meta:await entryJSON(src,dir[`${pre}/episodes/${id}/meta.json`]),npz});}}));
+    eps.sort((a,b)=>a.id<b.id?-1:1);
+    const ds={label,name:pre,info:inf,eps,src,cache:new Map()};
+    DS.push(ds);return ds;
+  }
+  const meta=names.find(n=>/^[^/]+\/meta\.json$/.test(n));
+  if(meta&&names.some(n=>n.endsWith('/policy.xml'))){
+    const pre=meta.split('/')[0],m=await entryJSON(src,dir[meta]);
+    const md={label,name:m.name||pre,meta:m,bin:(dir[`${pre}/policy.bin`]||{}).usize,xml:(dir[`${pre}/policy.xml`]||{}).usize};
+    MD.push(md);return md;
+  }
+  throw new Error('ACT 데이터셋 · 모델 zip 이 아님 (info.json · meta.json 없음)');
+}
+async function addZip(label,src){
+  try{const r=await openZip(label,src);toast(`${r.eps?'데이터셋':'모델'} ${r.name} 열림`);refreshSel();}
+  catch(e){toast(`${label}: ${e.message}`,true);}
+}
+function refreshSel(){
+  for(const [id,arr,cur] of [['sel-ds',DS,curDs],['sel-md',MD,curMd]]){
+    const s=$(id);s.innerHTML=arr.map((x,i)=>`<option value="${i}">${esc(x.name)}</option>`).join('');
+    s.style.display=arr.length>1?'':'none';if(cur)s.value=arr.indexOf(cur);
+  }
+  if(!curMd&&MD.length)selMd(MD[0]);
+  if(!curDs&&DS.length)selDs(DS.find(d=>curMd&&d.name===curMd.meta.dataset)||DS[0]);
+  renderChecks();
+}
+$('sel-ds').onchange=e=>selDs(DS[+e.target.value]);
+$('sel-md').onchange=e=>selMd(MD[+e.target.value]);
+
+const okEps=ds=>ds.eps.filter(e=>e.meta.ok);
+function selDs(ds){
+  curDs=ds;P.ep=null;
+  const eps=ds.eps,ok=okEps(ds),inf=ds.info;
+  const dur=eps.reduce((s,e)=>s+(+e.meta.duration_s||0),0),okDur=ok.reduce((s,e)=>s+(+e.meta.duration_s||0),0);
+  const frames=ok.reduce((s,e)=>s+(+e.meta.n||0),0);
+  const cnt=(k)=>{const c={};for(const e of ok){const v=e.meta[k]??'-';c[v]=(c[v]||0)+1;}return Object.entries(c).map(([a,b])=>`${a} ${b}`).join(' · ');};
+  const cams=Object.entries(inf.cameras||{}).map(([n,c])=>`${n} ${c.w}×${c.h}`).join(' · ');
+  $('chip-ds').className='chip ok';$('chip-ds').innerHTML=`Dataset <b>${esc(ds.name)}</b>`;
+  $('ds-tag').textContent=ds.name;
+  $('ds-b').innerHTML=`<div class="metrics">
+      <div class="m"><span>EPISODES</span><b>${ok.length}<small style="color:var(--dim);font-size:10px"> / ${eps.length}</small></b></div>
+      <div class="m"><span>TIME</span><b>${fmtT(okDur)}</b></div>
+      <div class="m"><span>FRAMES</span><b>${frames.toLocaleString()}</b></div>
+      <div class="m"><span>FPS</span><b>${num(inf.fps,0)}</b></div></div>
+    <div class="kv"><span>format</span><b>${esc(inf.format)}</b><span>cameras</span><b title="${esc(cams)}">${esc(cams)}</b>
+      <span>state</span><b>${(inf.state_names||[]).length} (팔 7 + 그리퍼) × 2</b><span>hand</span><b>${esc(cnt('side'))}</b>
+      <span>result</span><b>${esc(cnt('result'))}</b><span>created</span><b>${esc(inf.created||'-')}</b>
+      <span>all eps</span><b>${eps.length} (${fmtT(dur)}) · 실패 ${eps.length-ok.length}</b></div>`;
+  $('ep-tag').textContent=`${ok.length} ok / ${eps.length}`;
+  $('ep-list').innerHTML=eps.map(e=>`<tr class="ep" id="row-${e.id}" onclick="openEp('${e.id}',true)"><td>${e.id.replace('ep_','')}</td>
+    <td><span class="st ${e.meta.ok?'ok':'no'}">${e.meta.ok?'ok':'fail'}</span></td><td>${esc(e.meta.side||'-')}</td>
+    <td class="num">${num(e.meta.duration_s,1)}</td><td class="num">${e.meta.n??'-'}</td><td>${esc(e.meta.result||'')}</td></tr>`).join('');
+  buildCams(Object.keys(inf.cameras||{}));
+  updateHero();renderChecks();
+  const first=ok[0]||eps[0];if(first)openEp(first.id,false).then(()=>{if($('auto').checked)play(true);});
+}
+function selMd(md){
+  curMd=md;const m=md.meta,tr=m.train||{},cf=m.config||{};
+  $('chip-md').className='chip info';$('chip-md').innerHTML=`Model <b>${esc(md.name)}</b>`;
+  $('md-tag').textContent=m.format||'-';
+  const cams=(m.cameras||[]).map(c=>`${c.name} ${c.w}×${c.h}`).join(' · ');
+  const arch=`d${cf.dim_model??tr.dim_model??'-'} · heads ${cf.n_heads??'-'} · enc ${cf.n_encoder_layers??'-'} · dec ${cf.n_decoder_layers??'-'}`;
+  const trn=['batch_size','lr','kl_weight','augment','val_frac','amp'].filter(k=>k in tr).map(k=>`${k} ${tr[k]}`).join(' · ');
+  $('md-b').innerHTML=`<div class="metrics">
+      <div class="m"><span>STEPS</span><b>${m.steps!=null?(+m.steps).toLocaleString():'-'}</b></div>
+      <div class="m"><span>VAL ERR</span><b>${num(m.val_err_deg,2)}°</b></div>
+      <div class="m"><span>VAL L1</span><b>${num(m.val_l1,4)}</b></div>
+      <div class="m"><span>CHUNK</span><b>${m.chunk_size??'-'}</b></div></div>
+    <div class="kv"><span>name</span><b title="${esc(m.name)}">${esc(m.name)}</b><span>dataset</span><b>${esc(m.dataset)}</b>
+      <span>episodes</span><b>${m.episodes??'-'} (검증 ${m.val_episodes??'-'}) · ${m.frames!=null?(+m.frames).toLocaleString():'-'} frames</b>
+      <span>hand</span><b>${esc(m.side||'-')} · state ${m.state_dim??'-'} → action ${m.action_dim??'-'}</b>
+      <span>cameras</span><b title="${esc(cams)}">${esc(cams||'-')}</b><span>network</span><b>ACT · ${esc(arch)}</b>
+      <span>train</span><b title="${esc(trn)}">${esc(trn||'-')}</b><span>device</span><b title="${esc(m.device)}">${esc(m.device||'-')}</b>
+      <span>OpenVINO</span><b>${esc(m.openvino||'-')} · 변환 오차 ${num(m.export_max_abs_diff_deg,3)}°</b>
+      <span>file</span><b>policy.bin ${md.bin?(md.bin/1e6).toFixed(1)+' MB':'-'}</b>
+      <span>created</span><b>${esc(m.exported||m.created||'-')}</b></div>`;
+  updateHero();renderChecks();
+}
+function updateHero(){
+  const parts=[];
+  if(curDs){const ok=okEps(curDs);parts.push(`<b>${ok.length}</b> demonstrations · <b>${fmtT(ok.reduce((s,e)=>s+(+e.meta.duration_s||0),0))}</b>`);}
+  if(curMd)parts.push(`model <b>${esc(curMd.name)}</b> · <b>${num(curMd.meta.steps,0)}</b> steps · val err <b>${num(curMd.meta.val_err_deg,2)}°</b>`);
+  $('hero-sub').innerHTML=parts.length?parts.join('<br>'):'zip 을 viewer/data 에 넣거나 화면에 끌어다 놓으세요';
+}
+const SIDE_IDX={left:[...Array(8).keys()],right:[...Array(8).keys()].map(i=>i+8),both:[...Array(16).keys()]};
+function renderChecks(){
+  if(!curDs||!curMd){return;}
+  const m=curMd.meta,inf=curDs.info,rows=[];
+  const add=(lv,txt,sub)=>rows.push(`<div class="${lv}"><i>${lv==='ok'?'✓':lv==='warn'?'!':'✗'}</i><span>${txt}${sub?`<small>${sub}</small>`:''}</span></div>`);
+  add(m.dataset===curDs.name?'ok':'warn','학습 데이터셋 이름',m.dataset===curDs.name?esc(m.dataset):`모델 ${esc(m.dataset)} ↔ 연 데이터셋 ${esc(curDs.name)}`);
+  const dc=inf.cameras||{},mc=m.cameras||[];
+  const camBad=mc.filter(c=>!dc[c.name]||+dc[c.name].w!==+c.w||+dc[c.name].h!==+c.h).map(c=>c.name);
+  add(!camBad.length&&mc.length===Object.keys(dc).length?'ok':'bad','카메라 이름 · 크기',camBad.length?`다름: ${esc(camBad.join(', '))}`:mc.map(c=>c.name).join(' · '));
+  const idx=SIDE_IDX[m.side]||SIDE_IDX.both,sn=inf.state_names||[],jn=m.joint_names||[];
+  const jBad=idx.filter((k,i)=>sn[k]!==jn[i]).length;
+  add(!jBad&&jn.length===idx.length?'ok':'bad','관절 순서',jBad?`${jBad} 개 다름`:`${jn.length} 개 (${esc(m.side||'both')})`);
+  const nok=okEps(curDs).length;
+  add(m.episodes===nok?'ok':'warn','에피소드 수',m.episodes===nok?`${nok}`:`학습 ${m.episodes} ↔ 데이터셋 성공 ${nok} (그 뒤 추가 · 삭제)`);
+  add(+m.fps===+inf.fps?'ok':'warn','fps',`${m.fps} / ${inf.fps}`);
+  $('checks').innerHTML=rows.join('');
+}
+
+// ================= 에피소드 =================
+async function loadEp(ds,id){
+  if(ds.cache.has(id))return ds.cache.get(id);
+  const p=(async()=>{
+    const e=ds.eps.find(x=>x.id===id),s=await entryStart(ds.src,e.npz);
+    const buf=await ds.src.read(s,s+e.npz.csize),mem=memSrc(buf),dir=await zipDir(mem);
+    const get=async k=>dir[k+'.npy']?npy(await entryBytes(mem,dir[k+'.npy'])):null;
+    const t=await get('t'),st=await get('state'),ac=await get('action'),sg=await get('stage');
+    const cams={};
+    for(const c of Object.keys(ds.info.cameras||{})){const j=await get('jpeg_'+c),o=await get('jpeg_off_'+c);if(j&&o)cams[c]={j:j.data,o:o.data};}
+    const n=st.shape[0],D=st.shape[1];
+    return{id,meta:e.meta,n,D,t:t.data,t0:t.data[0],state:st.data,action:ac.data,stage:sg?sg.data:null,cams};
+  })();
+  ds.cache.set(id,p);
+  while(ds.cache.size>4)ds.cache.delete(ds.cache.keys().next().value);
+  p.catch(()=>ds.cache.delete(id));
+  return p;
+}
+const P={ep:null,i:-1,clock:0,playing:false,speed:1,wait:0,drawn:-1};
+async function openEp(id,user){
+  if(!curDs)return;
+  try{
+    const ep=await loadEp(curDs,id);
+    P.ep=ep;P.clock=0;P.i=-1;P.drawn=-1;P.wait=0;
+    document.querySelectorAll('#ep-list tr').forEach(r=>r.classList.toggle('cur',r.id==='row-'+id));
+    const row=$('row-'+id),sc=row&&row.closest('.scroll');           // 목록 안에서만 스크롤 (열 전체가 움직이지 않게)
+    if(sc){const rb=row.getBoundingClientRect(),sb=sc.getBoundingClientRect();if(rb.top<sb.top+22||rb.bottom>sb.bottom)sc.scrollTop+=rb.top-sb.top-24;}
+    $('slider').max=ep.n-1;
+    const okl=okEps(curDs),k=okl.findIndex(e=>e.id===id);
+    $('chip-ep').className='chip busy';$('chip-ep').innerHTML=`Episode <b>${id}</b> ${k>=0?`${k+1}/${okl.length}`:''}`;
+    $('cam-tag').textContent=`${id} · ${ep.meta.side||'-'} · ${ep.meta.result||''}`;
+    $('stages').innerHTML=(ep.meta.stages||[]).map((s,i)=>`<span id="sg-${i}">${esc(s)}</span>`).join('');
+    drawPlots(ep);setFrame(0);
+    const nx=nextOk(id);if(nx)loadEp(curDs,nx.id).catch(()=>{});      // 다음 에피소드 미리 읽기
+    if(user)play(true);
+  }catch(e){toast(`${id}: ${e.message}`,true);}
+}
+function nextOk(id){const l=okEps(curDs);if(!l.length)return null;const k=l.findIndex(e=>e.id===id);return l[(k+1)%l.length];}
+function play(on){P.playing=on;$('play').textContent=on?'❚❚ Pause':'▶ Play';$('livedot').className='dot'+(on?' live':'');}
+function togglePlay(){if(P.ep&&P.i>=P.ep.n-1)P.clock=0;play(!P.playing);}
+$('slider').oninput=e=>{play(false);if(P.ep){P.clock=P.ep.t[+e.target.value]-P.ep.t0;setFrame(+e.target.value);}};
+
+function setFrame(i){
+  const ep=P.ep;if(!ep)return;i=Math.max(0,Math.min(ep.n-1,i));if(i===P.i)return;P.i=i;
+  $('slider').value=i;
+  $('tm').textContent=`${(ep.t[i]-ep.t0).toFixed(1)} / ${(ep.t[ep.n-1]-ep.t0).toFixed(1)} s · ${i+1}/${ep.n}`;
+  const sg=ep.stage?ep.stage[i]:-1;
+  document.querySelectorAll('#stages span').forEach((s,k)=>s.classList.toggle('on',k===sg));
+  const st=ep.state.subarray(i*ep.D,(i+1)*ep.D);
+  poseRobot(st);
+  const sn=(ep.meta.stages||[])[sg];
+  const g=st.length>=16&&GRIP?[st[7],st[15]].map(q=>(q*GRIP.mm_per_rad).toFixed(0)):null;
+  $('ov').innerHTML=`<span><b>${ep.id}</b> ${esc(ep.meta.side||'')}</span>`+(sn?`<span>stage <b>${esc(sn)}</b></span>`:'')+
+    (g?`<span>gripper L <b>${g[0]}</b> · R <b>${g[1]}</b> mm</span>`:'');
+  drawCams(ep,i);overlayPlots(ep,i);
+}
+
+// ================= 카메라 =================
+const CAMV={};
+function buildCams(names){
+  const box=$('cams');
+  if(!names.length){box.innerHTML='<div class="empty">카메라 없음</div>';return;}
+  const main=names.includes('body')?'body':names[0],rest=names.filter(n=>n!==main);
+  box.innerHTML=`<div class="cam" id="cv-${main}"><canvas></canvas><span class="lb">${esc(main)}</span></div>`+
+    (rest.length?`<div class="row2" style="grid-template-columns:repeat(${rest.length},1fr)">${rest.map(n=>`<div class="cam" id="cv-${n}"><canvas></canvas><span class="lb">${esc(n)}</span></div>`).join('')}</div>`:'');
+  if(!rest.length)box.style.gridTemplateRows='1fr';else box.style.gridTemplateRows='';
+  for(const k in CAMV)delete CAMV[k];
+  for(const n of names)CAMV[n]={cv:$('cv-'+n).querySelector('canvas'),busy:false,want:-1};
+}
+function drawCams(ep,i){
+  for(const [n,c] of Object.entries(CAMV)){
+    const src=ep.cams[n];if(!src)continue;c.want=i;
+    if(c.busy)continue;c.busy=true;
+    const go=async()=>{
+      while(c.want>=0){
+        const k=c.want;c.want=-1;
+        try{
+          const bm=await createImageBitmap(new Blob([src.j.subarray(src.o[k],src.o[k+1])],{type:'image/jpeg'}));
+          const cv=c.cv,w=cv.clientWidth,h=cv.clientHeight,dpr=devicePixelRatio||1;
+          if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
+          const ctx=cv.getContext('2d'),s=Math.min(cv.width/bm.width,cv.height/bm.height),dw=bm.width*s,dh=bm.height*s;
+          ctx.fillStyle='#05080c';ctx.fillRect(0,0,cv.width,cv.height);
+          ctx.drawImage(bm,(cv.width-dw)/2,(cv.height-dh)/2,dw,dh);bm.close();
+        }catch(e){}
+      }
+      c.busy=false;
+    };
+    go();
+  }
+}
+
+// ================= 관절 그래프 =================
+const PAL=['#00b7eb','#3ddc97','#ffb454','#ff6b6b','#b18cff','#7fd8f5','#f5d76e'];
+const PLOTS=[{id:'pl-l',title:'LEFT ARM',unit:'°',idx:[0,1,2,3,4,5,6]},{id:'pl-r',title:'RIGHT ARM',unit:'°',idx:[8,9,10,11,12,13,14]},
+             {id:'pl-g',title:'GRIPPER',unit:'mm',idx:[7,15],grip:true}];
+const plotCache={};
+function drawPlots(ep){
+  for(const pl of PLOTS){
+    const cv=$(pl.id),dpr=devicePixelRatio||1,W=Math.max(10,Math.round(cv.clientWidth*dpr)),H=Math.max(10,Math.round(cv.clientHeight*dpr));
+    cv.width=W;cv.height=H;
+    const off=document.createElement('canvas');off.width=W;off.height=H;const g=off.getContext('2d');
+    const conv=pl.grip?(v=>v*(GRIP?GRIP.mm_per_rad:1)):(v=>v*DEG);
+    const idx=pl.idx.filter(k=>k<ep.D);
+    let lo=Infinity,hi=-Infinity;
+    for(let i=0;i<ep.n;i++)for(const k of idx){for(const a of [ep.state,ep.action]){const v=conv(a[i*ep.D+k]);if(v<lo)lo=v;if(v>hi)hi=v;}}
+    if(!isFinite(lo)){lo=-1;hi=1;}if(hi-lo<1e-6){hi+=1;lo-=1;}const pad=(hi-lo)*.08;lo-=pad;hi+=pad;
+    const L=36*dpr,R=8*dpr,T=16*dpr,B=6*dpr,x=i=>L+(W-L-R)*i/Math.max(1,ep.n-1),y=v=>T+(H-T-B)*(1-(v-lo)/(hi-lo));
+    // 단계 띠
+    if(ep.stage){let s0=0;for(let i=1;i<=ep.n;i++){if(i===ep.n||ep.stage[i]!==ep.stage[s0]){g.fillStyle=PAL[(ep.stage[s0]%PAL.length+PAL.length)%PAL.length]+'22';g.fillRect(x(s0),T,x(i-1)-x(s0)+1,H-T-B);s0=i;}}}
+    g.strokeStyle='#2a3340';g.lineWidth=1;g.font=`${10*dpr}px ui-monospace,monospace`;g.fillStyle='#6b7785';
+    for(let k=0;k<=2;k++){const v=lo+(hi-lo)*k/2,yy=y(v);g.beginPath();g.moveTo(L,yy);g.lineTo(W-R,yy);g.stroke();g.fillText(v.toFixed(0),3*dpr,yy+3*dpr);}
+    g.fillStyle='#c9d4e0';g.fillText(`${pl.title} ${pl.unit}`,L,11*dpr);
+    idx.forEach((k,c)=>{
+      const col=pl.grip?(c?'#ffb454':'#00b7eb'):PAL[c%PAL.length];
+      for(const [a,dash,al] of [[ep.action,[4*dpr,3*dpr],.55],[ep.state,[],1]]){
+        g.strokeStyle=col;g.globalAlpha=al;g.lineWidth=(dash.length?1:1.6)*dpr;g.setLineDash(dash);g.beginPath();
+        for(let i=0;i<ep.n;i++){const yy=y(conv(a[i*ep.D+k]));i?g.lineTo(x(i),yy):g.moveTo(x(i),yy);}g.stroke();
+      }
+      g.globalAlpha=1;g.setLineDash([]);
+    });
+    if(pl.grip){g.fillStyle='#00b7eb';g.fillText('L',W-40*dpr,11*dpr);g.fillStyle='#ffb454';g.fillText('R',W-26*dpr,11*dpr);}
+    plotCache[pl.id]={off,x};
+  }
+}
+function overlayPlots(ep,i){
+  for(const pl of PLOTS){const c=plotCache[pl.id];if(!c)continue;const cv=$(pl.id),g=cv.getContext('2d');
+    g.clearRect(0,0,cv.width,cv.height);g.drawImage(c.off,0,0);const xx=c.x(i);
+    g.strokeStyle='#ffffff';g.globalAlpha=.8;g.lineWidth=1.2*(devicePixelRatio||1);g.beginPath();g.moveTo(xx,0);g.lineTo(xx,cv.height);g.stroke();g.globalAlpha=1;}
+}
+let rsT=null;
+window.addEventListener('resize',()=>{clearTimeout(rsT);rsT=setTimeout(()=>{if(P.ep){drawPlots(P.ep);const i=P.i;P.i=-1;setFrame(i);}resize3d();},150);});
+
+// ================= 3D 로봇 (URDF) =================
+const view=$('view');
+const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});
+renderer.setPixelRatio(devicePixelRatio||1);view.appendChild(renderer.domElement);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(38,1,0.01,30);
+scene.add(new THREE.HemisphereLight(0xcfe8ff,0x10161d,0.75));
+const key=new THREE.DirectionalLight(0xffffff,0.75);key.position.set(2,4,3);scene.add(key);
+const rim=new THREE.DirectionalLight(0x00b7eb,0.45);rim.position.set(-3,2,-2);scene.add(rim);
+const floor=new THREE.GridHelper(4,40,0x1f4a5c,0x18222d);scene.add(floor);
+const root=new THREE.Group();root.rotation.x=-Math.PI/2;scene.add(root);
+const orbit={az:0.7,el:0.18,r:2.2,tgt:new THREE.Vector3(0,1.1,0),last:0,base:0.7};
+function placeCam(){const{az,el,r,tgt}=orbit;camera.position.set(tgt.x+r*Math.cos(el)*Math.sin(az),tgt.y+r*Math.sin(el),tgt.z+r*Math.cos(el)*Math.cos(az));camera.lookAt(tgt);}
+let drag=null;
+renderer.domElement.addEventListener('pointerdown',e=>{drag=[e.clientX,e.clientY];orbit.last=performance.now();});
+window.addEventListener('pointerup',()=>{if(drag)orbit.base=orbit.az;drag=null;});
+window.addEventListener('pointermove',e=>{if(!drag)return;orbit.az-=(e.clientX-drag[0])*0.008;orbit.el=Math.max(-0.3,Math.min(1.3,orbit.el+(e.clientY-drag[1])*0.006));drag=[e.clientX,e.clientY];orbit.last=performance.now();});
+renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();orbit.r=Math.max(0.6,Math.min(6,orbit.r*(e.deltaY>0?1.1:0.9)));orbit.last=performance.now();},{passive:false});
+function resize3d(){const w=view.clientWidth,h=view.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+
+function parseSTL(buf,cutX){                        // cutX: 메시 x 가 이보다 큰 삼각형은 버림 (H2 손목 메시의 기본 손)
+  const dv=new DataView(buf),geo=new THREE.BufferGeometry();
+  const n=buf.byteLength>=84?dv.getUint32(80,true):0;let pos;
+  if(84+n*50===buf.byteLength){
+    pos=new Float32Array(n*9);let m=0;
+    for(let i=0;i<n;i++){const o=84+i*50+12;
+      if(cutX!=null&&Math.max(dv.getFloat32(o,true),dv.getFloat32(o+12,true),dv.getFloat32(o+24,true))>cutX)continue;
+      for(let k=0;k<9;k++)pos[m*9+k]=dv.getFloat32(o+k*4,true);m++;}
+    pos=pos.subarray(0,m*9);
+  }else{
+    const txt=new TextDecoder().decode(buf),v=[],re=/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;let m;
+    while((m=re.exec(txt)))v.push(+m[1],+m[2],+m[3]);
+    if(cutX!=null){const w=[];for(let i=0;i+8<v.length;i+=9)if(Math.max(v[i],v[i+3],v[i+6])<=cutX)w.push(...v.slice(i,i+9));pos=new Float32Array(w);}
+    else pos=new Float32Array(v);
+  }
+  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.computeVertexNormals();return geo;
+}
+const xyz=s=>(s||'0 0 0').trim().split(/\s+/).map(Number);
+function urdfOrigin(obj,el){const o=el&&el.querySelector(':scope>origin');const p=xyz(o&&o.getAttribute('xyz')),r=xyz(o&&o.getAttribute('rpy'));
+  obj.position.set(p[0],p[1],p[2]);obj.quaternion.setFromEuler(new THREE.Euler(r[0],r[1],r[2],'ZYX'));}   // URDF rpy = Rz·Ry·Rx
+function matColor(vis,mats){const m=vis.querySelector('material');if(!m)return[0.7,0.7,0.7];const c=m.querySelector('color');
+  if(c)return xyz(c.getAttribute('rgba'));return mats[m.getAttribute('name')]||[0.7,0.7,0.7];}
+function mkMat(rgb){const c=new THREE.Color(rgb[0],rgb[1],rgb[2]);const dark=rgb[0]+rgb[1]+rgb[2]<1.5;
+  return new THREE.MeshPhongMaterial({color:c,specular:dark?0x333333:0x777777,shininess:dark?50:30});}
+const JOINT={};let GRIP=null,DEX=null;
+async function getMesh(d,f,cut){const r=await fetch(`/api/mesh?d=${d}&f=${encodeURIComponent(f)}`);if(!r.ok)throw new Error(`메시 없음 ${f}`);return parseSTL(await r.arrayBuffer(),cut);}
+async function buildRobot(){
+  const info=await (await fetch('/api/robot')).json();
+  GRIP=info.grip;DEX=info.dex1;
+  for(const w of info.warn||[])toast(w,true);
+  const doc=new DOMParser().parseFromString(info.urdf,'text/xml'),mats={};
+  doc.querySelectorAll('robot>material').forEach(m=>{const c=m.querySelector('color');if(c)mats[m.getAttribute('name')]=xyz(c.getAttribute('rgba'));});
+  const links={},joints=[...doc.querySelectorAll('robot>joint')];
+  doc.querySelectorAll('robot>link').forEach(l=>links[l.getAttribute('name')]=l);
+  const childOf=new Set(joints.map(j=>j.querySelector('child').getAttribute('link')));
+  const rootName=Object.keys(links).find(n=>!childOf.has(n));
+  const jobs=[],groups={};
+  function mkLink(name){
+    const g=new THREE.Group();g.name=name;groups[name]=g;const el=links[name];
+    if(el)el.querySelectorAll(':scope>visual').forEach(v=>{
+      const me=v.querySelector('geometry mesh');if(!me)return;
+      const f=me.getAttribute('filename').split(/[\\/]/).pop(),sc=xyz(me.getAttribute('scale')||'1 1 1'),col=matColor(v,mats);
+      const cut=DEX&&/_wrist_yaw_link$/.test(name)?DEX.wrist_face:null;
+      const holder=new THREE.Group();urdfOrigin(holder,v);holder.scale.set(sc[0],sc[1],sc[2]);g.add(holder);
+      jobs.push(getMesh('h2',f,cut).then(geo=>holder.add(new THREE.Mesh(geo,mkMat(col)))));
+    });
+    for(const j of joints.filter(j=>j.querySelector('parent').getAttribute('link')===name)){
+      const jg=new THREE.Group();urdfOrigin(jg,j);g.add(jg);
+      const type=j.getAttribute('type'),ax=xyz(j.querySelector('axis')?.getAttribute('xyz')||'1 0 0');
+      JOINT[j.getAttribute('name')]={g:jg,base:jg.quaternion.clone(),axis:new THREE.Vector3(...ax).normalize(),type,pos0:jg.position.clone()};
+      jg.add(mkLink(j.querySelector('child').getAttribute('link')));
+    }
+    return g;
+  }
+  const robot=mkLink(rootName);root.add(robot);
+  if(DEX)for(const s of ['left','right'])if(groups[`${s}_wrist_yaw_link`])jobs.push(buildDex(groups[`${s}_wrist_yaw_link`],s));
+  let done=0;const total=jobs.length;
+  jobs.forEach(p=>p.then(()=>{$('load3d').textContent=++done<total?`mesh ${done}/${total}`:'';}).catch(e=>{$('load3d').textContent=e.message;}));
+  await Promise.allSettled(jobs);
+  root.updateMatrixWorld(true);
+  const box=new THREE.Box3().setFromObject(root);
+  root.position.y=-box.min.y;
+  const H=box.max.y-box.min.y;
+  const torso=groups['torso_link'];root.updateMatrixWorld(true);
+  const tp=torso?new THREE.Vector3().setFromMatrixPosition(torso.matrixWorld):new THREE.Vector3(0,H*0.75,0);
+  orbit.tgt.set(tp.x+0.1,tp.y-0.2,tp.z);orbit.r=Math.max(2.2,H*1.55);
+  if(P.ep){const i=P.i;P.i=-1;setFrame(i);}
+}
+// Dex1-1 (Unitree URDF) + 어댑터 — 손목 wrist_yaw_link 에 붙임 (gripper.yaml xr_view.dex1_view, gripper/xr_viewer.py 와 같은 값)
+const FINGERS={left:[],right:[]};
+async function buildDex(wg,side){
+  const d=new DOMParser().parseFromString(DEX.urdf,'text/xml'),links={};
+  d.querySelectorAll('robot>link').forEach(l=>{const v=l.querySelector(':scope>visual'),me=v&&v.querySelector('geometry mesh');
+    if(me)links[l.getAttribute('name')]={file:me.getAttribute('filename').split(/[\\/]/).pop(),col:matColor(v,{})};});
+  const js=[...d.querySelectorAll('robot>joint')],base=js[0].querySelector('parent').getAttribute('link');
+  if(DEX.adapter_stl){
+    const a=DEX.adapter_stl,geo=await getMesh('adapter',a.file),p=geo.attributes.position.array;
+    for(let i=0;i<p.length;i+=3){const v=[p[i]-a.origin_mm[0],p[i+1]-a.origin_mm[1],p[i+2]-a.origin_mm[2]];
+      for(let r=0;r<3;r++)p[i+r]=(a.rot[r][0]*v[0]+a.rot[r][1]*v[1]+a.rot[r][2]*v[2])*a.scale+a.at_m[r];}
+    geo.computeVertexNormals();wg.add(new THREE.Mesh(geo,mkMat([0.30,0.30,0.33])));
+  }else{
+    const a=DEX.adapter,cyl=new THREE.Mesh(new THREE.CylinderGeometry(a[2]/2,a[2]/2,a[1]-a[0],24),mkMat([0.35,0.35,0.38]));
+    cyl.rotation.z=-Math.PI/2;cyl.position.x=(a[0]+a[1])/2;wg.add(cyl);
+  }
+  const dg=new THREE.Group(),r=DEX.mount_rpy_deg.map(v=>v/DEG);
+  dg.position.set(DEX.origin_x,0,0);dg.quaternion.setFromEuler(new THREE.Euler(r[0],r[1],r[2],'ZYX'));wg.add(dg);
+  if(links[base])dg.add(new THREE.Mesh(await getMesh('dex1',links[base].file),mkMat(links[base].col)));
+  for(const j of js){
+    const c=j.querySelector('child').getAttribute('link');
+    if(j.getAttribute('type')!=='prismatic'||!links[c]||j.querySelector('parent').getAttribute('link')!==base)continue;
+    const o=j.querySelector('origin'),m=new THREE.Mesh(await getMesh('dex1',links[c].file),mkMat(links[c].col));dg.add(m);
+    FINGERS[side].push({m,xyz:xyz(o&&o.getAttribute('xyz')),axis:xyz(j.querySelector('axis').getAttribute('xyz')),upper:+j.querySelector('limit').getAttribute('upper')});
+  }
+}
+function setJoint(name,q){const J=JOINT[name];if(!J)return;
+  if(J.type==='prismatic'){J.g.position.copy(J.pos0).addScaledVector(J.axis,q);return;}
+  J.g.quaternion.copy(J.base).multiply(new THREE.Quaternion().setFromAxisAngle(J.axis,q));}
+function setFinger(side,q){                              // 그리퍼 q → 집게 간격 (q × mm_per_rad) → 손가락마다 반씩
+  if(!GRIP)return;const half=Math.max(0,q*GRIP.mm_per_rad)/2000;
+  for(const f of FINGERS[side]){const dd=Math.min(f.upper,half);f.m.position.set(f.xyz[0]+f.axis[0]*dd,f.xyz[1]+f.axis[1]*dd,f.xyz[2]+f.axis[2]*dd);}
+}
+function poseRobot(st){
+  const names=curDs?curDs.info.state_names||[]:[];
+  names.forEach((n,k)=>{if(k>=st.length)return;
+    if(n==='left_gripper_q')setFinger('left',st[k]);else if(n==='right_gripper_q')setFinger('right',st[k]);else setJoint(n,st[k]);});
+}
+
+// ================= 재생 루프 =================
+let lastT=performance.now();
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(0.1,(now-lastT)/1000);lastT=now;
+  const ep=P.ep;
+  if(ep&&P.playing){
+    if(P.wait>0){P.wait-=dt;if(P.wait<=0){const nx=nextOk(ep.id);if(nx)openEp(nx.id,false);}}
+    else{
+      P.clock+=dt*P.speed;const tt=ep.t0+P.clock;let i=Math.max(0,P.i);
+      while(i<ep.n-1&&ep.t[i+1]<=tt)i++;
+      setFrame(i);
+      if(i>=ep.n-1){if($('auto').checked)P.wait=1.5;else play(false);}
+    }
+  }
+  if(now-orbit.last>5000&&!drag){orbit.az=orbit.base+0.55*Math.sin((now-orbit.last-5000)/1000*0.12);}
+  placeCam();renderer.render(scene,camera);
+}
+
+// ================= 파일 =================
+$('pick').onchange=e=>{for(const f of e.target.files)addZip(f.name,fileSrc(f));e.target.value='';};
+let dragN=0;
+window.addEventListener('dragenter',e=>{e.preventDefault();dragN++;$('drop').classList.add('on');});
+window.addEventListener('dragleave',()=>{if(--dragN<=0){dragN=0;$('drop').classList.remove('on');}});
+window.addEventListener('dragover',e=>e.preventDefault());
+window.addEventListener('drop',e=>{e.preventDefault();dragN=0;$('drop').classList.remove('on');
+  for(const f of e.dataTransfer.files)if(/\.zip$/i.test(f.name))addZip(f.name,fileSrc(f));});
+document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!=='SELECT'){e.preventDefault();togglePlay();}
+  if(e.key==='ArrowRight'&&curDs&&P.ep){const nx=nextOk(P.ep.id);if(nx)openEp(nx.id,true);}});
+
+(async()=>{
+  resize3d();requestAnimationFrame(loop);
+  buildRobot().catch(e=>{$('load3d').textContent='로봇 불러오기 실패: '+e.message;});
+  try{
+    const r=await (await fetch('/api/files')).json();
+    for(const f of r.files)await addZip(f.name,urlSrc('/data/'+encodeURIComponent(f.name),f.size));
+    if(!r.files.length)toast(`zip 없음 — ${r.dir} 에 넣거나 화면에 끌어다 놓으세요`);
+  }catch(e){toast('서버 응답 없음: '+e.message,true);}
+})();
+</script>
+</body></html>

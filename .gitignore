@@ -116,3 +116,6 @@ gripper/models/
 # VR HTTPS 자체 서명 인증서
 gripper/adapter/*.crt
 gripper/adapter/*.key
+
+# ACT 보기 (viewer/start_viewer.bat) — 넣어 둔 zip
+viewer/data/
