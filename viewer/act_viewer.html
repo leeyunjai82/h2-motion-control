@@ -131,7 +131,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
   <div class="right">
     <button class="btn primary" id="play" onclick="togglePlay()">▶ Play</button>
     <select class="in" id="speed" onchange="P.speed=+this.value"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
-    <label class="sw"><input type="checkbox" id="auto" checked><span class="tr"></span>AUTO</label>
+    <select class="in" id="rep" title="에피소드가 끝나면"><option value="all">전체 반복</option><option value="one">이 에피소드 반복</option><option value="off">반복 끔</option></select>
     <button class="btn" onclick="$('pick').click()">zip 열기</button>
     <input type="file" id="pick" accept=".zip" multiple style="display:none">
   </div>
@@ -331,7 +331,7 @@ function selDs(ds){
     <td class="num">${num(e.meta.duration_s,1)}</td><td class="num">${e.meta.n??'-'}</td><td>${esc(e.meta.result||'')}</td></tr>`).join('');
   buildCams(Object.keys(inf.cameras||{}));
   updateHero();renderChecks();
-  const first=ok[0]||eps[0];if(first)openEp(first.id,false).then(()=>{if($('auto').checked)play(true);});
+  const first=ok[0]||eps[0];if(first)openEp(first.id,false).then(()=>{if(REP()!=='off')play(true);});
 }
 function selMd(md){
   curMd=md;const m=md.meta,tr=m.train||{},cf=m.config||{};
@@ -401,6 +401,10 @@ async function loadEp(ds,id){
   p.catch(()=>ds.cache.delete(id));
   return p;
 }
+// 반복: 전체 (성공 에피소드 차례로, 끝나면 처음부터) · 이 에피소드 · 끔 — 이 브라우저에 기억 (전시 PC 다시 켜도 그대로)
+const REP=()=>$('rep').value;
+try{const v=localStorage.getItem('act_viewer_rep');if(v)$('rep').value=v;}catch(e){}
+$('rep').onchange=()=>{try{localStorage.setItem('act_viewer_rep',REP());}catch(e){}if(REP()!=='off'&&P.ep&&!P.playing)play(true);};
 const P={ep:null,i:-1,clock:0,playing:false,speed:1,wait:0,drawn:-1};
 async function openEp(id,user){
   if(!curDs)return;
@@ -650,12 +654,14 @@ function loop(now){
   const dt=Math.min(0.1,(now-lastT)/1000);lastT=now;
   const ep=P.ep;
   if(ep&&P.playing){
-    if(P.wait>0){P.wait-=dt;if(P.wait<=0){const nx=nextOk(ep.id);if(nx)openEp(nx.id,false);}}
+    if(P.wait>0){P.wait-=dt;if(P.wait<=0){
+      if(REP()==='one'){P.clock=0;P.i=-1;setFrame(0);}               // 같은 에피소드 처음부터
+      else{const nx=nextOk(ep.id);if(nx)openEp(nx.id,false);}}}      // 다음 성공 에피소드 (마지막 다음은 처음)
     else{
       P.clock+=dt*P.speed;const tt=ep.t0+P.clock;let i=Math.max(0,P.i);
       while(i<ep.n-1&&ep.t[i+1]<=tt)i++;
       setFrame(i);
-      if(i>=ep.n-1){if($('auto').checked)P.wait=1.5;else play(false);}
+      if(i>=ep.n-1){if(REP()!=='off')P.wait=REP()==='one'?1.0:1.5;else play(false);}
     }
   }
   if(now-orbit.last>5000&&!drag){orbit.az=orbit.base+0.55*Math.sin((now-orbit.last-5000)/1000*0.12);}
