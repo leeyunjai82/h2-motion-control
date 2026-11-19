@@ -1,0 +1,1417 @@
+#!/usr/bin/env python3
+"""
+pick_web.py — 그리퍼 한 팔로 작은 박스 잡기 웹 (http://<미니 PC>:50030)
+
+  화면: D435i 컬러 스트림 · 손(왼/오른) · 박스 크기 [mm] · 집게 자세 RPY [deg] → 박스 윗면 가운데를 클릭 → 계획 →
+        [실행] → (단계별이면) [다음 단계] 를 누를 때마다 한 단계씩. [정지] 는 언제나 — 팔은 그 자리, 그리퍼는 그 상태 유지.
+  잡기 순서 (준비 자세에서 시작): 그리퍼 벌림 → 접근 위치 (잡는 자리 바로 위 10 cm) → 내려가기 → 닫기
+             (박스에 막혔는지 확인, 아니면 놓침 → 벌리고 멈춤) → 들기 8 cm → 2 초 → 내려놓기 → 벌림 → 빼기 → 준비 자세
+  [준비 자세로] / [기본 자세로]: 선택한 팔만 관절 보간. 준비 자세 = 그리퍼가 카메라 화면 밖 (gripper.yaml ready_tcp_m),
+             이 이동 중 그리퍼는 몸 앞 0.25 m 밖으로 안 나감 (계산) — 확인 창에 가장 앞 · 가장 낮은 점
+  화면 점: 노란 = 클릭, 하늘 = 계획한 잡는 자리, 초록/분홍 = 지금 왼/오른 집게 가운데 (관절각 FK → 카메라로 투영)
+
+준비 (박스 쪽 robot_server · rs_stream 은 띄우지 않음 — 이 웹이 카메라를 직접 엶)
+  1) 로봇 거치대 + FSM 703:          ROBOT_CHECK=1 ./start_fsm.sh stand
+  2) 한 창에서 모두:                  ./start_gripper.sh   (그리퍼 서비스 → arm_server → 이 웹, Ctrl+C 로 다 끔)
+     로봇 없이:                       ./start_gripper.sh --sim
+  이 웹만 따로: source activate_tv.sh && python apps/gripper_pick/pick_web.py enp45s0   (그리퍼 서비스 · arm_server 는 떠 있어야 함)
+
+  끝낼 때: 박스를 잡고 있으면 먼저 내려놓기. 이 웹을 끄면 그리퍼 송신이 멈춰 힘이 풀림.
+"""
+import argparse
+import collections
+import datetime
+import glob
+import json
+import math
+import os
+import sys
+import threading
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import pick_core as pc
+from pick_core import robot_env, P
+import os as _os, sys as _sys  # noqa: E401
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+from pitron.learning import recorder as rec
+import policy as pol
+import xr_real
+
+import cv2
+import numpy as np
+import uvicorn
+import zipfile
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import HTMLResponse, Response, StreamingResponse
+from pydantic import BaseModel
+from typing import List, Optional
+
+PORT = 50030
+J_MAP = robot_env.JOINTS["map"]      # URDF 관절 이름 → 슬롯
+DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
+DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고
+TABLE_WIN = 61                       # 테이블 잴 때 클릭 점 주변 창 [픽셀] — 창 안 픽셀 전부를 3D 점으로 바꿔 평면 맞춤 (2026-11-09 31 → 61)
+TABLE_STRIDE = 3                     # 창 안 픽셀 간격 (61 × 61 → 21 × 21 = 441 점)
+TABLE_TRIM_MM = 8.0                  # 평면에서 이보다 먼 점은 버리고 다시 맞춤 (물체 · 모서리 · 반사가 섞인 점)
+TABLE_RESID_WARN = 4.0               # 한 창의 평면 잔차 RMS 가 이보다 크면 [mm] 경고 (평평하지 않거나 깊이가 나쁨)
+CAM_PITCH_OK, CAM_PITCH_MAX = 0.5, 1.0   # 카메라 숙임 (몸통 기준) 기준값과 차이 [deg]: OK / 넘으면 실행 거부 (거치대를 맞출 것)
+TABLE_SLOPE_MAX_DEG = 8.0            # 테이블 점들로 맞춘 평면이 이보다 기울면 거부 (몸통 뒤 기움 ≈ 4°, 2026-11-06 check_rsimu)
+CLICK_Z_TABLE = (-0.40, 0.30)        # 테이블 높이로 받아들이는 범위 [m, pelvis] (시연 테이블 110 cm ≈ +0.06~0.09)
+LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(HERE)), "logs")
+CX, CY, CZ, CP = robot_env.CAMERA_X, robot_env.CAMERA_Y, robot_env.CAMERA_Z, robot_env.CAMERA_PITCH
+P2T = np.array(robot_env.CFG["frames"]["pelvis_to_torso"], dtype=float)
+W, H = robot_env.CAMERA_RES
+_cp, _sp = math.cos(CP), math.sin(CP)
+A_CT = np.array([[0.0, -_sp, _cp], [-1.0, 0.0, 0.0], [0.0, -_cp, -_sp]])   # 카메라 → torso 회전 (hand_to_marker 와 같은 식)
+B_CT = np.array([CX, CY, CZ + float(P.get("camera_z_offset_m", 0.0))])   # 높이 보정 (gripper.yaml pick.camera_z_offset_m)
+
+
+def cam_to_pelvis(c):
+    return A_CT @ np.asarray(c, dtype=float) + B_CT + P2T
+
+
+def ray_to_plane(d_cam, z):
+    """카메라 좌표계 시선 방향 d_cam (z 성분 > 0) → pelvis 수평면 z 와 만나는 점. 없으면 None."""
+    a = A_CT @ np.asarray(d_cam, dtype=float)
+    o = B_CT + P2T
+    if abs(a[2]) < 1e-9:
+        return None
+    t = (z - o[2]) / a[2]
+    return None if t <= 0 else o + t * a
+
+
+def ray_to_tilted(d_cam, plane, h):
+    """시선 ∩ 기울어진 평면 z = a0 + b·x + c·y + h (plane = (a0, b, c), pelvis). 없으면 None."""
+    a0, b, c = plane
+    a = A_CT @ np.asarray(d_cam, dtype=float)
+    o = B_CT + P2T
+    den = a[2] - b * a[0] - c * a[1]
+    if abs(den) < 1e-9:
+        return None
+    t = (a0 + h + b * o[0] + c * o[1] - o[2]) / den
+    return None if t <= 0 else o + t * a
+
+
+def fit_plane(pts):
+    """테이블 점들 → (a0, b, c): z = a0 + b·x + c·y. 1 점 = 수평, 2 점 = 두 점 방향 기울기만, 3 점 이상 = 최소제곱."""
+    P = np.asarray(pts, dtype=float)
+    m = P.mean(axis=0)
+    if len(P) == 1:
+        return float(m[2]), 0.0, 0.0
+    X = P[:, :2] - m[:2]
+    bc = np.linalg.lstsq(X, P[:, 2] - m[2], rcond=None)[0]     # 2 점이면 최소 노름 = 두 점 방향 기울기
+    b, c = float(bc[0]), float(bc[1])
+    return float(m[2] - b * m[0] - c * m[1]), b, c
+
+
+def pelvis_to_pixel(p, K):
+    c = A_CT.T @ (np.asarray(p, dtype=float) - B_CT - P2T)
+    if c[2] <= 0.05:
+        return None
+    fx, fy, ppx, ppy = K
+    return int(round(fx * c[0] / c[2] + ppx)), int(round(fy * c[1] / c[2] + ppy))
+
+
+# ---------------- 카메라 ----------------
+class RealCamera:
+    def __init__(self):
+        import pyrealsense2 as rs
+        self.rs = rs
+        self.pipe = rs.pipeline()
+        cfg = rs.config()
+        cfg.enable_stream(rs.stream.color, W, H, rs.format.bgr8, 30)
+        cfg.enable_stream(rs.stream.depth, W, H, rs.format.z16, 30)
+        prof = self.pipe.start(cfg)
+        self.align = rs.align(rs.stream.color)
+        self.intr = prof.get_stream(rs.stream.color).as_video_stream_profile().get_intrinsics()
+        self.scale = prof.get_device().first_depth_sensor().get_depth_scale()
+        self.K = (self.intr.fx, self.intr.fy, self.intr.ppx, self.intr.ppy)
+        self.lk = threading.Lock()
+        self.color, self.depth, self.t = None, None, 0.0
+        self.depths = collections.deque(maxlen=DEPTH_FRAMES)   # 최근 깊이 프레임 (클릭 점 중앙값용)
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while True:
+            try:
+                fs = self.align.process(self.pipe.wait_for_frames(2000))
+                cf, df = fs.get_color_frame(), fs.get_depth_frame()
+                if not cf or not df:
+                    continue
+                with self.lk:
+                    self.color = np.asanyarray(cf.get_data()).copy()
+                    self.depth = np.asanyarray(df.get_data()).copy()
+                    self.depths.append(self.depth)
+                    self.t = time.time()
+            except Exception as e:  # noqa: BLE001
+                print(f"[cam] 프레임 오류: {e}")
+                time.sleep(0.5)
+
+    def frame(self):
+        with self.lk:
+            return None if self.color is None else self.color.copy(), self.t
+
+    def ray(self, u, v):
+        """픽셀 → 카메라 좌표 시선 (깊이 1 m, 렌즈 왜곡 포함 — rs2_deproject)."""
+        return np.asarray(self.rs.rs2_deproject_pixel_to_point(self.intr, [float(u), float(v)], 1.0), dtype=float)
+
+    def point(self, u, v, win=None):
+        """픽셀 → (pelvis 좌표, 깊이 흔들림 mm). 깊이 = 클릭 점 주변 win × win 픽셀 (기본 DEPTH_WIN) × 최근 DEPTH_FRAMES 프레임의
+        0 아닌 값 중앙값 (한 프레임 7×7 은 검은 박스 윗면 · 가장자리에서 흔들림). 흔들림 = 그 값들의 10–90 % 폭."""
+        h = (win or DEPTH_WIN) // 2
+        ui, vi = int(round(u)), int(round(v))
+        with self.lk:
+            frames = list(self.depths)
+        if not frames:
+            return None
+        w = np.concatenate([f[max(0, vi - h):vi + h + 1, max(0, ui - h):ui + h + 1].ravel() for f in frames]).astype(float)
+        w = w[w > 0]
+        if len(w) < 20:
+            return None
+        spread = float(np.percentile(w, 90) - np.percentile(w, 10)) * self.scale * 1000.0
+        c = self.rs.rs2_deproject_pixel_to_point(self.intr, [float(u), float(v)], float(np.median(w)) * self.scale)
+        return cam_to_pelvis(c), spread
+
+    def patch(self, u, v, win, stride):
+        """클릭 점 주변 창의 테이블 3D 점들 (pelvis, N × 3) 또는 None"""
+        with self.lk:
+            frames = list(self.depths)
+        if not frames:
+            return None
+        us, vs, ds = _patch_pts(frames, self.scale, u, v, win, stride)
+        if len(ds) < 30:
+            return None
+        c = np.array([self.rs.rs2_deproject_pixel_to_point(self.intr, [float(a), float(b)], float(z))   # 클릭 계획과 같은 투영 (왜곡 포함)
+                      for a, b, z in zip(us, vs, ds)])
+        return (A_CT @ c.T).T + B_CT + P2T
+
+
+def _patch_pts(depths, scale, u, v, win, stride):
+    """깊이 프레임들 → 클릭 점 주변 win × win 창 (stride 간격) 픽셀마다 시간 중앙값 깊이 → (u 배열, v 배열, 깊이 m 배열)."""
+    h = win // 2
+    ui, vi = int(round(u)), int(round(v))
+    stack = np.stack([f[max(0, vi - h):vi + h + 1:stride, max(0, ui - h):ui + h + 1:stride] for f in depths]).astype(float)
+    stack[stack == 0] = np.nan
+    d = np.nanmedian(stack, axis=0) * scale                      # (rows, cols) m
+    rows = np.arange(max(0, vi - h), vi + h + 1, stride)[:d.shape[0]]
+    cols = np.arange(max(0, ui - h), ui + h + 1, stride)[:d.shape[1]]
+    uu, vv = np.meshgrid(cols, rows)
+    ok = np.isfinite(d) & (d > 0)
+    return uu[ok], vv[ok], d[ok]
+
+
+class FakeCamera:
+    """로봇 없이 화면·계획 시험용 — 회색 화면, 클릭은 높이 top_z 인 수평면과 만나는 점."""
+    def __init__(self, top_z):
+        self.K = tuple(float(v) for v in robot_env.CAMERA_K)
+        self.top_z = top_z
+        img = np.full((H, W, 3), 90, np.uint8)
+        for gx in np.arange(0.25, 0.85, 0.05):
+            for gy in np.arange(-0.45, 0.46, 0.05):
+                px = pelvis_to_pixel([gx, gy, top_z], self.K)
+                if px and 0 <= px[0] < W and 0 <= px[1] < H:
+                    cv2.circle(img, px, 1, (160, 160, 160), -1)
+        cv2.putText(img, f"SIM camera: click = plane z {top_z:+.2f} m (pelvis), grid 5 cm", (10, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        self.img = img
+
+    def frame(self):
+        return self.img.copy(), time.time()
+
+    def ray(self, u, v):
+        fx, fy, ppx, ppy = self.K
+        return np.array([(u - ppx) / fx, (v - ppy) / fy, 1.0])
+
+    def point(self, u, v, win=None):
+        p = ray_to_plane(self.ray(u, v), self.top_z)     # 가짜 깊이 = 높이 top_z 평면
+        return None if p is None else (p, 0.0)
+
+    def patch(self, u, v, win, stride):
+        h = win // 2
+        pts = [ray_to_plane(self.ray(uu, vv), self.top_z) for vv in range(int(v) - h, int(v) + h + 1, stride)
+               for uu in range(int(u) - h, int(u) + h + 1, stride)]
+        pts = [p for p in pts if p is not None]
+        return np.array(pts) + np.random.normal(0, 0.001, (len(pts), 3)) if len(pts) >= 30 else None
+
+
+# ---------------- 카메라 숙임 (거치대) ----------------
+class CamPitchMonitor:
+    """tools/check_rsimu.py 와 같은 계산을 계속: 몸통 기준 카메라 숙임 = D435i 가속도 숙임 − (로봇 IMU pitch + 허리 pitch).
+    기준값(robot_env.CAMERA_PITCH = calib_local.yaml)과 비교만 (저장 안 함 — 거치대를 기준에 맞춤).
+    D435i IMU 를 sudo 없이 읽으려면 RealSense udev 규칙 (2026-11-06 설치). 못 읽으면 None (잡기는 막지 않음)."""
+    def __init__(self):
+        self.lk = threading.Lock()
+        self.cam_abs, self.pelvis_p, self.waist_p, self.t_cam, self.t_rob = None, None, None, 0.0, 0.0
+        self.arm_meas = None
+        self.err = None
+        self.waist_slot = int(robot_env.JOINTS["map"]["waist_pitch_joint"])
+        try:
+            from unitree_sdk2py.core.channel import ChannelSubscriber
+            from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
+            self.sub = ChannelSubscriber("rt/lowstate", LowState_)
+            self.sub.Init(self._on_low, 10)
+        except Exception as e:  # noqa: BLE001
+            self.err = f"로봇 IMU 구독 실패 ({type(e).__name__})"
+        try:
+            import pyrealsense2 as rs
+            self.pipe = rs.pipeline()
+            cfg = rs.config()
+            cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 200)
+            self.pipe.start(cfg)
+            threading.Thread(target=self._loop, daemon=True).start()
+        except Exception as e:  # noqa: BLE001
+            self.err = f"D435i IMU 못 엶 ({type(e).__name__}: {e}) — udev 규칙 확인"
+
+    def _on_low(self, msg):
+        q = [float(msg.motor_state[i].q) for i in pc.ARM]
+        with self.lk:
+            self.pelvis_p = float(msg.imu_state.rpy[1])
+            self.waist_p = float(msg.motor_state[self.waist_slot].q)
+            self.arm_meas = np.asarray(q)        # 팔 14 축 실측 (제어 순서, rad) — 녹화 state (500 Hz 그대로 최신값)
+            self.t_rob = time.time()
+
+    def arm_now(self):
+        with self.lk:
+            return None if self.arm_meas is None or time.time() - self.t_rob > 0.5 else self.arm_meas.copy()
+
+    def _loop(self):
+        import pyrealsense2 as rs
+        while True:
+            try:
+                fs = self.pipe.wait_for_frames(2000)
+                f = fs.first_or_default(rs.stream.accel)
+                if not f:
+                    continue
+                a = f.as_motion_frame().get_motion_data()
+                p = math.atan2(-a.z, math.hypot(a.x, a.y))
+                with self.lk:
+                    self.cam_abs = p if self.cam_abs is None else self.cam_abs + 0.02 * (p - self.cam_abs)   # 약 0.25 초 평균
+                    self.t_cam = time.time()
+            except Exception as e:  # noqa: BLE001
+                self.err = f"D435i IMU 읽기 오류 ({type(e).__name__})"
+                time.sleep(1.0)
+
+    def read(self):
+        """→ {"now", "ref", "diff"} [deg] 또는 None (값 없음 · 오래됨)."""
+        now = time.time()
+        with self.lk:
+            if self.cam_abs is None or self.pelvis_p is None or now - self.t_cam > 1.0 or now - self.t_rob > 1.0:
+                return None
+            c2t = math.degrees(self.cam_abs - (self.pelvis_p + self.waist_p))
+        ref = math.degrees(robot_env.CAMERA_PITCH)
+        return {"now": round(c2t, 2), "ref": round(ref, 2), "diff": round(c2t - ref, 2)}
+
+
+# ---------------- 그리퍼 ----------------
+class RealGripper:
+    def __init__(self):
+        from pitron.drivers.hand.dex1_gripper import Dex1Gripper
+        self.g = Dex1Gripper(pc.CFG).start()
+
+    def set(self, side, q):
+        return not self.g.set(**{side: float(q)})
+
+    def state(self, side):
+        s = self.g.snapshot()[side]
+        return s if s.get("ok") else None
+
+    def snapshot(self):
+        return self.g.snapshot()
+
+
+class FakeGripper:
+    def __init__(self):
+        self.q = {"left": 0.3, "right": 0.3}
+        self.goal = dict(self.q)
+        self.block_mm = None           # 닫을 때 이 간격에서 막힘 (가짜 박스)
+        self.t = time.time()
+        threading.Thread(target=self._loop, daemon=True).start()
+
+    def _loop(self):
+        while True:
+            time.sleep(0.01)
+            for s in self.q:
+                d = self.goal[s] - self.q[s]
+                nq = self.q[s] + max(-0.03, min(0.03, d))
+                if self.block_mm is not None and d < 0 and pc.gap_mm(nq) < self.block_mm:
+                    nq = max(nq, self.block_mm / pc.MM_PER_RAD)
+                self.q[s] = nq
+
+    def set(self, side, q):
+        self.goal[side] = float(q)
+        return True
+
+    def state(self, side):
+        return {"q": round(self.q[side], 4), "dq": 0.0, "ok": True, "goal": self.goal[side]}
+
+    def snapshot(self):
+        return {s: {"q": round(self.q[s], 4), "goal": round(self.goal[s], 4), "ok": True} for s in self.q}
+
+
+# ---------------- 실행기 ----------------
+class Runner:
+    def __init__(self, mdl, cam, grip, sim, cam_pitch=None, wrist=None):
+        self.mdl, self.cam, self.grip, self.sim = mdl, cam, grip, sim
+        self.cam_pitch = cam_pitch      # CamPitchMonitor (실기) 또는 None — rt/lowstate (팔 실측 · IMU)
+        self.wrist = wrist              # 손목 카메라 (recorder.WristCams / FakeWristCams) 또는 None
+        self.rec = rec.Recorder()
+        self.rec_on = False             # 실행할 때 녹화
+        self.rec_name = "pick_" + datetime.date.today().strftime("%Y%m%d")
+        self.stage_idx = 0              # 녹화 stage (실행 순서 번호, 0 = 시작 전)
+        self.pol = pol.PolicyRunner(self, pc)   # ACT 정책 실행
+        self.speed = 2.0                # 속도 배율 (웹) — 계획 · 자세 이동에 씀
+        self.place_yaw = None           # 통에 놓을 때 yaw 안쪽 [deg] — None = 자동
+        self.lk = threading.Lock()
+        self.plan, self.plan_id, self.click, self.bin_click = None, 0, None, None
+        self.table_z, self.table_click = None, None   # 테이블 높이 [m, pelvis] (재 점들의 평균 높이, 표시용)
+        self.table_pts, self.table_plane = [], None   # 테이블 점들 · 평면 (a0, b, c) — 점을 2–3 곳 찍으면 기울기까지
+        self.phase, self.stage, self.waiting = "idle", "", False
+        self.log = []
+        self.stop_evt, self.next_evt = threading.Event(), threading.Event()
+        self.th = None
+        self.ctx = None                # {"side", "floor_z"} — 복귀에 씀
+        self.arm_q = None              # 지금 관절 (제어 순서, rad) — 표시용
+        self.arm_msg = ""
+        threading.Thread(target=self._arm_monitor, daemon=True).start()
+
+    def _arm_monitor(self):
+        while True:
+            try:
+                pose = pc.call("/pose", timeout=1.0)
+                self.arm_q = np.radians(np.asarray(pose["arm_deg"], dtype=float))
+                self.arm_msg = "ok"
+            except Exception as e:  # noqa: BLE001
+                self.arm_q, self.arm_msg = None, f"arm_server 응답 없음 ({type(e).__name__})"
+            time.sleep(0.2)
+
+    def say(self, msg):
+        line = f"{datetime.datetime.now().strftime('%H:%M:%S')} {msg}"
+        print(f"[pick] {msg}")
+        with self.lk:
+            self.log = (self.log + [line])[-60:]
+        self._jsonl({"event": msg})
+
+    def _jsonl(self, rec):
+        try:
+            os.makedirs(LOG_DIR, exist_ok=True)
+            rec = dict(rec, t=time.time(), plan_id=self.plan_id)
+            with open(os.path.join(LOG_DIR, f"pick_{datetime.date.today():%Y%m%d}.jsonl"), "a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+
+    def busy(self):
+        return ((self.th is not None and self.th.is_alive()) or (hasattr(self, "pol") and self.pol.running())
+                or (getattr(self, "xr", None) is not None and self.xr.active))
+
+    # ----- 테이블 높이 -----
+    def measure_table(self, u, v, reset=False):
+        """클릭 점 주변 TABLE_WIN 창의 깊이 점 전부 (클릭 1 번 ≈ 수백 점) 를 모아, 최근 6 번 클릭의 점 전체로 평면을 맞춤.
+        평면에서 TABLE_TRIM_MM 넘게 떨어진 점은 버리고 다시 맞춤 (물체 · 모서리 · 반사). 창마다 잔차 RMS = 그 자리 평평함 · 깊이 품질."""
+        if self.busy():
+            raise HTTPException(409, "실행 중")
+        if reset:
+            with self.lk:
+                self.table_pts, self.table_plane, self.table_z, self.table_px = [], None, None, []
+        pts_new = self.cam.patch(u, v, TABLE_WIN, TABLE_STRIDE)
+        if pts_new is None:
+            raise HTTPException(400, "그 자리 깊이 없음 — 테이블 빈 곳을 다시 클릭")
+        zc_new = float(np.median(pts_new[:, 2]))
+        if not (CLICK_Z_TABLE[0] <= zc_new <= CLICK_Z_TABLE[1]):
+            raise HTTPException(400, f"테이블 높이 z {zc_new:.3f} 이 범위 {CLICK_Z_TABLE} 밖 — 테이블 빈 곳을 클릭했는지 확인")
+        patches = (getattr(self, "table_patches", []) if self.table_pts else []) + [pts_new]
+        px = (getattr(self, "table_px", []) if self.table_pts else []) + [[float(u), float(v)]]
+        patches, px = patches[-6:], px[-6:]
+        allp = np.concatenate(patches)
+        plane = fit_plane(allp)
+        for _ in range(2):                                         # 먼 점 버리고 다시
+            a0, b, c = plane
+            res = allp[:, 2] - (a0 + b * allp[:, 0] + c * allp[:, 1])
+            keep = np.abs(res) <= TABLE_TRIM_MM / 1000.0
+            if keep.sum() < 30:
+                break
+            plane = fit_plane(allp[keep])
+        slope = math.degrees(math.atan(math.hypot(plane[1], plane[2])))
+        if slope > TABLE_SLOPE_MAX_DEG:
+            raise HTTPException(400, f"테이블 점들로 맞춘 평면이 {slope:.1f}° 기움 (> {TABLE_SLOPE_MAX_DEG}°) — 박스 위나 테이블 밖을 찍었는지 확인, [테이블 지우기] 후 다시")
+        a0, b, c = plane
+        resid = [float(np.sqrt(np.mean((q[:, 2] - (a0 + b * q[:, 0] + c * q[:, 1])) ** 2)) * 1000.0) for q in patches]
+        cents = [q.mean(axis=0).tolist() for q in patches]
+        zc = float(np.mean([q[2] for q in cents]))
+        with self.lk:
+            self.table_patches, self.table_px, self.table_resid = patches, px, resid
+            self.table_pts, self.table_plane, self.table_z, self.table_click = cents, plane, zc, (u, v)
+            self.plan = None
+        info = {"table_z": round(zc, 4), "n": len(patches), "spread_mm": round(resid[-1], 1), "resid_mm": [round(x, 1) for x in resid],
+                "n_pts": int(len(pts_new)), "slope_x_mm_per_10cm": round(plane[1] * 100, 1), "slope_y_mm_per_10cm": round(plane[2] * 100, 1)}
+        self._jsonl({"table_patch": np.round(cents[-1], 4).tolist(), "table_plane": [round(v, 5) for v in plane], **info, "px": [u, v]})
+        self.say(f"테이블 점 {len(patches)}: 창 {TABLE_WIN}px · {len(pts_new)} 점, 가운데 {np.round(cents[-1], 3).tolist()} "
+                 f"(평면 잔차 {resid[-1]:.1f} mm) → 평균 z {zc:.3f}, 기울기 앞으로 {plane[1] * 100:+.1f} · 왼쪽으로 {plane[2] * 100:+.1f} mm/10 cm"
+                 + (f" ⚠ 잔차 {resid[-1]:.1f} mm > {TABLE_RESID_WARN} — 그 자리가 평평하지 않거나 깊이가 나쁨 (반사 · 그림자 · 모서리)" if resid[-1] > TABLE_RESID_WARN else ""))
+        return info
+
+    # ----- 계획 -----
+    def make_plan(self, u, v, side, width_mm, height_mm, rpy, bin_uv=None, bin_h_mm=None):
+        if self.busy():
+            raise HTTPException(409, "실행 중 — 정지 후 다시")
+        ok, msg, q_now = pc.arm_ready_check()
+        if not ok:
+            raise HTTPException(409, msg)
+        if self.table_plane is None:
+            raise HTTPException(409, "먼저 [테이블 점 추가] — 테이블 빈 곳을 1–3 곳 클릭")
+        # 박스 윗면 = 클릭 픽셀 시선 ∩ (테이블 평면 + 박스 높이) (깊이 안 씀, 테이블 기울기 포함)
+        top = ray_to_tilted(self.cam.ray(u, v), self.table_plane, height_mm / 1000.0)
+        if top is None:
+            raise HTTPException(400, "그 픽셀 시선이 박스 윗면 높이와 만나지 않음")
+        bin_pt = None
+        if bin_uv is not None:   # 통 = 입구 가운데 클릭 시선 ∩ 평면 z = 테이블 + 통 높이
+            bin_pt = ray_to_tilted(self.cam.ray(*bin_uv), self.table_plane, bin_h_mm / 1000.0)
+            if bin_pt is None:
+                raise HTTPException(400, "그 픽셀 시선이 통 테두리 높이와 만나지 않음")
+        pc.set_speed(self.speed)
+        # 잡을 때 yaw 자동: 입력 RPY 로 안 되면 안쪽 (오른손 +, 왼손 −) 으로 15 · 30° 더 틀어 다시 (처음 되는 것). 다 안 되면 첫 시도의 이유
+        sgn = 1.0 if side == "right" else -1.0
+        first = None
+        for gy in pc.GRASP_YAWS:
+            r2 = [float(rpy[0]), float(rpy[1]), float(rpy[2]) + sgn * gy]
+            if bin_pt is not None:
+                plan = pc.plan_pick_auto_place(self.mdl, q_now, side, top, width_mm, height_mm, r2, bin_pt, bin_h_mm,
+                                               place_yaw=self.place_yaw)
+            else:
+                plan = pc.plan_pick(self.mdl, q_now, side, top, width_mm, height_mm, r2)
+            plan["grasp_yaw_in"] = gy
+            if plan["ok"]:
+                if gy:
+                    plan.setdefault("notes", []).append(f"잡을 때 yaw 안쪽 {gy}° 자동 (입력 RPY 로는 안 됨)")
+                break
+            first = first or plan
+        else:
+            plan = first
+            plan["reasons"].append(f"잡을 때 yaw 안쪽 {list(pc.GRASP_YAWS)}° 다 안 됨 — 물체를 몸에서 40~45 cm 앞으로")
+        rpy = plan.get("rpy_deg", rpy)
+        plan["speed"] = self.speed
+        plan["table_z"] = round(self.table_plane[0] + self.table_plane[1] * top[0] + self.table_plane[2] * top[1], 4)   # 박스 자리 테이블 높이
+        if plan.get("grasp"):     # 자로 확인할 값: 테이블 면 → 집게 가운데 (두 패드 가운데)
+            plan["pre_above_table_mm"] = round((plan["pre"][2] - plan["table_z"]) * 1000)
+            plan["grasp_above_table_mm"] = round((plan["grasp"][2] - plan["table_z"]) * 1000)
+        dp = self.cam.point(u, v)          # 비교용: 깊이로 잰 윗면 (계획에는 안 씀)
+        if dp is not None:
+            d = (dp[0] - top) * 1000
+            plan["depth_diff_mm"] = np.round(d, 0).tolist()
+            plan["depth_spread_mm"] = round(dp[1], 1)
+        with self.lk:
+            self.plan_id += 1
+            self.plan = plan
+            self.click = (u, v)
+            self.bin_click = bin_uv
+            self.phase = "planned" if plan["ok"] else "idle"
+        self._jsonl({"plan": self.summary(plan), "click_px": [u, v], "bin_px": bin_uv})
+        self.say(f"계획 #{self.plan_id} {side} 폭 {width_mm:.0f} · 높이 {height_mm:.0f} mm RPY {rpy}"
+                 + (f" → 통 (높이 {bin_h_mm:.0f} mm)" if bin_uv is not None else " → 제자리") + ": " + ("OK" if plan["ok"] else "불가 — " + "; ".join(plan["reasons"])))
+        return self.summary(plan)
+
+    @staticmethod
+    def summary(plan):
+        if plan is None:
+            return None
+        keys = ("ok", "side", "speed", "grasp_yaw_in", "place_yaw_in", "place_rpy_deg", "top", "table_z", "pre_above_table_mm", "grasp_above_table_mm", "depth_diff_mm", "depth_spread_mm", "width_mm", "height_mm", "rpy_deg", "floor_z", "overlap_mm", "grasp", "pre", "open_mm", "close_mm",
+                "q_open", "q_close", "reasons", "notes", "total_s", "steps", "at_ready", "bin", "rim_z", "release")
+        return {k: plan.get(k) for k in keys if k in plan}
+
+    # ----- 녹화 -----
+    def rec_cameras(self):
+        """녹화할 카메라 {이름: {w, h}} — body = D435i 반 해상도, 손목 = 장치 크기 반."""
+        cams = {"body": {"w": W // 2, "h": H // 2}}
+        if self.wrist:
+            for n in self.wrist.names():
+                w0, h0 = self.wrist.size.get(n, (320, 240))
+                cams[n] = {"w": w0, "h": h0} if w0 <= 320 else {"w": w0 // 2, "h": h0 // 2}   # 320 폭 이하면 그대로
+        return cams
+
+    def rec_sample(self):
+        """30 Hz 한 틱: state(16) · action(16) · tcp(6) · stage · images. 값이 하나라도 없으면 None (그 틱 건너뜀)."""
+        q = self.cam_pitch.arm_now() if self.cam_pitch else None
+        if q is None:
+            q = self.arm_q                       # --sim: arm_server /pose (5 Hz)
+        cmd = pc.LAST_CMD["q"]
+        g = self.grip.snapshot()
+        gl, gr = g.get("left") or {}, g.get("right") or {}
+        if q is None or cmd is None or None in (gl.get("q"), gr.get("q"), gl.get("goal"), gr.get("goal")):
+            return None
+        img, _ = self.cam.frame()
+        if img is None:
+            return None
+        images = {"body": img}
+        if self.wrist:
+            for n in self.wrist.names():
+                images[n] = self.wrist.frame(n)[0]
+        qm = self.mdl.to_model(q)
+        tcp = np.r_[self.mdl.tcp(qm, "left").translation, self.mdl.tcp(qm, "right").translation]
+        state = np.r_[q[:7], gl["q"], q[7:], gr["q"]]
+        action = np.r_[cmd[:7], gl["goal"], cmd[7:], gr["goal"]]
+        return {"state": state, "action": action, "tcp": tcp, "stage": self.stage_idx, "images": images}
+
+    @staticmethod
+    def rec_state_names():
+        names = [n for n, _ in sorted(((k, v) for k, v in J_MAP.items() if int(v) in pc.ARM), key=lambda kv: pc.ARM.index(int(kv[1])))]
+        return names[:7] + ["left_gripper_q"] + names[7:] + ["right_gripper_q"]
+
+    # ----- 실행 -----
+    def start(self, plan_id, step_mode):
+        with self.lk:
+            if self.busy():
+                raise HTTPException(409, "이미 실행 중")
+            if self.plan is None or not self.plan.get("ok") or plan_id != self.plan_id:
+                raise HTTPException(409, "실행할 계획 없음 (또는 화면의 계획이 오래됨) — 다시 클릭")
+            plan = self.plan
+            self.plan = dict(plan, ok=False)      # 같은 계획을 두 번 실행하지 않음
+        ok, msg, q_now = pc.arm_ready_check()
+        if not ok:
+            raise HTTPException(409, msg)
+        cp = self.cam_pitch.read() if self.cam_pitch else None
+        if cp is not None and abs(cp["diff"]) > CAM_PITCH_MAX:
+            raise HTTPException(409, f"카메라 숙임 {cp['now']}° — 기준 {cp['ref']}° 와 {cp['diff']:+.2f}° (허용 ±{CAM_PITCH_MAX}°). "
+                                     f"거치대를 {abs(cp['diff']):.1f}° {'덜 숙이게 (위로)' if cp['diff'] > 0 else '더 숙이게 (아래로)'} 맞춘 뒤 테이블 · 박스를 다시 찍으세요")
+        if not self.sim and not glob.glob("/dev/ttyUSB*"):
+            raise HTTPException(409, "485–USB 보드 포트(/dev/ttyUSB*) 없음 — 보드 USB 를 꽂고 start_gripper.sh 를 다시 실행")
+        if np.max(np.abs(self.mdl.to_model(q_now) - plan["q_start"])) > math.radians(3.0):
+            raise HTTPException(409, "계획 뒤에 팔이 움직임 — 다시 클릭해 계획")
+        self.stop_evt.clear()
+        self.next_evt.clear()
+        self.ctx = {"side": plan["side"], "floor_z": plan["floor_z"]}
+        self.stage_idx = 0
+        if self.rec.pending is not None:
+            raise HTTPException(409, "앞 에피소드를 [저장] 또는 [버리기] 먼저")
+        if self.rec_on:
+            if pc.LAST_CMD["q"] is None:          # 이번 실행 전 스트림을 안 보냈으면 지금 목표에서 시작
+                pc.LAST_CMD.update(q=np.asarray(q_now, dtype=float), t=time.time())
+            names = [k if k != "arm" else sg.name for k, sg in plan["seq"]]
+            try:
+                self.rec.start(self.rec_name, self.rec_cameras(), self.rec_state_names(), self.rec_sample,
+                               {"side": plan["side"], "plan_id": self.plan_id, "stages": ["시작"] + names,
+                                "plan": self.summary(plan), "step_mode": bool(step_mode), "table_plane": self.table_plane})
+            except (ValueError, RuntimeError) as e:
+                raise HTTPException(409, f"녹화 시작 못 함: {e}")
+            self.say(f"녹화 시작 → {self.rec_name}")
+        self.th = threading.Thread(target=self._run, args=(plan, step_mode), daemon=True)
+        self.th.start()
+
+    def _wait_next(self, name):
+        with self.lk:
+            self.stage, self.waiting = f"다음: {name}", True
+        while not self.next_evt.wait(0.1):
+            if self.stop_evt.is_set():
+                return False
+        self.next_evt.clear()
+        with self.lk:
+            self.waiting = False
+        return True
+
+    def _grip_to(self, side, q, timeout=4.0, settle=0.4):
+        if not self.grip.set(side, q):
+            return None, "그리퍼 상태 없음 — dex1_1_service 확인"
+        t0, t_still, last = time.time(), None, None
+        while time.time() - t0 < timeout:
+            if self.stop_evt.is_set():
+                return None, "정지"
+            st = self.grip.state(side)
+            if st is None:
+                return None, "그리퍼 상태 끊김"
+            qn = st["q"]
+            if last is not None and abs(qn - last) < 0.005 and time.time() - t0 > 0.5:
+                t_still = t_still or time.time()
+                if time.time() - t_still >= settle:
+                    break
+            else:
+                t_still = None
+            last = qn
+            time.sleep(0.05)
+        st = self.grip.state(side)
+        return (None, "그리퍼 상태 끊김") if st is None else (st["q"], None)
+
+    def _run(self, plan, step_mode):
+        side = plan["side"]
+        with self.lk:
+            self.phase = "running"
+        self.say(f"실행 #{self.plan_id} ({'단계별' if step_mode else '연속'}) — 약 {plan['total_s']} 초")
+        result = "done"
+        close_info = None
+        try:
+            for si, (kind, sg) in enumerate(plan["seq"], 1):
+                name = sg.name if kind == "arm" else {"@open": "그리퍼 벌림", "@close": "그리퍼 닫기",
+                                                     "@hold": f"{P['hold_s']} 초 들고 있기"}[kind]
+                if step_mode and not self._wait_next(name):
+                    result = "stopped"
+                    break
+                self.stage_idx = si
+                with self.lk:
+                    self.stage = name
+                if kind == "arm":
+                    ok, msg = pc.run_seg(self.mdl, sg, self.stop_evt)
+                    self.say(f"{name}: {msg}" + (self._arrival(side, sg) if ok else ""))
+                    if not ok:
+                        result = "stopped"
+                        break
+                elif kind == "@open":
+                    q, err = self._grip_to(side, plan["q_open"])
+                    if err:
+                        self.say(f"{name}: {err}")
+                        result = "stopped"
+                        break
+                    g = self.grip.snapshot().get(side) or {}
+                    self.say(f"{name}: q {q:.2f} (≈ {pc.gap_mm(q):.0f} mm, 목표 q {plan['q_open']:.2f}, 명령 {g.get('cmd')})")
+                    if abs(q - plan["q_open"]) > 0.3:
+                        self.say(f"{name}: 목표까지 안 벌어짐 — 그리퍼가 명령을 안 따름, 멈춤")
+                        result = "stopped"
+                        break
+                elif kind == "@close":
+                    if self.sim and isinstance(self.grip, FakeGripper):
+                        self.grip.block_mm = plan["width_mm"] - 1.0
+                    st0 = self.grip.state(side)
+                    q_before = None if st0 is None else st0["q"]
+                    q, err = self._grip_to(side, plan["q_close"])
+                    if err:
+                        self.say(f"{name}: {err}")
+                        result = "stopped"
+                        break
+                    gap = pc.gap_mm(q)
+                    g = self.grip.snapshot().get(side) or {}
+                    info = (f"q {q_before if q_before is None else round(q_before, 2)} → {q:.2f} (≈ {gap:.0f} mm, 목표 {plan['close_mm']:.0f} mm, "
+                            f"명령 {g.get('cmd')}, 토크 {g.get('tau')}, dq {g.get('dq')})")
+                    self._jsonl({"close": {"side": side, "q": round(q, 3), "gap_mm": round(gap, 1), "target_mm": plan["close_mm"],
+                                           "width_mm": plan["width_mm"], "tau": g.get("tau"), "dq": g.get("dq"), "cmd": g.get("cmd")}})
+                    # 잡음 = 박스 폭 근처(박스 + 6 mm 이하)까지 실제로 닫혔고, 목표(박스 − squeeze)까지는 못 감 (박스에 막힘)
+                    if gap > plan["width_mm"] + 6.0:
+                        self.say(f"{name}: {info} → 박스 폭까지 안 닫힘 (그리퍼가 안 움직였거나 박스 밖을 막음) — 멈춤, 들지 않음")
+                        result = "stopped"
+                        break
+                    held = gap >= plan["close_mm"] + P["contact_min_mm"]
+                    close_info = {"gap_mm": round(gap, 1), "target_mm": plan["close_mm"], "held": bool(held), "tau": g.get("tau")}
+                    self.say(f"{name}: {info} → " + ("박스에 막힘 = 잡음" if held else "목표까지 닫힘 = 놓친 것으로 봄"))
+                    if not held:
+                        self._grip_to(side, plan["q_open"])
+                        result = "missed"
+                        break
+                elif kind == "@hold":
+                    t_end = time.time() + float(P["hold_s"])
+                    while time.time() < t_end and not self.stop_evt.is_set():
+                        time.sleep(0.05)
+                    if self.stop_evt.is_set():
+                        result = "stopped"
+                        break
+                    st = self.grip.state(side)
+                    self.say(f"{name}: 끝 (그리퍼 q {st['q']:.2f} ≈ {pc.gap_mm(st['q']):.0f} mm)" if st else f"{name}: 끝")
+        except Exception as e:  # noqa: BLE001
+            self.say(f"오류: {type(e).__name__}: {e} — 팔은 마지막 목표에서 멈춤")
+            result = "error"
+        if self.sim and isinstance(self.grip, FakeGripper):
+            self.grip.block_mm = None
+        with self.lk:
+            self.phase = {"done": "done", "missed": "stopped"}.get(result, result)
+            self.stage, self.waiting = ("끝 (준비 자세)" if result == "done" else "멈춤 — [복귀] 로 위로 → 준비 자세"), False
+        self.say({"done": "잡기 순서 끝", "missed": "놓침 — 그리퍼를 벌림. [복귀] 를 누르세요",
+                  "stopped": "멈춤 (팔은 그 자리, 그리퍼는 그 상태 유지)", "error": "오류로 멈춤"}[result])
+        self._jsonl({"result": result})
+        if self.rec.active:
+            ok = result == "done" and bool(close_info and close_info.get("held"))
+            pnd = self.rec.finish(ok, result, {"close": close_info})
+            self.say(f"녹화 끝 ({pnd['n']} 프레임, 자동 판정 {'성공' if ok else '실패'}) — [저장] 또는 [버리기] 를 고르세요")
+            self._jsonl({"rec_pending": {k: v for k, v in pnd.items() if k != "extra"}})
+
+    def _arrival(self, side, sg):
+        """도착 0.4 초 뒤: 보낸 관절(경로 끝) 의 집게 가운데 vs 실측 관절의 집게 가운데 [mm] — 팔 추종 오차."""
+        try:
+            time.sleep(0.4)
+            pose = pc.call("/pose", timeout=1.0)
+            qm = self.mdl.to_model(np.radians(np.asarray(pose["arm_deg"], dtype=float)))
+            want = self.mdl.tcp(sg.qs[-1], side).translation
+            got = self.mdl.tcp(qm, side).translation
+            e = (got - want) * 1000
+            jd = float(np.degrees(np.max(np.abs(qm[self.mdl.idx[side]] - sg.qs[-1][self.mdl.idx[side]]))))
+            self._jsonl({"arrival": sg.name, "side": side, "err_mm": np.round(e, 1).tolist(), "joint_max_deg": round(jd, 2)})
+            return f" — 도착 오차 (실측 − 보냄) 앞뒤 {e[0]:+.0f} · 좌우 {e[1]:+.0f} · 높이 {e[2]:+.0f} mm, 관절 최대 {jd:.1f}°"
+        except Exception as ex:  # noqa: BLE001
+            return f" — 도착 오차 못 읽음 ({type(ex).__name__})"
+
+    def home(self):
+        if self.busy():
+            raise HTTPException(409, "실행 중 — 먼저 정지")
+        if not self.ctx:
+            raise HTTPException(409, "복귀할 실행 기록 없음")
+        ok, msg, q_now = pc.arm_ready_check()
+        if not ok:
+            raise HTTPException(409, msg)
+        pc.set_speed(min(self.speed, 2.0))
+        seq, why = pc.plan_home(self.mdl, q_now, self.ctx["side"], self.ctx["floor_z"])
+        if seq is None:
+            raise HTTPException(409, f"복귀 계획 불가: {why}")
+        self.stop_evt.clear()
+
+        def _go():
+            with self.lk:
+                self.phase = "running"
+            res = "done"
+            for _, sg in seq:
+                with self.lk:
+                    self.stage = sg.name
+                ok2, m2 = pc.run_seg(self.mdl, sg, self.stop_evt)
+                self.say(f"복귀 {sg.name}: {m2}")
+                if not ok2:
+                    res = "stopped"
+                    break
+            with self.lk:
+                self.phase, self.stage = res, ("복귀 끝" if res == "done" else "복귀 중 멈춤")
+            if res == "done":
+                self.ctx = None
+        self.th = threading.Thread(target=_go, daemon=True)
+        self.th.start()
+
+    def pose(self, side, which, confirm):
+        """준비 자세 / 기본 자세 (그 팔만). confirm False 면 계산만 해서 확인 창 정보를 돌려줌."""
+        if self.busy():
+            raise HTTPException(409, "실행 중")
+        ok, msg, q_now = pc.arm_ready_check()
+        if not ok:
+            raise HTTPException(409, msg)
+        pc.set_speed(min(self.speed, 2.0))     # 기본 ↔ 준비 자세는 ×2 까지
+        if which == "ready":            # 손이 테이블 · 통 위면 먼저 위로 듦 (수집: 에피소드 끝 → [준비 자세로])
+            segs, info = pc.plan_ready(self.mdl, q_now, side, self.table_z)
+        else:
+            segs, info = pc.plan_pose(self.mdl, q_now, side, which)
+        if segs is None:
+            raise HTTPException(409, info)
+        if not confirm:
+            return info
+        self.stop_evt.clear()
+        with self.lk:
+            self.plan = None             # 자세가 바뀌므로 이전 계획은 버림
+
+        def _go():
+            ok2 = True
+            for sg in segs:
+                with self.lk:
+                    self.phase, self.stage = "running", sg.name
+                ok2, m2 = pc.run_seg(self.mdl, sg, self.stop_evt)
+                self.say(f"{side} {sg.name}: {m2}")
+                if not ok2:
+                    break
+            with self.lk:
+                self.phase, self.stage = ("done" if ok2 else "stopped"), (segs[-1].name + " 끝" if ok2 else "자세 이동 중 멈춤")
+        self.th = threading.Thread(target=_go, daemon=True)
+        self.th.start()
+        return info
+
+    def gripper_manual(self, side, action, size_mm):
+        if self.busy():
+            raise HTTPException(409, "실행 중")
+        q = {"open": pc.q_for_gap(size_mm + P["open_margin_mm"]), "close": pc.q_for_gap(10.0)}[action]
+        if not self.grip.set(side, q):
+            raise HTTPException(409, "그리퍼 상태 없음 — dex1_1_service 확인")
+        self.say(f"그리퍼 {side} → q {q:.2f} (≈ {pc.gap_mm(q):.0f} mm)")
+
+    # ----- 화면 -----
+    def overlay(self, img):
+        K = self.cam.K
+        with self.lk:
+            plan, click, bclick = self.plan, self.click, self.bin_click
+        if click:
+            cv2.drawMarker(img, (int(click[0]), int(click[1])), (0, 255, 255), cv2.MARKER_CROSS, 18, 2)
+        h = TABLE_WIN // 2                 # 테이블 잰 창 (회색 = 잔차 작음, 빨강 = 큼)
+        for (tu, tv), rr in zip(getattr(self, "table_px", []) if self.table_pts else [], getattr(self, "table_resid", [])):
+            col = (0, 0, 255) if rr > TABLE_RESID_WARN else (200, 200, 200)
+            cv2.rectangle(img, (int(tu) - h, int(tv) - h), (int(tu) + h, int(tv) + h), col, 1)
+            cv2.putText(img, f"{rr:.0f}", (int(tu) - h, int(tv) - h - 3), cv2.FONT_HERSHEY_SIMPLEX, 0.4, col, 1)
+        if bclick:
+            cv2.drawMarker(img, (int(bclick[0]), int(bclick[1])), (0, 140, 255), cv2.MARKER_TILTED_CROSS, 18, 2)
+        if plan and plan.get("grasp"):
+            for key, col in (("grasp", (255, 200, 0)), ("pre", (255, 255, 120)), ("release", (0, 140, 255))):
+                if not plan.get(key):
+                    continue
+                px = pelvis_to_pixel(plan[key], K)
+                if px:
+                    cv2.circle(img, px, 6, col, 2)
+        q = self.arm_q
+        if q is not None:
+            qm = self.mdl.to_model(q)
+            for s, col in (("left", (0, 220, 0)), ("right", (220, 0, 220))):
+                px = pelvis_to_pixel(self.mdl.tcp(qm, s).translation + pc.TCP_BIAS[s], K)   # 치우침 보정한 실제 추정
+                if px:
+                    cv2.circle(img, px, 5, col, -1)
+        return img
+
+
+# ---------------- 웹 ----------------
+class PlanReq(BaseModel):
+    u: float
+    v: float
+    side: str
+    width_mm: float
+    height_mm: float
+    rpy_deg: List[float]
+    bin_u: Optional[float] = None       # 통 안쪽 가운데 클릭 (없으면 제자리 내려놓기)
+    bin_v: Optional[float] = None
+    bin_h_mm: Optional[float] = None    # 테이블 → 통 테두리 높이
+
+
+class RunReq(BaseModel):
+    plan_id: int
+    step_mode: bool = True
+
+
+class RecReq(BaseModel):
+    enabled: bool
+    name: str
+
+
+class TableReq(BaseModel):
+    u: float
+    v: float
+    reset: bool = False
+
+
+class PoseReq(BaseModel):
+    side: str
+    which: str
+    confirm: bool = False
+
+
+class GripReq(BaseModel):
+    side: str
+    action: str
+    size_mm: float = 50.0
+
+
+def make_app(r: Runner):
+    app = FastAPI()
+
+    @app.get("/collect", response_class=HTMLResponse)
+    def collect_page():
+        with open(os.path.join(HERE, "collect.html"), encoding="utf-8") as f:
+            return f.read()
+
+    @app.get("/", response_class=HTMLResponse)
+    def index():
+        return PAGE.replace("__TWIN__", str(TABLE_WIN)).replace("__W__", str(W)).replace("__H__", str(H)).replace(
+            "__RPY__", json.dumps(P["rpy_deg"])).replace("__SIM__", "true" if r.sim and not getattr(r, "cam_only", False) else "false").replace(
+            "__CAMONLY__", "true" if getattr(r, "cam_only", False) else "false")
+
+    @app.get("/video")
+    def video():
+        def gen():
+            last = 0.0
+            while True:
+                img, t = r.cam.frame()
+                if img is None or t == last and not r.sim:
+                    time.sleep(0.02)
+                    continue
+                last = t
+                ok, jpg = cv2.imencode(".jpg", r.overlay(img), [cv2.IMWRITE_JPEG_QUALITY, 75])
+                if ok:
+                    yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+                time.sleep(1 / 15)
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.get("/video_wrist/{name}")
+    def video_wrist(name: str):
+        if not r.wrist or name not in r.wrist.names():
+            raise HTTPException(404, f"손목 카메라 {name} 없음")
+
+        def gen():
+            while True:
+                img, _ = r.wrist.frame(name)
+                if img is not None:
+                    img = cv2.resize(img, (320, int(320 * img.shape[0] / img.shape[1])))
+                    cv2.putText(img, name, (8, 22), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
+                    ok, jpg = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
+                    if ok:
+                        yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + jpg.tobytes() + b"\r\n"
+                time.sleep(1 / 10)
+        return StreamingResponse(gen(), media_type="multipart/x-mixed-replace; boundary=frame")
+
+    @app.post("/api/plan")
+    def api_plan(q: PlanReq):
+        if q.side not in pc.SIDES or len(q.rpy_deg) != 3 or not (10 <= q.width_mm <= 75) or not (15 <= q.height_mm <= 150):
+            raise HTTPException(400, "side left/right, rpy 3 개, 폭 10–75 mm, 높이 15–150 mm")
+        bin_uv = None
+        if q.bin_u is not None:
+            if q.bin_v is None or q.bin_h_mm is None or not (10 <= q.bin_h_mm <= 250):
+                raise HTTPException(400, "통: 클릭 점 · 높이 10–250 mm")
+            bin_uv = (q.bin_u, q.bin_v)
+        plan = r.make_plan(q.u, q.v, q.side, q.width_mm, q.height_mm, q.rpy_deg, bin_uv, q.bin_h_mm)
+        return {"plan_id": r.plan_id, "plan": plan}
+
+    @app.post("/api/run")
+    def api_run(q: RunReq):
+        r.start(q.plan_id, q.step_mode)
+        return {"ok": True}
+
+    @app.post("/api/next")
+    def api_next():
+        r.next_evt.set()
+        return {"ok": True}
+
+    @app.post("/api/stop")
+    def api_stop():
+        r.stop_evt.set()
+        r.pol.stop()
+        r.xr.stop("정지 버튼")
+        r.say("정지 요청")
+        return {"ok": True}
+
+    @app.post("/api/home")
+    def api_home():
+        r.home()
+        return {"ok": True}
+
+    @app.post("/api/table")
+    def api_table(q: TableReq):
+        return r.measure_table(q.u, q.v, q.reset)
+
+    @app.post("/api/rec")
+    def api_rec(q: RecReq):
+        if r.busy():
+            raise HTTPException(409, "실행 중")
+        try:
+            r.rec.ds_dir(q.name)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        err = r.rec.check_cameras(q.name, r.rec_cameras()) if q.enabled else None
+        if err:
+            raise HTTPException(409, err)
+        r.rec_on, r.rec_name = bool(q.enabled), q.name
+        r.say(f"녹화 {'켬' if q.enabled else '끔'} — 데이터셋 {q.name} (카메라 {list(r.rec_cameras())})")
+        return {"ok": True}
+
+    @app.post("/api/place_yaw")
+    def api_place_yaw(body: dict):
+        v = body.get("yaw")
+        r.place_yaw = None if v in (None, "", "auto") else float(v)
+        with r.lk:
+            r.plan = None
+        r.say(f"놓을 때 yaw: {'자동' if r.place_yaw is None else f'안쪽 {r.place_yaw:.0f}°'} (다음 클릭부터)")
+        return {"ok": True}
+
+    @app.post("/api/speed")
+    def api_speed(body: dict):
+        f = float(body.get("f", 1.0))
+        if not (0.25 <= f <= pc.SPEED_MAX):
+            raise HTTPException(400, f"속도 배율 0.25–{pc.SPEED_MAX}")
+        if r.busy():
+            raise HTTPException(409, "실행 중 — 다음 계획부터")
+        r.speed = f
+        with r.lk:
+            r.plan = None                    # 이전 계획은 이전 속도 — 다시 클릭
+        r.say(f"속도 ×{f} (다음 클릭부터)")
+        return {"ok": True}
+
+    @app.get("/api/models")
+    def api_models():
+        return {"models": pol.models(), "loaded": r.pol.info()}
+
+    @app.post("/api/model/upload")
+    async def api_model_upload(request: Request, filename: str = "model.zip"):
+        if r.pol.running():
+            raise HTTPException(409, "정책 실행 중")
+        os.makedirs(pol.MODEL_DIR, exist_ok=True)
+        tmp = os.path.join(pol.MODEL_DIR, ".upload.zip")
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+        try:
+            name = pol.install_zip(tmp)
+        except (ValueError, KeyError, zipfile.BadZipFile) as e:
+            raise HTTPException(400, f"모델 zip 이상: {e}")
+        finally:
+            os.remove(tmp)
+        r.say(f"모델 올림: {name} ({filename})")
+        return {"name": name}
+
+    @app.post("/api/model/load")
+    def api_model_load(body: dict):
+        name, dev = str(body.get("name", "")), str(body.get("device", "CPU"))
+        if not pol.NAME_RE.match(name) or dev not in ("CPU", "GPU", "NPU", "AUTO"):
+            raise HTTPException(400, "모델 이름 · 장치 (CPU/GPU/NPU/AUTO)")
+        try:
+            info = r.pol.load(name, dev)
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(409, f"불러오기 실패: {type(e).__name__}: {e}")
+        r.say(f"모델 불러옴 {name} — {dev}, 컴파일 {info['compile_s']} 초, 추론 {info['infer_ms']} ms")
+        return info
+
+    @app.post("/api/policy/start")
+    def api_policy_start(body: Optional[dict] = None):
+        try:
+            r.pol.start(repeat=bool((body or {}).get("repeat")))
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        return {"ok": True}
+
+    @app.post("/api/policy/stop")
+    def api_policy_stop():
+        r.pol.stop()
+        return {"ok": True}
+
+    @app.post("/api/rec/decide")
+    def api_rec_decide(body: dict):
+        keep = bool(body.get("keep"))
+        try:
+            res = r.rec.decide(keep)
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        r.say(f"에피소드 저장 {res.get('episode')} ({res.get('n')} 프레임, {res.get('mb')} MB)" if res.get("saved") else "에피소드 버림")
+        r._jsonl({"rec": res})
+        return res
+
+    @app.get("/api/datasets")
+    def api_datasets():
+        return {"datasets": r.rec.datasets(), "cameras_now": r.rec_cameras(),
+                "wrist_err": getattr(r.wrist, "err", {}) if r.wrist else {}}
+
+    @app.get("/api/dataset/zip")
+    def api_dataset_zip(name: str, only_ok: bool = True):
+        if r.rec.active:
+            raise HTTPException(409, "녹화 중")
+        try:
+            path = r.rec.make_zip(name, only_ok)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(404, f"데이터셋 없음: {e}")
+        from fastapi.responses import FileResponse
+        return FileResponse(path, filename=os.path.basename(path), media_type="application/zip")
+
+    @app.get("/api/dataset/episodes")
+    def api_dataset_episodes(name: str):
+        try:
+            return {"name": name, "episodes": r.rec.episodes(name)}
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
+    @app.get("/api/dataset/episode")
+    def api_dataset_episode(name: str, ep: str):
+        try:
+            return r.rec.ep_detail(name, ep)
+        except (ValueError, FileNotFoundError, KeyError) as e:
+            raise HTTPException(404, f"에피소드 없음: {e}")
+
+    @app.get("/api/dataset/frame")
+    def api_dataset_frame(name: str, ep: str, cam: str, i: int = 0):
+        try:
+            b = r.rec.ep_frame(name, ep, cam, i)
+        except (ValueError, FileNotFoundError, KeyError) as e:
+            raise HTTPException(404, f"프레임 없음: {e}")
+        return Response(content=b, media_type="image/jpeg", headers={"Cache-Control": "max-age=3600"})
+
+    @app.post("/api/dataset/episode/delete")
+    def api_dataset_episode_delete(body: dict):
+        name, ep = str(body.get("name", "")), str(body.get("ep", ""))
+        try:
+            r.rec.delete_ep(name, ep)
+        except RuntimeError as e:
+            raise HTTPException(409, str(e))
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(404, f"에피소드 없음: {e}")
+        r.say(f"에피소드 지움: {name}/{ep}")
+        r._jsonl({"rec_delete": {"name": name, "ep": ep}})
+        return {"ok": True}
+
+    @app.post("/api/table/clear")
+    def api_table_clear():
+        with r.lk:
+            r.table_pts, r.table_plane, r.table_z, r.table_click, r.plan = [], None, None, None, None
+            r.table_patches, r.table_px, r.table_resid = [], [], []
+        r.say("테이블 점 지움")
+        return {"ok": True}
+
+    @app.post("/api/pose")
+    def api_pose(q: PoseReq):
+        if q.side not in pc.SIDES or q.which not in ("ready", "default"):
+            raise HTTPException(400, "side left/right, which ready/default")
+        return r.pose(q.side, q.which, q.confirm)
+
+    @app.post("/api/gripper")
+    def api_gripper(q: GripReq):
+        if q.side not in pc.SIDES or q.action not in ("open", "close"):
+            raise HTTPException(400, "side left/right, action open/close")
+        r.gripper_manual(q.side, q.action, q.size_mm)
+        return {"ok": True}
+
+    # ----- VR 조작 (apps/gripper_pick/xr_virtual.py --real → 여기 → arm_server · 그리퍼) -----
+    @app.post("/api/xr/start")
+    def api_xr_start(body: dict):
+        return r.xr.start(float(body.get("max_vel", xr_real.X["real_max_vel"])), CAM_PITCH_MAX, bool(body.get("no_table", False)))
+
+    @app.post("/api/xr/stop")
+    def api_xr_stop():
+        return {"ok": True, "stopped": r.xr.stop("VR 끝 버튼", go_home=True)}
+
+    @app.post("/api/xr/cmd")
+    def api_xr_cmd(body: dict):
+        return r.xr.cmd(body.get("names") or [], body.get("q") or [], body.get("grip") or {}, body.get("press") or {},
+                        bool(body.get("no_input", False)))
+
+    @app.get("/api/xr/state")
+    def api_xr_state():
+        return r.xr.state()
+
+    @app.get("/api/state")
+    def api_state():
+        with r.lk:
+            st = {"phase": r.phase, "stage": r.stage, "waiting": r.waiting, "log": r.log[-25:],
+                  "plan_id": r.plan_id, "plan": r.summary(r.plan), "can_home": bool(r.ctx) and not r.busy(),
+                  "busy": r.busy(), "table_z": r.table_z, "speed": r.speed, "table_n": len(r.table_pts),
+                  "tty": None if r.sim else len(glob.glob("/dev/ttyUSB*")),
+                  "cam_pitch": r.cam_pitch.read() if r.cam_pitch else None,
+                  "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
+                  "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX],
+                  "policy": {"loaded": r.pol.info(), **r.pol.state,
+                             "check": r.pol.check() if r.pol.policy is not None and not r.pol.running() else []},
+                  "rec": {"on": r.rec_on, "name": r.rec_name, "active": r.rec.active, "n": r.rec.n, "last": r.rec.last,
+                          "pending": None if r.rec.pending is None else {k: v for k, v in r.rec.pending.items()}}}
+        g = r.grip.snapshot()
+        st["gripper"] = {}
+        for s in pc.SIDES:
+            d = g.get(s) or {}
+            st["gripper"][s] = None if d.get("q") is None else {"q": d["q"], "mm": round(pc.gap_mm(d["q"]), 1), "ok": d.get("ok")}
+        st["arm"] = r.arm_msg
+        st["xr"] = r.xr.state()
+        if r.arm_q is not None:
+            qm = r.mdl.to_model(r.arm_q)
+            st["tcp"] = {s: np.round(r.mdl.tcp(qm, s).translation + pc.TCP_BIAS[s], 3).tolist() for s in pc.SIDES}
+            st["ready"] = {s: pc.ready_info(r.mdl, qm, s) for s in pc.SIDES}
+        return st
+
+    return app
+
+
+PAGE = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>그리퍼 잡기</title><style>
+body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#ddd}
+.wrap{display:flex;flex-wrap:wrap;gap:12px;padding:12px}
+#img{max-width:100%;cursor:crosshair;border:1px solid #444;display:block}
+.panel{min-width:320px;max-width:440px;flex:1}
+fieldset{border:1px solid #444;margin:0 0 10px;padding:8px}
+label{margin-right:10px}input[type=number]{width:70px;background:#222;color:#eee;border:1px solid #555}
+button{padding:8px 12px;margin:3px 2px;background:#2a2a2a;color:#eee;border:1px solid #666;border-radius:4px;cursor:pointer}
+button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f44;font-weight:bold;width:100%;font-size:18px}
+#next{background:#064;border-color:#3c8}pre{white-space:pre-wrap;font-size:12px;background:#1a1a1a;padding:6px;max-height:300px;overflow:auto}
+.bad{color:#f88}.ok{color:#8f8}.sim{background:#553;padding:4px 8px}
+</style></head><body>
+<div class="wrap"><div style="position:relative"><img id="img" src="/video" width="__W__" height="__H__"><div id="tblbox" style="position:absolute;border:2px solid #0f0;pointer-events:none;display:none"></div><div id="simnote"></div>
+<div id="wristimgs" style="display:flex;gap:6px;margin-top:6px"></div>
+<div style="font-size:12px;margin-top:4px">노란 + 클릭 · 하늘 ○ 계획한 잡는 자리(진한)/접근 위치 · 초록 ● 왼 집게 · 분홍 ● 오른 집게 (FK 투영)</div></div>
+<div class="panel">
+<button id="stop">■ 정지</button>
+<fieldset><legend>박스 · 손 · 자세</legend>
+<label><input type="radio" name="side" value="left">왼손</label><label><input type="radio" name="side" value="right" checked>오른손</label><br>
+잡는 폭 <input id="size" type="number" value="50" min="10" max="75"> mm (로봇 좌우 방향) · 높이 <input id="height" type="number" value="50" min="15" max="150"> mm<br>
+놓는 곳 <label><input type="radio" name="dest" value="bin" checked>통</label><label><input type="radio" name="dest" value="same">제자리</label>
+· 통 높이 <input id="binh" type="number" value="80" min="10" max="250"> mm (테이블 → 테두리)<br>
+놓을 때 yaw <select id="pyaw" style="background:#222;color:#eee"><option value="auto" selected>자동 (몸통 피함)</option><option value="0">0°</option><option value="15">안쪽 15°</option><option value="30">안쪽 30°</option><option value="45">안쪽 45°</option></select>
+<span style="font-size:12px">— 잡을 때 RPY 는 그대로, 통 위로 옮기며 돌림</span><br>
+RPY <input id="r" type="number" step="5"><input id="p" type="number" step="5"><input id="y" type="number" step="5"> deg
+<button id="tbl">테이블 점 추가</button><button id="tblclr">테이블 지우기</button> <span id="tblz">테이블: 안 잼</span>
+<div style="font-size:12px">테이블 빈 곳을 앞 · 뒤 · 옆 2–3 곳 (점마다 [테이블 점 추가] → 클릭). 1 곳이면 수평으로 봄</div>
+<div id="clickhint" style="font-size:13px;color:#ff0">먼저 [테이블 점 추가] → 테이블 빈 곳 클릭</div>
+<div style="font-size:12px">0,0,0 = 손이 앞 · 집게 좌우, pitch + = 앞으로 숙임 (손목 pitch ±33° 라 90 은 거의 안 닿음). 박스 윗면 가운데를 클릭하면 계획 (접근은 위에서 수직)</div>
+</fieldset>
+<fieldset><legend>실행</legend>
+<label><input type="checkbox" id="step" checked>단계별 (매 단계 [다음 단계])</label>
+속도 <select id="spd" style="background:#222;color:#eee"><option value="1">×1</option><option value="1.5">×1.5</option><option value="2" selected>×2</option><option value="3">×3</option></select><br>
+<button id="run" disabled>실행</button><button id="next" disabled>다음 단계 ▶</button><button id="home" disabled>복귀 (위로→준비)</button><br>
+선택한 팔: <button id="pready">준비 자세로</button><button id="pdef">기본 자세로</button><br>
+그리퍼 (선택한 손): <button id="gopen">벌림</button><button id="gclose">닫힘</button>
+</fieldset>
+<fieldset><legend>VR 조작 (Quest · xr_teleoperate) — <a href="/collect" style="color:#8cf">수집 화면 ↗</a></legend>
+관절 속도 <select id="xrvel" style="background:#222;color:#eee"><option value="0.2">0.2</option><option value="0.3" selected>0.3</option><option value="0.5">0.5</option></select> rad/s
+<label><input type="checkbox" id="xrnotable">테이블 검사 끔 (테이블 없이 시험)</label><br>
+<button id="xrstart">VR 시작</button><button id="xrstop" disabled>VR 끝</button>
+<div id="xrst" style="font-size:13px">꺼짐</div>
+<div style="font-size:12px">먼저 <code>python apps/gripper_pick/xr_virtual.py --real</code> 실행 → Quest 에서 'Virtual Reality' → 테이블을 잰 뒤 (또는 테이블 검사 끔) [VR 시작]. 그립(중지)을 누른 손만 팔이 움직이고 뗀 손은 그 자리. 그리퍼는 트리거만 따름 (당기면 닫힘 · 놓으면 벌림).
+수집 켬이면 [VR 시작]~[VR 끝] 이 한 에피소드.</div>
+</fieldset>
+<fieldset><legend>데이터 수집 (ACT)</legend>
+<label><input type="checkbox" id="recon">수집 켬 — [실행] 하면 녹화 시작, 끝나면 저장 / 버리기</label><br>
+데이터셋 <input id="recname" style="width:150px;background:#222;color:#eee;border:1px solid #555">
+<div id="recbig" style="font-size:18px;font-weight:bold;margin:6px 0">수집 꺼짐</div>
+<div id="recdecide" style="display:none;border:1px solid #fa0;padding:6px;margin:4px 0">
+ <div id="recinfo" style="font-size:13px;margin-bottom:4px"></div>
+ <button id="reckeep" style="background:#064;border-color:#3c8;font-size:16px">저장 (학습에 씀)</button>
+ <button id="recdrop" style="background:#600;border-color:#c44;font-size:16px">버리기</button>
+</div>
+<span id="recstat" style="font-size:12px"></span><div id="dslist" style="font-size:12px"></div>
+</fieldset>
+<fieldset><legend>정책 실행 (ACT)</legend>
+<input type="file" id="mfile" accept=".zip" style="font-size:12px"> <button id="mup">모델 zip 올리기</button><br>
+모델 <select id="msel" style="background:#222;color:#eee;max-width:240px"></select>
+장치 <select id="mdev" style="background:#222;color:#eee"><option>CPU</option><option>GPU</option><option>NPU</option><option>AUTO</option></select>
+<button id="mload">불러오기</button>
+<div id="minfo" style="font-size:12px"></div>
+<div id="pcheck" style="font-size:12px"></div>
+<button id="pstart" style="background:#064;border-color:#3c8;font-size:16px" disabled>▶ 정책 시작</button>
+<div id="pstat" style="font-size:15px;margin-top:4px"></div>
+</fieldset>
+<div id="status"></div><pre id="plan"></pre><pre id="log"></pre></div></div>
+<script>
+const RPY=__RPY__, SIM=__SIM__, CAMONLY=__CAMONLY__; let planId=0, planOk=false;
+['r','p','y'].forEach((k,i)=>document.getElementById(k).value=RPY[i]);
+if(SIM) document.getElementById('simnote').innerHTML='<span class="sim">SIM — 가짜 카메라 · 가짜 그리퍼</span>';
+if(CAMONLY) document.getElementById('simnote').innerHTML='<span class="sim">카메라만 — 로봇 · 그리퍼 안 씀 (팔 · 그리퍼 버튼은 동작 안 함)</span>';
+const $=id=>document.getElementById(id);
+const side=()=>document.querySelector('input[name=side]:checked').value;
+async function post(u,b){const r=await fetch(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+ const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.detail||r.status); return j;}
+let boxUV=null, tableMode=false, tableZ=null;
+const dest=()=>document.querySelector('input[name=dest]:checked').value;
+const hint=()=>{$('clickhint').textContent=tableMode?'테이블 빈 곳을 클릭 (박스·통 없는 평평한 곳)':
+  tableZ===null?'먼저 [테이블 점 추가] → 테이블 빈 곳 클릭':
+  boxUV?'② 통 입구 가운데를 클릭 (다시 하려면 놓는 곳을 바꿨다 되돌리기)':'① 박스 윗면 가운데를 클릭';};
+$('tbl').onclick=()=>{tableMode=true;boxUV=null;hint();};
+$('tblclr').onclick=async()=>{try{await post('/api/table/clear');tableZ=null;$('tblz').textContent='테이블: 안 잼';boxUV=null;hint();}catch(e){alert(e.message);}};
+document.querySelectorAll('input[name=dest]').forEach(x=>x.onchange=()=>{boxUV=null;hint();});
+$('img').onmousemove=e=>{const b=$('tblbox'); if(!tableMode){b.style.display='none';return;}   // 테이블 잴 창 미리 보기
+ const im=$('img'),rc=im.getBoundingClientRect(),s=__TWIN__*rc.width/__W__;
+ b.style.display='block';b.style.width=s+'px';b.style.height=s+'px';b.style.left=(e.clientX-rc.left-s/2)+'px';b.style.top=(e.clientY-rc.top-s/2)+'px';};
+$('img').onmouseleave=()=>{$('tblbox').style.display='none';};
+$('img').onclick=async e=>{const im=$('img'),rc=im.getBoundingClientRect(); $('tblbox').style.display='none';
+ const u=(e.clientX-rc.left)*__W__/rc.width, v=(e.clientY-rc.top)*__H__/rc.height;
+ if(tableMode){tableMode=false;hint();try{const t=await post('/api/table',{u,v});tableZ=t.table_z;
+   $('tblz').textContent=`테이블 점 ${t.n} · 평균 z ${t.table_z.toFixed(3)} · 기울기 앞 ${t.slope_x_mm_per_10cm} · 왼 ${t.slope_y_mm_per_10cm} mm/10cm (이번 창 평면 잔차 ${t.spread_mm} mm${t.spread_mm>4?' ⚠ 큼 — 다른 자리':''})`;hint();}catch(err){alert(err.message);} return;}
+ let body={u,v,side:side(),width_mm:+$('size').value,height_mm:+$('height').value,rpy_deg:[+$('r').value,+$('p').value,+$('y').value]};
+ if(dest()==='bin'){ if(!boxUV){boxUV=[u,v];hint();$('plan').textContent='박스 클릭 저장 — 이제 통 안쪽 가운데를 클릭';return;}
+   body.u=boxUV[0];body.v=boxUV[1];body.bin_u=u;body.bin_v=v;body.bin_h_mm=+$('binh').value;boxUV=null;hint();}
+ $('plan').textContent='계획 중…';
+ try{const j=await post('/api/plan',body);
+  planId=j.plan_id; const p=j.plan; planOk=p.ok; showPlan(p);}catch(err){planOk=false;$('plan').innerHTML='<span class="bad">'+err.message+'</span>';}};
+function f3(a){return a?a.map(x=>x.toFixed(3)).join(', '):'-'}
+function showPlan(p){let s=(p.ok?'<span class="ok">계획 OK</span>':'<span class="bad">계획 불가</span>')+` #${planId} ${p.side} 폭 ${p.width_mm} · 높이 ${p.height_mm} mm RPY ${p.rpy_deg} · 속도 ×${p.speed}\n`;
+ s+=`윗면 가운데 (pelvis, 박스 자리 테이블 z ${p.table_z} + 높이) ${f3(p.top)}\n`;
+ if(p.depth_diff_mm) s+=`  (참고: 깊이로 잰 점 − 평면 점 = 앞뒤 ${p.depth_diff_mm[0]} · 좌우 ${p.depth_diff_mm[1]} · 높이 ${p.depth_diff_mm[2]} mm, 흔들림 ${p.depth_spread_mm} mm)\n잡는 자리 ${f3(p.grasp)} · 접근 ${f3(p.pre)}\n바닥 z ${p.floor_z} · 패드↔박스 겹침 ${p.overlap_mm} mm\n`;
+ if(p.pre_above_table_mm!=null) s+=`자로 확인: 집게 가운데(두 패드 가운데)가 테이블 면 위 — 접근 위치 ${p.pre_above_table_mm} mm · 잡는 자리 ${p.grasp_above_table_mm} mm\n`;
+ if(p.bin&&p.place_yaw_in!=null) s+=`놓을 때 yaw 안쪽 ${p.place_yaw_in}° (자세 ${p.place_rpy_deg})\n`;
+ if(p.bin) s+=`통 입구 (클릭) ${f3(p.bin)} · 테두리 z ${p.rim_z} · 놓는 자리 ${f3(p.release)}\n`;
+ s+=`그리퍼 벌림 ${p.open_mm} mm (q ${p.q_open}) · 닫기 목표 ${p.close_mm} mm (q ${p.q_close})\n`;
+ (p.reasons||[]).forEach(x=>s+='<span class="bad">✗ '+x+'</span>\n'); (p.notes||[]).forEach(x=>s+='⚠ '+x+'\n');
+ if(p.steps) s+='순서: '+p.steps.map(x=>x[1]?`${x[0]}(${x[1]}s)`:x[0]).join(' → ')+`\n합계 약 ${p.total_s} 초`;
+ $('plan').innerHTML=s;}
+$('run').onclick=async()=>{if(!confirm('팔이 움직입니다. 비상정지를 손에 쥐었습니까?'))return;
+ try{await post('/api/run',{plan_id:planId,step_mode:$('step').checked});planOk=false;}catch(err){alert(err.message);}};
+$('next').onclick=()=>post('/api/next').catch(e=>alert(e.message));
+$('stop').onclick=()=>post('/api/stop').catch(e=>alert(e.message));
+$('home').onclick=async()=>{if(!confirm('복귀: 위로 → 준비 자세. 진행할까요?'))return; post('/api/home').catch(e=>alert(e.message));};
+async function poseGo(which){try{const i=await post('/api/pose',{side:side(),which,confirm:false});
+ const low=i.low_front_z===null?'없음':`${(i.low_front_z*100).toFixed(0)} cm (pelvis 기준)`;
+ if(!confirm(`${side()==='left'?'왼':'오른'}팔 ${which==='ready'?'준비 자세':'기본 자세'}로 (${i.sec} 초, 관절 보간)\n`+
+   `몸 앞 25 cm 넘는 곳에서 그리퍼 가장 낮은 점: ${low}\n가장 앞: ${(i.max_x*100).toFixed(0)} cm${i.via?' (경유 자세를 거침)':''}\n`+
+   `테이블·박스가 이 경로에 없고, 비상정지를 손에 쥐었습니까?`))return;
+ await post('/api/pose',{side:side(),which,confirm:true});}catch(e){alert(e.message);}}
+$('pready').onclick=()=>poseGo('ready'); $('pdef').onclick=()=>poseGo('default');
+$('gopen').onclick=()=>post('/api/gripper',{side:side(),action:'open',size_mm:+$('size').value}).catch(e=>alert(e.message));
+$('gclose').onclick=()=>{if(confirm('집게를 닫습니다 (≈10 mm). 손가락을 빼세요.'))post('/api/gripper',{side:side(),action:'close'}).catch(e=>alert(e.message));};
+async function poll(){try{const s=await (await fetch('/api/state')).json();
+ if(s.table_z!==null&&s.table_z!==undefined&&tableZ===null){tableZ=s.table_z;$('tblz').textContent=`테이블 점 ${s.table_n} · 평균 z ${s.table_z.toFixed(3)}`;hint();}
+ const g=s.gripper||{}; const gs=k=>g[k]?`${g[k].q.toFixed(2)} rad ≈ ${g[k].mm} mm`:'상태 없음';
+ $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`+
+  (s.cam_pitch?`<br>카메라 숙임 (몸통 기준) ${s.cam_pitch.now.toFixed(2)}° · 기준 ${s.cam_pitch.ref.toFixed(2)}° · <span class="${Math.abs(s.cam_pitch.diff)<=s.cam_pitch_lim[0]?'ok':'bad'}">차이 ${s.cam_pitch.diff>0?'+':''}${s.cam_pitch.diff.toFixed(2)}°</span>`+
+    (Math.abs(s.cam_pitch.diff)>s.cam_pitch_lim[1]?` — 거치대를 ${Math.abs(s.cam_pitch.diff).toFixed(1)}° ${s.cam_pitch.diff>0?'위로':'아래로'} (실행 막힘)`:(Math.abs(s.cam_pitch.diff)>s.cam_pitch_lim[0]?' — 수집 전에 맞추기 권장':'')):
+   (s.cam_pitch_err?`<br><span class="bad">카메라 숙임: ${s.cam_pitch_err}</span>`:''));
+ $('log').textContent=(s.log||[]).join('\n'); $('log').scrollTop=1e9;
+ $('run').disabled=!(planOk&&s.plan_id===planId&&!s.busy); $('next').disabled=!s.waiting; $('home').disabled=!s.can_home;
+ ['gopen','gclose','pready','pdef'].forEach(k=>$(k).disabled=s.busy);}catch(e){} setTimeout(poll,300);}
+$('xrstart').onclick=async()=>{const nt=$('xrnotable').checked;
+ if(!confirm('실제 팔이 VR 손을 따라 움직입니다. 주변을 비우고 E-stop 을 손에 두세요.'+(nt?' (테이블 검사 끔 — 팔 아래에 아무것도 두지 마세요)':'')+' 시작할까요?'))return;
+ try{await post('/api/xr/start',{max_vel:+$('xrvel').value,no_table:nt});}catch(e){alert(e.message);}};
+$('xrstop').onclick=()=>post('/api/xr/stop',{}).catch(e=>alert(e.message));
+setInterval(async()=>{try{const s=await (await fetch('/api/xr/state')).json();
+ const h=s.hands||{}; const hs=k=>h[k]?`<span class="${h[k].level==='stop'?'bad':h[k].level==='ok'?'ok':''}">${h[k].state}</span> ${h[k].reason||''}`:'';
+ $('xrst').innerHTML=s.active?`<b>${s.msg}</b> · 명령 ${s.n} · ${s.age_s}s 전<br>왼손 ${hs('left')}<br>오른손 ${hs('right')}`:s.msg;
+ $('xrstart').disabled=s.active; $('xrstop').disabled=!s.active;}catch(e){}},300);
+async function recSet(){try{await post('/api/rec',{enabled:$('recon').checked,name:$('recname').value.trim()});dsList();}
+ catch(e){$('recon').checked=false;alert(e.message);}}
+$('recon').onchange=recSet; $('recname').onchange=()=>{if($('recon').checked)recSet();};
+async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
+ const cams=Object.entries(j.cameras_now).map(([k,v])=>`${k} ${v.w}×${v.h}`).join(', ');
+ const werr=Object.entries(j.wrist_err||{}).map(([k,v])=>`${k}: ${v}`).join(', ');
+ $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
+  j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
+let recInit=false, wristInit=false, spdInit=false;
+$('pyaw').onchange=async()=>{try{await post('/api/place_yaw',{yaw:$('pyaw').value});planOk=false;$('plan').textContent='놓을 때 yaw 를 바꿈 — 다시 클릭';}catch(e){alert(e.message);}};
+$('spd').onchange=async()=>{try{await post('/api/speed',{f:+$('spd').value});planOk=false;$('plan').textContent='속도를 바꿈 — 박스를 다시 클릭';}catch(e){alert(e.message);}};
+setInterval(async()=>{if(spdInit)return;try{const s=await (await fetch('/api/state')).json(); if(s.speed){$('spd').value=String(s.speed);spdInit=true;}}catch(e){}},800);
+async function modelList(){try{const j=await (await fetch('/api/models')).json();
+ $('msel').innerHTML=j.models.map(m=>`<option value="${m.name}">${m.name} (${m.side}, ${m.episodes} 에피소드, 검증 ${m.val_err_deg==null?'-':m.val_err_deg.toFixed(1)+'°'})</option>`).join('');
+ if(j.loaded) $('msel').value=j.loaded.name;}catch(e){}}
+modelList();
+$('mup').onclick=async()=>{const f=$('mfile').files[0]; if(!f){alert('zip 파일을 고르세요');return;}
+ try{const r=await fetch('/api/model/upload?filename='+encodeURIComponent(f.name),{method:'POST',body:f}); const j=await r.json();
+  if(!r.ok) throw new Error(j.detail||r.status); await modelList(); $('msel').value=j.name;}catch(e){alert(e.message);}};
+$('mload').onclick=async()=>{ $('minfo').textContent='불러오는 중 (컴파일)…';
+ try{const i=await post('/api/model/load',{name:$('msel').value,device:$('mdev').value});
+  $('minfo').textContent=`${i.name} · ${i.side} · ${i.device} · 카메라 ${i.cameras.join(', ')} · 추론 ${i.infer_ms} ms (30 Hz 는 33 ms 안)`;}catch(e){$('minfo').textContent='';alert(e.message);}};
+$('pstart').onclick=async()=>{if(!confirm('정책이 팔과 그리퍼를 움직입니다. 비상정지를 손에 쥐었습니까?\n멈춤: 빨간 [정지] 또는 Esc'))return;
+ try{await post('/api/policy/start');}catch(e){alert(e.message);}};
+document.addEventListener('keydown',e=>{if(e.key==='Escape')post('/api/stop').catch(()=>{});});
+setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const p=s.policy; if(!p)return;
+ if(p.loaded&&!$('minfo').textContent) $('minfo').textContent=`${p.loaded.name} · ${p.loaded.side} · ${p.loaded.device} · 추론 ${p.loaded.infer_ms} ms`;
+ $('pcheck').innerHTML=p.loaded&&!p.running?(p.check.length?p.check.map(x=>`<span class="bad">✗ ${x}</span>`).join('<br>'):'<span class="ok">시작 조건 OK</span>'):'';
+ $('pstart').disabled=!(p.loaded&&!p.running&&p.check.length===0);
+ $('pstat').innerHTML=p.running?`<span style="color:#f55">● 정책 실행 중 — ${p.phase} · ${p.step} 스텝 · 추론 ${p.infer_ms??'-'} ms</span>`:(p.why_end?`마지막: ${p.why_end}`:'');}catch(e){}},500);
+async function recDecide(keep){try{const r=await post('/api/rec/decide',{keep});dsList();}catch(e){alert(e.message);}}
+$('reckeep').onclick=()=>recDecide(true);
+$('recdrop').onclick=()=>{if(confirm('이 에피소드를 버립니다.'))recDecide(false);};
+async function wristShow(){try{const j=await (await fetch('/api/datasets')).json(); const names=Object.keys(j.cameras_now).filter(k=>k!=='body');
+ $('wristimgs').innerHTML=names.map(n=>`<img src="/video_wrist/${n}" style="width:320px;border:1px solid #444" title="${n}">`).join('')+
+  Object.entries(j.wrist_err||{}).map(([k,v])=>`<span class="bad">${k}: ${v}</span>`).join(' ');}catch(e){}}
+wristShow();
+setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const r=s.rec; if(!r)return;
+ if(!recInit){$('recon').checked=r.on;$('recname').value=r.name;recInit=true;dsList();}
+ const l=r.last, pd=r.pending;
+ $('recbig').innerHTML=r.active?`<span style="color:#f55">● 녹화 중 ${r.n} 프레임 (${(r.n/30).toFixed(0)} 초)</span>`:
+   pd?'<span style="color:#fa0">■ 녹화 끝 — 저장 / 버리기를 고르세요</span>':(r.on?'<span style="color:#8f8">○ 대기 — [실행] 하면 녹화 시작</span>':'수집 꺼짐');
+ $('recdecide').style.display=pd?'block':'none';
+ if(pd){const c=(pd.extra||{}).close; $('recinfo').innerHTML=`자동 판정 <b style="color:${pd.auto_ok?'#8f8':'#f88'}">${pd.auto_ok?'성공':'실패'}</b> (${pd.result}) · ${pd.n} 프레임 ${pd.duration_s} 초`+
+   (c?` · 닫은 간격 ${c.gap_mm} mm (목표 ${c.target_mm}) ${c.held?'잡음':'놓침'}`:'')+`<br>영상을 보고 제대로 잡아서 넣었으면 저장, 아니면 버리기`;}
+ $('run').title=pd?'앞 에피소드 저장 / 버리기 먼저':'';
+ $('recstat').innerHTML=(l?`마지막: ${l.saved?`${l.episode} 저장 (${l.n} 프레임 ${l.mb} MB)`:`${l.why}`}`:'');
+ if(l&&l.saved&&l.episode!==window._lastEp){window._lastEp=l.episode;dsList();}}catch(e){}},700);
+poll();
+</script></body></html>"""
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("iface", nargs="?", default=None, help="DDS 인터페이스 (그리퍼 토픽, 예: enp45s0)")
+    ap.add_argument("--port", type=int, default=PORT)
+    ap.add_argument("--sim", action="store_true", help="가짜 카메라 · 가짜 그리퍼 (팔은 arm_server 를 그대로 씀)")
+    ap.add_argument("--sim-top-z", type=float, default=0.0, help="--sim 클릭 평면 높이 [m, pelvis]")
+    ap.add_argument("--cam-only", action="store_true", help="로봇 없이 카메라만 (D435i + 손목 카메라 화면 확인, 팔 · 그리퍼 · DDS 안 씀)")
+    a = ap.parse_args()
+    mdl = pc.Model()
+    if a.sim:
+        cam, grip = FakeCamera(a.sim_top_z), FakeGripper()
+        wrist = rec.FakeWristCams()
+    elif a.cam_only:
+        cam, grip = RealCamera(), FakeGripper()
+        wrist = rec.WristCams(pc.CFG.get("wrist_cams"), size=pc.CFG.get("wrist_cam_size"))
+        print(f"[pick] 카메라만 — 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
+    else:
+        robot_env.dds_init(a.iface)
+        grip = RealGripper()
+        cam = RealCamera()
+        camp = CamPitchMonitor()
+        if camp.err:
+            print(f"[pick] ⚠ 카메라 숙임 확인 못 함: {camp.err}")
+        wrist = rec.WristCams(pc.CFG.get("wrist_cams"), size=pc.CFG.get("wrist_cam_size"))
+        print(f"[pick] 손목 카메라: {wrist.names() or '없음'}" + (f" — 못 연 것 {wrist.err}" if wrist.err else ""))
+    r = Runner(mdl, cam, grip, a.sim or a.cam_only, cam_pitch=None if (a.sim or a.cam_only) else camp, wrist=wrist)
+    r.cam_only = a.cam_only
+    r.xr = xr_real.XRTeleop(r)
+    print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else '카메라만' if a.cam_only else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
+          f"집게 {pc.MM_PER_RAD} mm/rad (계산값)")
+    uvicorn.run(make_app(r), host="0.0.0.0", port=a.port, log_level="warning")
+
+
+if __name__ == "__main__":
+    main()

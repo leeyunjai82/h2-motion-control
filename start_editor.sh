@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 모션 에디터 (common/simulator.py :8000) — 관절·IK 로 팔 모션을 만들고 저장 (robots/h2/motions/)
+# 모션 에디터 (apps/motion_editor/simulator.py :8000) — 관절·IK 로 팔 모션을 만들고 저장 (robots/h2/motions/)
 #   모드는 반드시 지정 (기본값 없음)
 #
 #   ./start_editor.sh virtual
@@ -76,7 +76,7 @@ if [ "$MODE" = "virtual" ]; then
 fi
 
 source "$ROOT/activate_tv.sh" || exit 1
-cd "$ROOT/common"
+cd "$ROOT"
 
 PIDS=(); NAMES=()
 cleanup() {
@@ -112,7 +112,7 @@ fi
 if [ "$MODE" = "real" ] && up "http://localhost:50022/status"; then
   echo "[start] arm_server    (50022) 이미 실행 중 — 재사용"
 else
-  run "arm_server" "arm_server.py"
+  run "arm_server" "services/arm/arm_server.py"
   wait_http "http://localhost:50022/status" 60
 fi
 
@@ -120,10 +120,10 @@ fi
 if [ "$MODE" = "real" ] && up "http://localhost:50003/"; then
   echo "[start] dashboard     (50003) 이미 실행 중 — 재사용"
 else
-  run "dashboard" "dashboard.py"
+  run "dashboard" "services/dashboard/dashboard.py"
 fi
 
-run "simulator" "simulator.py"
+run "simulator" "apps/motion_editor/simulator.py"
 wait_http "http://localhost:8000/" 30
 
 echo ""

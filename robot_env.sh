@@ -62,7 +62,7 @@ TV_PY="$CONDA_BASE/envs/tv/bin/python"
 
 # 로봇별 unitree_sdk2py — robot.yaml sdk.commit 이 있으면 third_party/unitree_sdk2_python-<커밋7자리> 에 받아 둔다.
 #   tv 환경에 설치된 SDK(requirements 고정 커밋, G1)는 건드리지 않는다.
-#   실제 경로 선택은 common/robot_env.py 가 sys.path 앞에 넣어서 한다 (sudo 로 환경변수가 지워져도 동작).
+#   실제 경로 선택은 pitron/core/robot_env.py 가 sys.path 앞에 넣어서 한다 (sudo 로 환경변수가 지워져도 동작).
 ensure_robot_sdk() {
   local r="${ROBOT:-}" y repo commit dir git_bin
   [ -n "$r" ] || return 0

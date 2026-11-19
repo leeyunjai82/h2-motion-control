@@ -70,13 +70,13 @@ sweep_zombies "cleanup"
 # venv 활성화
 # ==========================================
 source "$ROOT/activate_tv.sh" || exit 1
-cd "$ROOT/common"
+cd "$ROOT"
 
 # 머리 카메라 인식(head_track): robot.yaml 에 head_track 이 있고 gstreamer 가 깔려 있을 때만
 HEADCAM=$(python -c 'import sys,yaml; print(1 if yaml.safe_load(open(sys.argv[1])).get("head_track") else 0)' \
        "$ROOT/robots/$ROBOT/robot.yaml") || exit 1
 if [ "$HEADCAM" = "1" ] && ! command -v gst-launch-1.0 >/dev/null 2>&1; then
-  echo "[start] ⚠️ gst-launch-1.0 없음 → head_track(머리 카메라 인식) 생략 — common/ctrl/head_cam.py 의 apt 설치 참고"
+  echo "[start] ⚠️ gst-launch-1.0 없음 → head_track(머리 카메라 인식) 생략 — pitron/drivers/camera/head_cam.py 의 apt 설치 참고"
   HEADCAM=0
 fi
 
@@ -133,37 +133,37 @@ trap cleanup INT TERM
 #     $!는 python PID 유지(graceful 종료 보존)
 # ==========================================
 echo "[start] rs_stream     (50001) ..."
-python -u rs_stream.py          > >(stamp >> "$LOG_DIR/rs_stream_$DAY.log")     2>&1 &
+python -u services/camera/rs_stream.py          > >(stamp >> "$LOG_DIR/rs_stream_$DAY.log")     2>&1 &
 PIDS+=($!); NAMES+=("rs_stream")
 sleep 2
 
 echo "[start] arm_server    (50022) ..."
-python -u arm_server.py         > >(stamp >> "$LOG_DIR/arm_server_$DAY.log")    2>&1 &
+python -u services/arm/arm_server.py         > >(stamp >> "$LOG_DIR/arm_server_$DAY.log")    2>&1 &
 PIDS+=($!); NAMES+=("arm_server")
 sleep 4
 
 echo "[start] robot_server  (50000) ..."
-python -u robot_server.py       > >(stamp >> "$LOG_DIR/robot_server_$DAY.log")  2>&1 &
+python -u apps/box_handover/robot_server.py       > >(stamp >> "$LOG_DIR/robot_server_$DAY.log")  2>&1 &
 PIDS+=($!); NAMES+=("robot_server")
 sleep 3
 
 echo "[start] dashboard     (50003) ..."
-python -u dashboard.py          > >(stamp >> "$LOG_DIR/dashboard_$DAY.log")     2>&1 &
+python -u services/dashboard/dashboard.py          > >(stamp >> "$LOG_DIR/dashboard_$DAY.log")     2>&1 &
 PIDS+=($!); NAMES+=("dashboard")
 sleep 2
 
 echo "[start] detect_box    (50010) ..."
-python -u ctrl/detect_box.py    > >(stamp >> "$LOG_DIR/detect_box_$DAY.log")    2>&1 &
+python -u apps/box_handover/detect_box.py    > >(stamp >> "$LOG_DIR/detect_box_$DAY.log")    2>&1 &
 PIDS+=($!); NAMES+=("detect_box")
 sleep 1
 
 if [ "$HEADCAM" = "1" ]; then
   # 로봇 쪽 준비 (video_hub 끔 · stereo_patch_pc1 켬 · 수신 IP = 이 PC) — robot.yaml head_track.robot_setup. 한 번 돌고 끝남
   echo "[start] head_cam_on         ... 머리 카메라 로봇 서비스 준비 (로그 head_track_$DAY.log)"
-  python -u ../utils/head_cam_on.py > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
+  python -u tools/head_cam_on.py > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
   PIDS+=($!); NAMES+=("head_cam_on")
   echo "[start] head_track    (50013) ... 머리 카메라 왼눈 얼굴·나이성별 / 오른눈 행동 (보기만)"
-  python -u head_track.py       > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
+  python -u services/head_vision/head_track.py       > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
   PIDS+=($!); NAMES+=("head_track")
   sleep 1
 fi

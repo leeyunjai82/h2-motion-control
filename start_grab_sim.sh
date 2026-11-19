@@ -42,7 +42,7 @@ if [ -n "$busy" ]; then
 fi
 
 source "$ROOT/activate_tv.sh" || exit 1
-cd "$ROOT/common"
+cd "$ROOT"
 
 PIDS=(); NAMES=()
 cleanup() {
@@ -73,20 +73,20 @@ wait_http() {  # wait_http <url> <초>
 }
 
 run "fake_robot"   "$ROOT/sim/fake_robot.py" 2
-run "arm_server"   "arm_server.py"           1
+run "arm_server"   "services/arm/arm_server.py"           1
 wait_http "http://localhost:50022/status" 60
-run "robot_server" "robot_server.py"         1
+run "robot_server" "apps/box_handover/robot_server.py"    1
 wait_http "http://localhost:50000/grab_status" 60
-run "dashboard"    "dashboard.py"            1
+run "dashboard"    "services/dashboard/dashboard.py"      1
 if [ "$CAM" = "real-cam" ]; then
-  run "rs_stream"  "rs_stream.py"            4
-  run "detect_box" "ctrl/detect_box.py"      2
+  run "rs_stream"  "services/camera/rs_stream.py"         4
+  run "detect_box" "apps/box_handover/detect_box.py"      2
   wait_http "http://localhost:50010/status" 60
-  run "sim_server" "$ROOT/sim/sim_server.py" 1
+  run "sim_server" "$ROOT/apps/box_handover/sim_server.py" 1
   wait_http "http://localhost:50012/sim/state" 30
   SIM_URL="http://localhost:50012/"
 else
-  run "sim_server" "$ROOT/sim/sim_server.py" 1
+  run "sim_server" "$ROOT/apps/box_handover/sim_server.py" 1
   wait_http "http://localhost:50010/status" 30
   SIM_URL="http://localhost:50010/"
 fi

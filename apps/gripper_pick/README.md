@@ -1,0 +1,120 @@
+# gripper/ — Dex1-1 그리퍼 (한 팔로 작은 박스 잡기)
+
+박스 양손 잡기(`apps/box_handover/robot_server.py`, `start_robot.sh`)와 따로 씁니다. 같이 쓰는 것은 arm_server(팔 명령을 혼자 쥐는 서버)와 카메라 보정값(`robots/h2/robot.yaml`, `calib_local.yaml`)뿐입니다.
+
+| 파일 | 하는 일 | 확인 |
+| --- | --- | --- |
+| `gripper.yaml` | 손 ↔ 토픽, q 범위, TCP, 송신 게인, 잡기 값(`pick:`) | 토픽 · q 범위 실측, TCP · mm/rad 는 계산값 |
+| `check_dex1.py` | 그리퍼 상태 읽기 (명령 없음) | 실기 |
+| `move_test.py` | 그리퍼만 천천히 여닫기 | 실기 (로봇에 단 상태 포함) |
+| `dex1_gripper.py` | 그리퍼 연속 송신 클래스 (pick_web 이 씀) | 실기 안 해 봄 |
+| `pick_core.py` | IK · 경로 계획 · arm_server `/stream` 실행 | 오프라인 + 가짜 arm_server 만 |
+| `pick_web.py` | 잡기 웹 (포트 50030) | 가짜 카메라 · 가짜 그리퍼 · 가짜 arm_server 만 |
+
+## 잡기 웹
+
+```bash
+ROBOT_CHECK=1 ./start_fsm.sh stand     # 거치대 + FSM 703 (한 번)
+./start_gripper.sh                     # 한 창: 그리퍼 서비스(sudo 비밀번호 한 번) → arm_server → 잡기 웹. Ctrl+C 로 셋 다 끔
+# 브라우저: http://<미니 PC>:50030/
+```
+
+1. 손 선택 → **[준비 자세로]**: 그 팔만 관절 보간 (경유 자세를 거치면 약 10 초). 준비 자세 = 집게 가운데 (0.30, ±0.35, 0.20) ·
+   숙임 0 (`gripper.yaml pick.ready_tcp_m`) — 카메라 화면 밖. 기본 자세에서 바로 가면 그리퍼가 몸 앞 낮은 곳을 지나가서
+   경유 자세 (0.20, ±0.30, 0.25)·20° 를 거침 → 몸 앞 0.25 m 넘는 곳에서 그리퍼 가장 낮은 점 z 0.167 (계산)
+2. **[테이블 점 추가]** → 테이블 빈 곳 클릭, 앞 · 뒤 · 옆 2–3 곳 (점마다 31 × 31 픽셀 × 10 프레임 깊이 중앙값) → 기울어진 평면으로 맞춤.
+   몸통이 뒤로 약 4° 기울어 서 있어 (check_rsimu 2026-11-06) 로봇 좌표에서 테이블이 앞으로 10 cm 에 약 7 mm 낮아 보임 — 1 곳이면 수평으로 봄.
+   테이블을 옮기면 [테이블 지우기] 후 다시. 카메라 숙임은 start_gripper.sh 가 시작 때 재서 기준값과 비교만 (저장 안 함 — ACT 는 카메라 구도가 같아야 하므로 거치대를 기준에 맞춤, 1° 넘게 다르면 멈춤)
+3. 잡는 폭 · 높이 [mm], RPY (기본 0, 20, 0), 놓는 곳 (통 · 제자리), 통 높이 [mm, 테이블 → 테두리]
+   → ① 박스 윗면 가운데 클릭 → ② (통이면) 통 **입구** 가운데 클릭 → 계획 (팔 안 움직임)
+   - 위치는 깊이를 안 씀: 클릭 픽셀 시선 ∩ 평면 (박스 = 테이블 + 박스 높이, 통 = 테이블 + 통 높이). 깊이로 잰 점과의 차이는 참고로만 표시
+4. [실행] → 단계별이면 [다음 단계] 마다 한 단계
+   - 통: 그리퍼 벌림 → 접근(10 cm 위) → 내려가기 → 닫기 → 들기(박스 아랫면이 테두리 3 cm 위) → 통 위로 →
+     박스 아랫면이 테두리 1 cm 위까지 → 벌림(떨어뜨림) → 위로 → 준비 자세
+   - 제자리: … 닫기 → 들기 8 cm → 2 초 → 내려놓기 → 벌림 → 빼기 → 준비 자세
+   - 통 테두리 높이 80 · 120 mm 는 계획 OK, 150 mm 는 통 위에서 손목 한계로 안 닿음 (오프라인, 박스 x 0.40–0.48)
+5. [정지] = 그 자리에서 멈춤 (그리퍼는 그 상태 유지) → [복귀] = 위로 → 준비 자세
+6. 끝나면 [기본 자세로] (같은 경로 반대)
+
+## 녹화 (ACT 데이터) — `recorder.py`
+
+웹 **데이터 수집** 칸: [수집 켬] + 데이터셋 이름 (영문 · 숫자 · _ -) → [실행] = 녹화 시작 (● 녹화 중 n 프레임) →
+잡기가 끝나거나 [정지] 하면 녹화 끝 → **[저장 (학습에 씀)] / [버리기]** 를 고를 때까지 다음 [실행] 은 막힘.
+자동 판정(끝까지 + 닫기 '잡음')과 닫은 간격을 보여 주지만 저장 여부는 사람이 정함 (저장 = `ok: true`, `auto_ok` 에 자동 판정).
+**zip (성공만)** 링크 → 학습 PC 웹에 올림.
+
+```
+gripper/data/<데이터셋>/info.json                       format h2-gripper-episodes-v1, cameras {이름: {w, h}}, state_names
+gripper/data/<데이터셋>/episodes/ep_000001/episode.npz  t · state(N,16) · action(N,16) · tcp(N,6) · stage(N,) ·
+                                                        jpeg_<카메라> · jpeg_off_<카메라>   (30 Hz)
+gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side · stages · plan · close (닫은 간격 · 토크)
+```
+
+- state = [왼팔 7 실측, 왼 그리퍼 q, 오른팔 7 실측, 오른 그리퍼 q] (rt/lowstate 500 Hz 의 최신값) — 한 손 학습은 학습기에서 골라 씀
+- action = [왼팔 7 지령, 왼 그리퍼 목표, 오른팔 7 지령, 오른 그리퍼 목표] (지령 = arm_server /stream 으로 실제 보낸 값)
+- 카메라: body = D435i 컬러 424×240 + 손목 카메라 (`gripper.yaml wrist_cams`, `wrist_cam_size` 320×240 으로 열어 그대로 저장).
+  데이터셋 안에서는 카메라 구성 · 크기가 같아야 함 (다르면 녹화를 켤 때 거부)
+- 크기: 잡기 한 번 ≈ 38 초 · 1100 프레임 · 약 16 MB (가짜 카메라 기준, 실제 영상은 JPEG 가 더 클 수 있음)
+- 확인: 가짜 로봇 · 가짜 카메라로 녹화 → npz · meta · zip 까지 (2026-11-06). 실기 녹화 · 학습기 읽기는 아직
+
+## 정책 실행 (ACT) — `policy.py`
+
+웹 **정책 실행** 칸: 학습 PC 에서 받은 model zip 올리기 → 모델 · 장치 (CPU / GPU / NPU) 고르고 [불러오기] (컴파일 + 추론 시간) →
+시작 조건이 모두 OK 면 [▶ 정책 시작]. 멈춤 = 빨간 [정지] 또는 Esc (팔은 그 자리, 그리퍼는 그 상태).
+
+- 시작 조건: 그 손이 학습 데이터 첫 자세 근처 (먼저 [준비 자세로]) · 카메라 (모델이 쓰는 것 전부) · 팔 실측 · 그리퍼 상태 · 카메라 숙임 ±1°
+- 시작: 학습 데이터 첫 지령 평균 자세로 천천히 → 정책. 추론은 따로 돌고 제어는 30 Hz (ACT temporal ensemble, 예측마다 관측한 틱 기준) —
+  추론이 33 ms 보다 느려도 팔은 30 Hz 로 움직임 (가짜 로봇 · 추론 100 ms 흉내로 확인)
+- 멈춤 (안전): 정책 출력이 학습 범위를 0.15 rad 넘게 벗어남 · 집게 가운데가 학습 범위 ± 5 cm 밖 · 그리퍼가 테이블 평면 + 5 mm 아래 ·
+  지령 ↔ 실측 15° · 최대 90 초 · 끝 자세에 1 초 머묾 (= 한 회 끝)
+- 영상은 녹화와 같게 (카메라 크기로 줄임 → JPEG q90 → RGB)
+- ⚠ 추론 시간: 이 저장소 시험 컨테이너 CPU 에서 카메라 3 대 · ResNet18 이 70–110 ms. 미니 PC 의 CPU / GPU / NPU 에서 재 볼 것
+
+카메라만 확인 (로봇 꺼짐 · 충전 중): `source activate_tv.sh && python apps/gripper_pick/pick_web.py --cam-only` → D435i · 손목 카메라 화면만.
+
+로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
+
+## xr_teleoperate 가상 실행 — `xr_virtual.py` + `xr_viewer.py` (로봇 명령 없음)
+
+Unitree xr_teleoperate 의 Quest 입력 처리 (televuer) 와 H2 IK (`H2_ArmIK`) 를 그대로 쓰고, 로봇 대신 가상 H2 3D 뷰어로 보냄.
+xr_teleoperate H2 URDF 와 이 저장소 URDF 는 팔 관절 이름 · 원점 · 한계가 같음 (2026-11-09 비교).
+
+준비 (한 번): `git clone --recurse-submodules https://github.com/unitreerobotics/xr_teleoperate ~/xr_teleoperate`,
+`cd ~/xr_teleoperate/teleop/televuer && pip install -e .`, `pip install 'vuer[all]==0.0.60' "params-proto>=2.13,<3"`
+(params-proto 3.x 는 vuer 0.0.60 과 안 맞음), 인증서 `~/.config/xr_teleoperate/{cert,key}.pem`.
+
+```bash
+python apps/gripper_pick/xr_viewer.py --table-z -1.0                  # 터미널 1: 뷰어 http://localhost:50040/
+python apps/gripper_pick/xr_virtual.py --xr ~/xr_teleoperate          # 터미널 2: Vuer :8012 + H2 IK → 뷰어
+adb reverse tcp:8012 tcp:8012                               # Quest USB
+adb shell am start -a android.intent.action.VIEW -d "https://localhost:8012/?ws=wss://localhost:8012" com.oculus.browser
+```
+- 조작은 xr_teleoperate 와 같음 (헤드셋을 머리에 쓰고 컨트롤러 쥔 손 = 로봇 손, 머리 기준 절대 위치 · 배율 없음, 트리거 = 그리퍼)
+- 뷰어: H2 URDF + Unitree Dex1-1 메시 (`dex1_1/`, BSD-3) + 사용자 어댑터 STL (`adapter/adapter.stl`) — 손목 앞면 57.7 mm 부터 기본 손 잘라 냄,
+  어댑터 4 mm 만 손목 밖, Dex1 원점 = tcp_offset 0.1844 − 0.123
+- 우리 안전 검사 (몸통 · 테이블 · 다른 팔 · 뒤 한계, gripper.yaml `xr_view`) 를 "실제였으면 멈춤" 으로 표시만 함 — xr_teleoperate 에는 이 검사가 없음
+- xr_teleoperate 를 실제 로봇에 쓸 때 주의 (소스 확인): H2 관절 속도 제한 기본 30 rad/s · 종료 시 팔 관절 0 으로 이동 (go_home) · rt/lowcmd 직접 송신
+  (arm_server 와 동시 사용 금지) · 녹화 형식이 우리 trainer 와 다름
+
+## VR 조작 — 실제 팔 (`xr_real.py`, 잡기 웹 [VR 시작])
+
+xr_teleoperate 입력 + H2 IK (`xr_virtual.py --real`) → 잡기 웹 `/api/xr/cmd` → 안전 검사 → arm_server `/stream` · Dex1.
+xr_teleoperate 의 로봇 제어부 (속도 30 rad/s · 끌 때 0 자세) 는 쓰지 않음. 녹화는 잡기 웹 녹화기 그대로 ([VR 시작]~[VR 끝] = 한 에피소드,
+meta side = 실제로 움직인 손).
+
+```bash
+./start_gripper.sh                                          # 터미널 1: 잡기 웹 (로봇 · 카메라)
+python apps/gripper_pick/xr_viewer.py --table-z <테이블 z>            # 터미널 2 (선택): 가상 뷰어 — 보낸 목표를 같이 그림
+python apps/gripper_pick/xr_virtual.py --xr ~/xr_teleoperate --real   # 터미널 3: Quest 입력 → 잡기 웹 (세션 열릴 때만 보냄)
+adb reverse tcp:8012 tcp:8012                               # Quest: https://localhost:8012/?ws=wss://localhost:8012 → 'Virtual Reality'
+```
+잡기 웹: 테이블 재기 → (수집 켬) → VR 조작 칸 속도 (0.2 / 0.3 / 0.5 rad/s) → [VR 시작] → 조작 → [VR 끝] → 저장 / 버리기.
+
+- Quest 화면: 머리 카메라 + 아래 양쪽 손목 카메라 (잡기 웹 영상), 위에 상태 (ROBOT ON / STOP: R:TABLE …)
+- 그립(중지) 누른 손만 팔이 움직임 · 뗀 손은 그 자리. 그리퍼는 트리거만 따름: 놓음 75 mm ~ 끝까지 42 mm (물건 50 mm 고정, pick.object_mm), 한 번에 지금 위치보다 8 mm 까지만 조임
+- 시작 조건: 실기 · 다른 동작 없음 · arm_server hold · 테이블 잼 · 카메라 숙임 · 485 보드 · 앞 에피소드 결정
+- 손별 멈춤: 몸통 (body_clear_m) · 테이블 (잰 평면 + tip_clear_mm, x > xr_view.table_x_min_m) · 다른 팔 (xr_view.arm_gap_m) ·
+  뒤 (xr_view.back_limit_m) · IK 튐 (0.5 rad) → 그 손은 그 명령을 버리고 그 자리
+- 세션 끝: [VR 끝] · [정지] · 입력 1.5 초 없음 · 명령 · 실측 차이 > track_abort_deg · arm_server 거부 → 팔은 마지막 목표에서 멈춤
+- 확인: 가짜 arm_server · 가짜 xr_teleoperate (IK · Quest 입력) · 잡기 웹 --sim 으로 끝까지 (세션 전 송신 0, 데드맨, 그리퍼 유지,
+  테이블 · 몸통 · 뒤 멈춤, 정지 버튼, 입력 끊김, 녹화 meta side). **실기 · 실제 Quest · 실제 H2_ArmIK 로는 아직**

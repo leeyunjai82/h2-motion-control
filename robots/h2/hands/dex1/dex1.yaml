@@ -1,0 +1,30 @@
+# Dex1-1 그리퍼 장치 설정 (pitron/drivers/hand/gripper_config.py 가 읽음) — 잡기 · VR 값은 apps/gripper_pick/gripper.yaml
+#   외장 키트: 그리퍼 —485→ 485–USB 보드 → 미니 PC 의 dex1_1_service (-n <유선 인터페이스>) → DDS rt/dex1/{left,right}/{cmd,state}
+#   설치 · 보정: INSTALL.md 10단계
+
+# 서비스는 모터 ID 0 → rt/dex1/right, ID 1 → rt/dex1/left 로 내보냄 (dex1_1_service main.cpp, 실행 출력 2026-11-05).
+# 이 로봇은 토픽 이름에 맞춰 ID 0 그리퍼를 오른손, ID 1 그리퍼를 왼손에 장착 (사용자 2026-11-05)
+#   → 토픽 이름 = 실제 손. 공식 도구(test_dex1_1_gripper_server -l/-r, xr_teleoperate)도 같은 손으로 동작
+topics:                       # 실제 손 → 서비스 토픽 이름 앞부분 (/cmd · /state)
+  left: rt/dex1/left          # 실제 왼손 = 모터 ID 1
+  right: rt/dex1/right        # 실제 오른손 = 모터 ID 0
+
+# q [rad]: 0 = 닫힘 (보정 기준), 클수록 벌어짐. 실측 2026-11-05 (손으로 끝까지 여닫음, tools/check_dex1.py):
+#   ID 0 (오른손) −0.011 ~ 5.248 · ID 1 (왼손) −0.014 ~ 5.166 → 명령 범위 = 0 ~ (작은 쪽 5.166 − 여유 0.1)
+q_range: [0.0, 5.05]
+
+# 집게 가운데(TCP) [m, wrist_yaw 관절 기준 x] — 사용자 실측으로 맞춤 (2026-11-09):
+#   손목 프레임 앞면 → 손가락 끝 실측 ≈ 147 mm (사용자). Dex1 메시: 원점(앞 몸통 뒷면) → 손가락 끝 143.3, → 집게 패드 가운데 123.0
+#   → 손목 앞면 → Dex1 원점 = 147 − 143.3 = 3.7 mm. 손목 앞면 57.7 mm (unitree_ros H2 손 장착 관절 위치)
+#   → TCP = 57.7 + 3.7 + 123.0 = 184.4 mm, 손가락 끝 204.7 mm.
+#   어댑터: 18 mm 중 4 mm 만 손목 앞면 밖으로 보이고 나머지 14 mm 는 손목 프레임 안에 겹침 (사용자 2026-11-09) → 43.7 ~ 61.7.
+#   Dex1 원점 61.4 가 어댑터 끝 61.7 보다 0.3 mm 안쪽 = Dex1 뒷면 돌기 (4.9) 가 어댑터 끝에 겹쳐 들어간 셈 — 실측 오차 수준.
+#   TCP 는 실측 147 에만 기대고 (손목 앞면 57.7 + 147 − 손가락 끝 ↔ 패드 가운데 20.3) 어댑터 겹침 해석과는 상관없음.
+#   (예전 191.0 은 어댑터가 기본 손 뒤 끝 45.1 에서 시작한다고 본 계산값 — 실측과 6.6 mm 차이)
+tcp_offset: [0.1844, 0.0, 0.0]
+
+# 송신 (pitron/drivers/hand/dex1_gripper.py) — 아직 로봇에서 안 돌려 봄
+kp: 5.0                       # 그리퍼 모터 게인 (xr_teleoperate Dex1 값) — 닫는 힘은 kp × (명령 − 실제), 실제 쥐는 힘 미확인
+kd: 0.05
+max_vel: 3.0                  # 명령 q 이동 속도 상한 [rad/s] (0.6 rad ≈ 1 cm 이면 약 5 cm/s — q ↔ mm 실측 전)
+rate: 200                     # 송신 [Hz] — 끊기면 서비스가 힘을 풂

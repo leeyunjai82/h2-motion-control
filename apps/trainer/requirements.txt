@@ -1,0 +1,7 @@
+# 학습 PC (RTX 5090) — 보통은 ./apps/trainer/install_trainer.sh <openvino 버전> 이 이것까지 설치
+# torch / torchvision 은 여기 없음 (CUDA 빌드라 따로): install_trainer.sh 가 torch==2.11.0 torchvision==0.26.0 (cu128)
+# openvino 는 로봇 PC 와 같은 버전으로 (README — 학습 PC 가 더 새 버전이면 로봇이 IR 을 못 읽을 수 있음)
+fastapi>=0.110
+uvicorn>=0.29
+numpy
+opencv-python-headless<5        # 학습 PC 2026-10-13: 고정 안 하면 5.0.0 이 깔림 — 시험은 4.x 로만 함

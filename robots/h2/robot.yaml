@@ -18,7 +18,7 @@ ik_cache: h2_xr817fb00_model_cache.pkl   # 첫 실행 시 URDF 에서 생성. UR
 sdk:
   loco_module: unitree_sdk2py.h2.loco.h2_loco_client
   # tv 환경 SDK(requirements 고정 f559291, G1)에는 unitree_sdk2py.h2 가 없다 → third_party/ 에 따로 받아 H2 에서만 쓴다.
-  #   activate_tv.sh 가 처음 한 번 자동으로 받고, common/robot_env.py 가 sys.path 앞에 넣는다. (cyclonedds 0.10.2 동일)
+  #   activate_tv.sh 가 처음 한 번 자동으로 받고, pitron/core/robot_env.py 가 sys.path 앞에 넣는다. (cyclonedds 0.10.2 동일)
   # 814556d (master): H2R(h2-motion-control.red, 2026-10-16 삭제 — robots/h2/FACTS.md 자료 표) 의 65691c8 대비 unitree_sdk2py 변경은 h2_loco_client.py 의
   #   EnableArmSDK / DisableArmSDK 가 결과 코드를 반환하는 것뿐 (65691c8 은 None → 공식 예제가 실패로 판단, 2026-10-07)
   # EnableArmSDK(7109) 를 송신 시작 전에 호출, 종료 시 weight 0 후 DisableArmSDK (SDK 814556d 공식 예제 절차)
@@ -29,7 +29,7 @@ sdk:
   commit: 814556d15970dd2ecf1c9984e845ca02ab07e206
 
 identity:
-  mode_machine: 1             # 실측 2026-10-07 utils/check_robot_id.py (부팅 직후, 20회 모두 1) — 다르면 arm_sdk/FSM 거부
+  mode_machine: 1             # 실측 2026-10-07 tools/check_robot_id.py (부팅 직후, 20회 모두 1) — 다르면 arm_sdk/FSM 거부
   required: true              # enabled: true 로 바꿀 때 mode_machine 이 null 이면 거부
 
 # rt/arm_sdk 로 보내는 LowCmd 헤더
@@ -41,7 +41,7 @@ lowcmd:
 joints:
   motor_slots: 35             # unitree_hg LowState_ 고정 길이 (SDK, xr_teleoperate)
   # URDF 관절 이름 → 모터 슬롯
-  #   팔 15–28              : ✓ 실기 확인 2026-10-07 (utils/arm_sdk_test.py 슬롯별 ±8°, 14개 모두 이름대로 움직임 — 사용자 육안)
+  #   팔 15–28              : ✓ 실기 확인 2026-10-07 (tools/arm_sdk_test.py 슬롯별 ±8°, 14개 모두 이름대로 움직임 — 사용자 육안)
   #   헤드·weight            : SDK / xr_teleoperate / H2R 일치
   #   허리 순서               : 12 roll(모터 A) / 13 pitch(모터 B) / 14 yaw — 공식 문서 「关节电机顺序」(2026-07-30 판) 확인 2026-10-10
   #                            (xr_teleoperate 817fb00 · SDK low-level 예제도 같음. SDK arm_sdk 예제·C++ 예제의 12 yaw 순서는 틀림)
@@ -121,7 +121,7 @@ ik:                           # xr_teleoperate 817fb00 H2_ArmIK 와 같은 축�
   ee_offset: [0.05, 0.0, 0.0]
   cost: {translation: 50, rotation: 0.8, regularization: 0.01, smooth: 0.1}   # 공식 H2_ArmIK (0c1b4a2). G1 기본 50 / 1.0 / 0.02 / 0.1
 
-# 기본 팔 자세 [deg] — 실측 2026-10-07: FSM 703 (4 → 703) 직후, arm_sdk 쓰기 전, 거치대 (utils/check_robot_id.py 슬롯 15–28)
+# 기본 팔 자세 [deg] — 실측 2026-10-07: FSM 703 (4 → 703) 직후, arm_sdk 쓰기 전, 거치대 (tools/check_robot_id.py 슬롯 15–28)
 #   좌우 대칭 (pitch 8.2/8.1, roll 18.2/−18.2, yaw −12.1/12.4, elbow 73.7/73.4). 601 실측값(이전): [6.2, 23.7, −25.8, 63.8, ...]
 default_arm_deg: [8.2, 18.2, -12.1, 73.7, 0.8, 0.9, 0.1,
                   8.1, -18.2, 12.4, 73.4, -0.3, 1.2, -0.5]
@@ -137,13 +137,13 @@ frames:
 #   아래 x/y/z/pitch 는 거치대 설계값 (CAD, 렌즈 앞면 중심) — 아직 실측 보정 전
 #     x 0.130 · z 0.350 : 렌즈 앞면 중심. 광학 중심은 앞면보다 몇 mm 뒤 (D435i 데이터시트 확인 필요)
 #     y 0.0             : 카메라 몸체 가운데. 컬러 센서는 몸체 가운데에서 옆으로 떨어져 있음 (확인 필요 — 마커 정면 실측)
-#     pitch             : 설계 45.0 → 실측 47.4 (2026-10-09 완성 거치대, utils/check_rsimu.py --sec 5, FSM 703 서기):
+#     pitch             : 설계 45.0 → 실측 47.4 (2026-10-09 완성 거치대, tools/check_rsimu.py --sec 5, FSM 703 서기):
 #                         D435i 중력 기준 43.60° − 로봇 IMU pitch −3.62° − 허리 pitch −0.13° = 몸통 기준 47.36° (설계보다 2.4° 더 숙임)
 #                         (앞서 41.4 는 완성 전 거치대에서 잰 값 — 사용 안 함). 로봇은 3.7° 뒤로 기울어 서 있음
 #                         부호: 이전 가슴 거치대 설계 40° ↔ 중력 기준 36.3° + 3.7° = 40.0° 로 맞음 (간접 확인)
 #   보정 순서 (거치대 README 5번):
-#     1) utils/check_rsimu.py --sec 5           → 몸통 기준 숙임 (D435i IMU − 로봇 IMU pitch − 허리 pitch) → pitch_deg  ✓ 47.4
-#     2) utils/cam_marker_check.py --points 0.35,0.45 → camera.x (두 점 앞 거리 맞춤), 렌즈→테이블 높이로 z 확인
+#     1) tools/check_rsimu.py --sec 5           → 몸통 기준 숙임 (D435i IMU − 로봇 IMU pitch − 허리 pitch) → pitch_deg  ✓ 47.4
+#     2) tools/cam_marker_check.py --points 0.35,0.45 → camera.x (두 점 앞 거리 맞춤), 렌즈→테이블 높이로 z 확인
 #        ⚠️ 이 스크립트가 '높이가 같다' 로 구하는 숙임각은 중력 기준 (≈ 43.6) — pitch_deg 에는 넣지 말 것 (몸통 기준 47.4 유지).
 #           로봇이 3.7° 뒤로 기울어 있어 몸통 좌표에서는 테이블이 기울어 보임 (앞뒤 10 cm 에 높이 약 6 mm 차이 — 정상)
 #   ⚠️ grab.z_offset 은 2026-10-09 −0.064 → −0.014 (이전 값은 예전 가슴 거치대 기준). 거치대를 바꾸면 박스 없이/천천히 손 높이부터 확인
@@ -169,7 +169,7 @@ camera:
   resolution: [848, 480]
   # 컬러 내부 파라미터 [fx, fy, ppx, ppy] — resolution 과 짝. 이 PC 장착 D435i (S/N 261822072488, FW 5.15.1.55) 장치에서 읽은 값:
   #   848×480 = 606.2 606.2 437.1 244.8 (2026-10-12) / 640×480 = 606.2 606.2 333.1 244.8 (2026-10-07·10-12 같음)
-  #   G1 고정값과 다름. 다른 카메라로 바꾸면 utils/cam_marker_check.py 출력값으로 바꿀 것
+  #   G1 고정값과 다름. 다른 카메라로 바꾸면 tools/cam_marker_check.py 출력값으로 바꿀 것
   intrinsics: [606.2, 606.2, 437.1, 244.8]
   placeholder: true           # pitch 는 실측, x·z 는 설계값 — cam_marker_check --points 로 x 확인 후 false
   # 되돌릴 때: v3 가로대 60° z 0.365 · 64.9 (실측) · 거치대 v1 z 0.350 · 47.4 (실측) · 이전 가슴 거치대 x 0.075, z 0.377, 35.2
@@ -186,7 +186,7 @@ grab:
   # 허리: 실기 2026-10-07 FSM 4 + EnableArmSDK 에서 rt/arm_sdk 로 허리 3축 모두 안 움직임 (SDK 공식 예제도 팔+머리만)
   #   → robot_server 는 허리 yaw 정렬·좌우 건네기 없이 정면(center) / 제자리(place) 만
   # 자동 잡기 영역 (detect_box, torso_link 기준 박스 윗면 중심 [m]) — 사용자 지정 2026-10-07: x 0.35–0.50 (0.45 → 0.55 → 0.50)
-  #   y·z 는 G1 값 그대로. utils/grab_reach.py (서버 IK, 박스 H 0.18, 윗면 pelvis+0.25, y 0) 결과 —
+  #   y·z 는 G1 값 그대로. tools/grab_reach.py (서버 IK, 박스 H 0.18, 윗면 pelvis+0.25, y 0) 결과 —
   #   현재 z_offset −0.044 · approach_extra 0.15 · pull_x −0.15 기준, 가장 크게 빗나간 단계 (⑤ 측면 하강 / ⑨' 제자리 내려놓기):
   #   x 0.35 2 cm / 0.40 4 cm / 0.45 6 cm / 0.50 9 cm / 0.55 13 cm 부족 — 계산상 바깥쪽은 손이 덜 내려감, 실기에서 확인 후 조정
   auto_zone: {x: [0.32, 0.45], y: [-0.20, 0.20], z: [-0.15, 0.25], dwell: 1.5}
@@ -303,7 +303,7 @@ vision:
   show_seg: false             # 화면 seg 표시 (영역·윗면·꼭짓점). false = 파지점 L/T/R + 최근 2 초 프레임별 인식 위치(흰 점)만 — 표시 전용.
                               #   사용자 2026-10-09: seg 경계가 실제와 어긋나 보여 신뢰가 떨어짐. 제어 화면 Camera View 의 SEG 버튼으로 켜고 끔
 
-# 머리 카메라 인식 (common/head_track.py :50013, start_robot.sh 가 띄움, 보기 전용) — 왼눈 얼굴 + 나이·성별, 오른눈 행동 (앉음 / 손 듦 / 서 있음)
+# 머리 카메라 인식 (services/head_vision/head_track.py :50013, start_robot.sh 가 띄움, 보기 전용) — 왼눈 얼굴 + 나이·성별, 오른눈 행동 (앉음 / 손 듦 / 서 있음)
 #   머리 추종은 뺌 (실기 2026-10-09: 703 에서 rt/arm_sdk 로 머리 29/30 이 안 움직임, FACTS.md). 되살릴 때는 커밋 8dddfe4 참고
 head_track:
   port: 50013
@@ -333,13 +333,13 @@ head_track:
   strip: {height: 72, max_left: 3}       # Head Vision CROP 버튼: 인식된 것만 잘라 높이 72 px 한 줄
   mode: face                  # face | person | auto (얼굴 우선, 얼굴이 person_after_s 동안 없으면 사람). 사용자 2026-10-12: 왼눈은 얼굴만
   age_gender: {enabled: true}  # 왼눈 얼굴마다 나이·성별 — OMZ age-gender-recognition-retail-0013 (18~75세 학습, 문서: 성별 95.8 %, 나이 평균 오차 7 년)
-  device: NPU                 # 왼눈(얼굴·사람) OpenVINO 장치 (사용자 2026-10-09: NPU). 안 되면 HETERO:NPU,CPU → CPU 자동 — utils/get_dev.py
+  device: NPU                 # 왼눈(얼굴·사람) OpenVINO 장치 (사용자 2026-10-09: NPU). 안 되면 HETERO:NPU,CPU → CPU 자동 — tools/get_dev.py
   face_conf: 0.6
   person_conf: 0.5
   person_after_s: 1.0
-  # 로봇 쪽 준비 — start_robot.sh 가 utils/head_cam_on.py 로 매번 (로봇을 다시 켜면 앱 설정이 기본으로 돌아감, 실기 2026-10-09)
+  # 로봇 쪽 준비 — start_robot.sh 가 tools/head_cam_on.py 로 매번 (로봇을 다시 켜면 앱 설정이 기본으로 돌아감, 실기 2026-10-09)
   #   stop 끄기 → start 켜기 → PC1 9080 열리면 RGB 수신 IP = 이 PC → start 재시작 (robot_state RPC, 앱의 서비스 on/off 와 같음)
-  #   서비스 이름은 utils/robot_services.py 실측 (2026-10-09, 27 개). 여기 적은 것 말고는 건드리지 않음. 실기 동작 ✓ (2026-10-09)
+  #   서비스 이름은 tools/robot_services.py 실측 (2026-10-09, 27 개). 여기 적은 것 말고는 건드리지 않음. 실기 동작 ✓ (2026-10-09)
   #   앱에서 직접 하려면 enabled: false
   robot_setup: {enabled: true, stop: [video_hub], start: stereo_patch_pc1, set_ip: true}   # 키 on/off 는 YAML 에서 true/false 로 읽혀 안 씀
 

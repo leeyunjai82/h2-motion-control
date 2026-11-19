@@ -13,7 +13,7 @@ fake_robot.py — 로봇 없이 서버 스택을 시험하기 위한 기구학 �
   · 관절은 1차 지연(τ 40 ms) + 속도 제한 6 rad/s + URDF 관절 한계로 목표를 따라간다.
     (동역학·접촉·균형은 없음 — IK 도달 여부, 시퀀스 순서, 허리 yaw, weight 램프를 보는 용도)
   · rt/lowstate 200 Hz 발행. mode_machine = robot.yaml identity.mode_machine (없으면 0),
-    모터가 있는 슬롯은 temperature 30 / vol 48 로 채운다 (utils/check_robot_id.py 로 확인 가능).
+    모터가 있는 슬롯은 temperature 30 / vol 48 로 채운다 (tools/check_robot_id.py 로 확인 가능).
   · 보행(LocoClient RPC) 은 흉내 내지 않는다 — 시뮬 범위는 제자리 팔/허리 동작.
 """
 import os
@@ -23,8 +23,11 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "common"))
-import robot_env   # ROBOT 검사 + robot.yaml
+import os as _os, sys as _sys  # noqa: E401
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), ".."))  # 저장소 루트 (pitron)
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+from pitron.core import robot_env   # ROBOT 검사 + robot.yaml
 
 if not robot_env.SIM:
     print("[fake_robot] ❌ ROBOT_SIM=1 이 아니면 실행하지 않습니다 (실기 DDS 도메인 0 에 가짜 lowstate 금지)")

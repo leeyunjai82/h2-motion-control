@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 그리퍼 잡기 — 한 창에서: Dex1-1 서비스 (sudo) → arm_server → 잡기 웹 (gripper/pick_web.py :50030)
+# 그리퍼 잡기 — 한 창에서: Dex1-1 서비스 (sudo) → arm_server → 잡기 웹 (apps/gripper_pick/pick_web.py :50030)
 #   박스 양손 잡기(start_robot.sh)와 따로. 박스 잡기 서버 · rs_stream · 대시보드는 띄우지 않음 (잡기 웹이 카메라를 직접 엶)
 #
 #   먼저 (한 번):  ROBOT_CHECK=1 ./start_fsm.sh stand        # 거치대 + FSM 703
@@ -41,8 +41,8 @@ if up "http://localhost:50030/"; then
   if [ -n "$OLD" ]; then
     kill -INT $OLD 2>/dev/null || true          # 그 창의 cleanup 이 순서대로 끔 (그리퍼 서비스 sudo kill 포함)
   else
-    pkill -TERM -f "gripper/xr_virtual.py" 2>/dev/null || true
-    pkill -TERM -f "gripper/pick_web.py" 2>/dev/null || true
+    pkill -TERM -f "apps/gripper_pick/xr_virtual.py" 2>/dev/null || true
+    pkill -TERM -f "apps/gripper_pick/pick_web.py" 2>/dev/null || true
   fi
   for _ in $(seq 1 40); do up "http://localhost:50030/" || break; sleep 1; done
   if up "http://localhost:50030/"; then echo "❌ 40 초 안에 안 꺼짐 — 그 창에서 Ctrl+C 로 끄고 다시" >&2; exit 1; fi
@@ -143,7 +143,7 @@ if [ $SIM -eq 0 ]; then
 fi
 
 # 2) arm_server (실기에서 이미 떠 있으면 재사용) — 모터 번호 확인 모드(ROBOT_CHECK=1): 잡기·보행 서버는 거부되는 모드
-cd "$ROOT/common"
+cd "$ROOT"
 if [ $SIM -eq 1 ]; then
   echo "[start] fake_robot ..."
   ROBOT_SIM=1 python -u "$ROOT/sim/fake_robot.py" > >(stamp >> "$LOG_DIR/${TAG}fake_robot_$DAY.log") 2>&1 &
@@ -154,9 +154,9 @@ if [ $SIM -eq 0 ] && up "http://localhost:50022/status"; then
 else
   echo "[start] arm_server    (50022) ..."
   if [ $SIM -eq 1 ]; then
-    ROBOT_SIM=1 python -u arm_server.py > >(stamp >> "$LOG_DIR/${TAG}arm_server_$DAY.log") 2>&1 &
+    ROBOT_SIM=1 python -u services/arm/arm_server.py > >(stamp >> "$LOG_DIR/${TAG}arm_server_$DAY.log") 2>&1 &
   else
-    ROBOT_CHECK=1 python -u arm_server.py > >(stamp >> "$LOG_DIR/arm_server_$DAY.log") 2>&1 &
+    ROBOT_CHECK=1 python -u services/arm/arm_server.py > >(stamp >> "$LOG_DIR/arm_server_$DAY.log") 2>&1 &
   fi
   PIDS+=($!); NAMES+=("arm_server")
   wait_http "http://localhost:50022/status" 60 || exit 1
@@ -168,7 +168,7 @@ fi
 CAM_OK=0.5; CAM_MAX=1.0
 if [ $SIM -eq 0 ] && [ $CAMCHECK -eq 1 ]; then
   echo "[start] 카메라 숙임 확인 (check_rsimu 3 초, 저장 안 함 — 로봇을 건드리지 마세요) ..."
-  CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/utils/check_rsimu.py" --sec 3 "$IFACE" 2>&1)
+  CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/tools/check_rsimu.py" --sec 3 "$IFACE" 2>&1)
   echo "$CR" | stamp >> "$LOG_DIR/check_rsimu_$DAY.log"
   echo "$CR" | grep -E "▶|지금 camera.pitch_deg|❌" | sed 's/^/          /'
   DIFF=$(echo "$CR" | grep "지금 camera.pitch_deg" | sed -n 's/.*(차이 \([-+0-9.]*\).*/\1/p')
@@ -183,7 +183,7 @@ if [ $SIM -eq 0 ] && [ $CAMCHECK -eq 1 ]; then
       echo "  ⚠ 카메라 숙임 기준값과 ${DIFF}° — 진행하지만, 데이터 수집 전에 거치대를 ${ABS}° ${DIR} 맞추는 것을 권장"
     else
       echo "❌ 카메라 숙임이 기준값과 ${DIFF}° 다름 (허용 ±${CAM_MAX}°) — 거치대를 ${ABS}° ${DIR} 맞추세요." >&2
-      echo "   보면서 맞추기: sudo $TV_PY utils/check_rsimu.py   (diff 열이 0 근처가 되게, Ctrl+C 종료)" >&2
+      echo "   보면서 맞추기: sudo $TV_PY tools/check_rsimu.py   (diff 열이 0 근처가 되게, Ctrl+C 종료)" >&2
       echo "   맞춘 뒤 ./start_gripper.sh 다시 (확인 없이: --no-cam-check)" >&2
       exit 1
     fi
@@ -194,9 +194,9 @@ fi
 cd "$ROOT"
 echo "[start] pick_web      (50030) ..."
 if [ $SIM -eq 1 ]; then
-  ROBOT_SIM=1 python -u gripper/pick_web.py --sim --sim-top-z 0.14 > >(stamp >> "$LOG_DIR/${TAG}pick_web_$DAY.log") 2>&1 &
+  ROBOT_SIM=1 python -u apps/gripper_pick/pick_web.py --sim --sim-top-z 0.14 > >(stamp >> "$LOG_DIR/${TAG}pick_web_$DAY.log") 2>&1 &
 else
-  python -u gripper/pick_web.py "$IFACE" > >(stamp >> "$LOG_DIR/pick_web_$DAY.log") 2>&1 &
+  python -u apps/gripper_pick/pick_web.py "$IFACE" > >(stamp >> "$LOG_DIR/pick_web_$DAY.log") 2>&1 &
 fi
 PIDS+=($!); NAMES+=("pick_web")
 wait_http "http://localhost:50030/" 60 || exit 1
@@ -206,9 +206,9 @@ if [ $VR -eq 1 ]; then
   XR_DIR="${XR_DIR:-$HOME/xr_teleoperate}"
   [ -d "$XR_DIR/teleop" ] || { echo "❌ xr_teleoperate 없음: $XR_DIR (XR_DIR 로 지정)" >&2; exit 1; }
   # 앞에 띄운 xr_virtual 이 남아 8012 를 잡고 있으면 새 것이 포트를 못 열고 Quest 는 옛 것에 붙음 (입력이 안 옴) → 먼저 정리
-  if pgrep -f "gripper/xr_virtual.py" >/dev/null; then
-    echo "[start] 남아 있는 xr_virtual 끔"; pkill -f "gripper/xr_virtual.py"; sleep 2
-    pgrep -f "gripper/xr_virtual.py" >/dev/null && { pkill -9 -f "gripper/xr_virtual.py"; sleep 1; }
+  if pgrep -f "apps/gripper_pick/xr_virtual.py" >/dev/null; then
+    echo "[start] 남아 있는 xr_virtual 끔"; pkill -f "apps/gripper_pick/xr_virtual.py"; sleep 2
+    pgrep -f "apps/gripper_pick/xr_virtual.py" >/dev/null && { pkill -9 -f "apps/gripper_pick/xr_virtual.py"; sleep 1; }
   fi
   if curl -sk -m 1 -o /dev/null https://localhost:8012/; then
     echo "❌ 8012 포트를 다른 프로그램이 쓰는 중 — 그 프로그램을 끄고 다시:" >&2
@@ -216,7 +216,7 @@ if [ $VR -eq 1 ]; then
     exit 1
   fi
   echo "[start] xr_virtual    (Vuer 8012, Quest 입력 → 잡기 웹) ..."
-  python -u gripper/xr_virtual.py --xr "$XR_DIR" --real --display pass-through > >(stamp >> "$LOG_DIR/${TAG}xr_virtual_$DAY.log") 2>&1 &
+  python -u apps/gripper_pick/xr_virtual.py --xr "$XR_DIR" --real --display pass-through > >(stamp >> "$LOG_DIR/${TAG}xr_virtual_$DAY.log") 2>&1 &
   PIDS+=($!); NAMES+=("xr_virtual")
   for _ in $(seq 1 60); do curl -sk -m 1 -o /dev/null https://localhost:8012/ && break; sleep 1; done
   curl -sk -m 1 -o /dev/null https://localhost:8012/ || { echo "❌ Vuer (8012) 가 안 뜸 — 로그: $LOG_DIR/${TAG}xr_virtual_$DAY.log" >&2; exit 1; }

@@ -6,7 +6,7 @@
 
 - H2 전용입니다. 로봇 파일·설정은 `robots/h2/`, 공통 코드는 `common/`.
   `ROBOT` 환경변수는 안 줘도 됩니다 (기본 `h2`, 다른 값은 거부). G1 코드는 git 이력에 있습니다.
-- 설치 : [**INSTALL.md**](./INSTALL.md) · 가상환경 다시 만들기 : [**REBUILD_ENV.md**](./REBUILD_ENV.md) (스냅샷 `utils/env_snapshot.sh`)
+- 설치 : [**INSTALL.md**](./INSTALL.md) · 가상환경 다시 만들기 : [**REBUILD_ENV.md**](./REBUILD_ENV.md) (스냅샷 `tools/env_snapshot.sh`)
 - H2 실측·근거·확인 필요 목록 : [**robots/h2/FACTS.md**](./robots/h2/FACTS.md)
 - 카메라 거치대·등판 손잡이 (3D 출력) : [`robots/h2/cad/`](./robots/h2/cad/) — `h2_print_all.step` 에 출력 부품 전부
 
@@ -56,7 +56,7 @@ cd ~/project/h2-motion-control
 #   → 제어 UI : http://<pc-ip>:50000/     (Grab Mode → Box, Handover → Place / Center, Grab Now)
 #   → 3D 뷰어 : http://<pc-ip>:50003/dashboard
 #   → 박스 인식 : http://<pc-ip>:50010/   (자동 잡기 ON)
-#   → 머리 카메라 : http://<pc-ip>:50013/ (로봇 쪽 서비스는 start_robot.sh 가 자동 준비 — utils/head_cam_on.py)
+#   → 머리 카메라 : http://<pc-ip>:50013/ (로봇 쪽 서비스는 start_robot.sh 가 자동 준비 — tools/head_cam_on.py)
 
 # 3. 모션 에디터 — 모드 지정 필수 (virtual | real)
 ./start_editor.sh real     # 실기 (start_robot.sh 와 함께 써도 됨 — arm_server 재사용)
@@ -93,7 +93,7 @@ Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위�
 | `auto_zone` | x 0.32–0.45 | 자동 잡기 영역 (박스 중심, torso 기준) — 테이블 110 cm · 카메라 46.0° 기준 |
 | `default_handover` | place | 기본 = 제자리 내려놓기 |
 
-오프라인 확인 도구: `python utils/grab_reach.py` (박스 위치별로 서버와 같은 IK 로 손이 끝까지 가는지).
+오프라인 확인 도구: `python tools/grab_reach.py` (박스 위치별로 서버와 같은 IK 로 손이 끝까지 가는지).
 
 ## 잡기 시뮬레이터 (`start_grab_sim.sh`, 로봇 없이 시험)
 
@@ -103,7 +103,7 @@ Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위�
 ```
 
 - `sim/fake_robot.py` 가 로봇 역할 (`rt/arm_sdk` 를 받아 관절을 움직이고 `rt/lowstate` 를 냄, 기구학만).
-- `sim/sim_server.py` 가 detect_box(50010) 자리를 대신 → **robot_server / arm_server 는 실기와 같은 코드** 로 잡기 시퀀스를 돕니다.
+- `apps/box_handover/sim_server.py` 가 detect_box(50010) 자리를 대신 → **robot_server / arm_server 는 실기와 같은 코드** 로 잡기 시퀀스를 돕니다.
 - **안전**: `ROBOT_SIM=1` → DDS 도메인 1. 실기(도메인 0)와 섞이지 않고, 실기 스택이 떠 있으면(포트 사용 중) 시작을 거부합니다.
 
 ## 그리퍼 잡기 · ACT (`gripper/`, `trainer/`)
@@ -113,10 +113,10 @@ Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기
 
 ```bash
 ./start_gripper.sh                    # 미니 PC: 그리퍼 서비스 · arm_server · 잡기 웹 → http://<미니 PC>:50030/
-./trainer/start_trainer.sh            # 학습 PC → http://<학습 PC>:50100/
+./apps/trainer/start_trainer.sh            # 학습 PC → http://<학습 PC>:50100/
 ```
 
-- 잡기 웹: 잡기 · 데이터 수집 (저장 / 버리기) · 데이터셋 zip · 모델 zip 올리기 · 정책 실행. 자세한 것: `gripper/README.md`
+- 잡기 웹: 잡기 · 데이터 수집 (저장 / 버리기) · 데이터셋 zip · 모델 zip 올리기 · 정책 실행. 자세한 것: `apps/gripper_pick/README.md`
 - 박스용 ACT (`physical_ai/`) 는 2026-11-06 지움 (사용자 — 박스 잡기는 ACT 로 안 함). git 이력에 남아 있음
 
 ## 모션 에디터 (`start_editor.sh`)
@@ -127,7 +127,7 @@ Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기
 | `./start_editor.sh real` | **실기** — 실제 로봇이 움직임 | arm_server·dashboard(떠 있으면 재사용), simulator |
 | `ROBOT_CHECK=1 ./start_editor.sh real` | **실기 · 모터 번호 확인 전용** | 위와 같음. 잡기 서버는 실행 거부, 시작 시 `yes` 확인 |
 
-모터 번호 확인 화면: `http://<pc-ip>:8000/check` — 절차는 `robots/h2/FACTS.md` 와 `common/joint_check.py` 머리말.
+모터 번호 확인 화면: `http://<pc-ip>:8000/check` — 절차는 `robots/h2/FACTS.md` 와 `apps/motion_editor/joint_check.py` 머리말.
 
 ## 카메라
 
@@ -135,15 +135,15 @@ Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기
   (x, y, z [m, torso_link 기준], pitch_deg, resolution, intrinsics). 해상도 848×480 (2026-10-12, 640×480 보다 가로 화각 56° → 70° —
   박스 좌우 여유 x 0.38 에서 1.3 → 10.8 cm, 숙임 50° 거치대보다 효과 큼). rs_stream · detect_box · 시뮬 · 수집 웹이 모두 `camera.resolution` 을 씀.
   **RealSense 는 한 프로그램만 열 수 있음** — 다른 프로젝트(예: pibog-v1)가 먼저 열면 rs_stream 이 `errno=16 busy` / `errno=5` 로 못 뜸
-  (`fuser /dev/video*` 로 확인). 숙임각 실측·저장: `sudo ROBOT=h2 python utils/check_rsimu.py --save` (start_robot.sh 끈 상태, 703 서기)
+  (`fuser /dev/video*` 로 확인). 숙임각 실측·저장: `sudo ROBOT=h2 python tools/check_rsimu.py --save` (start_robot.sh 끈 상태, 703 서기)
   → `robots/h2/calib_local.yaml` (이 PC 전용, git 에 안 올라감) 이 robot.yaml 값을 덮어씀. 거치대를 다시 조일 때마다 다시 잴 것.
-  지금 쓰는 값은 제어 화면 위 막대 System 칩 → Camera 줄. 위치 확인: `utils/cam_marker_check.py`.
-  깊이 확인: `python utils/check_depth.py` (가운데 거리·유효율, `--web` → :50015, `--save`) — rs_stream 끈 상태에서.
-- **머리 쌍안 카메라**: `utils/check_head_cam.py` (수신 확인·깊이 클릭), 인식은 `common/head_track.py` (`robot.yaml head_track`).
-  로봇을 다시 켜면 앱 설정이 기본(video_hub 켜짐 · Stereo patch 꺼짐)으로 돌아감 → `start_robot.sh` 가 `utils/head_cam_on.py` 로 매번 자동 준비
-  (video_hub 끔 · stereo_patch_pc1 켬 · 수신 IP = 이 PC · 재시작, `robot.yaml head_track.robot_setup`). 서비스 목록: `utils/robot_services.py`.
-  다른 경로 확인용 (삭제한 h2-motion-control.red 에서 옮김): `utils/probe_h2_camera.py` (USB 로 직접 보이는 보드에서 장치·포맷 식별),
-  `utils/check_depth_teleimager.py` (teleimager ZMQ 영상으로 깊이를 PC 에서 직접 계산 — 비교용, `--web` → :50016).
+  지금 쓰는 값은 제어 화면 위 막대 System 칩 → Camera 줄. 위치 확인: `tools/cam_marker_check.py`.
+  깊이 확인: `python tools/check_depth.py` (가운데 거리·유효율, `--web` → :50015, `--save`) — rs_stream 끈 상태에서.
+- **머리 쌍안 카메라**: `tools/check_head_cam.py` (수신 확인·깊이 클릭), 인식은 `services/head_vision/head_track.py` (`robot.yaml head_track`).
+  로봇을 다시 켜면 앱 설정이 기본(video_hub 켜짐 · Stereo patch 꺼짐)으로 돌아감 → `start_robot.sh` 가 `tools/head_cam_on.py` 로 매번 자동 준비
+  (video_hub 끔 · stereo_patch_pc1 켬 · 수신 IP = 이 PC · 재시작, `robot.yaml head_track.robot_setup`). 서비스 목록: `tools/robot_services.py`.
+  다른 경로 확인용 (삭제한 h2-motion-control.red 에서 옮김): `tools/probe_h2_camera.py` (USB 로 직접 보이는 보드에서 장치·포맷 식별),
+  `tools/check_depth_teleimager.py` (teleimager ZMQ 영상으로 깊이를 PC 에서 직접 계산 — 비교용, `--web` → :50016).
 
 ## 디렉터리
 
@@ -155,7 +155,7 @@ h2-motion-control/
 ├── start_robot.sh          # 전체 스택 (rs_stream, arm, robot, dashboard, detect_box, head_track)
 ├── start_editor.sh         # 모션 에디터 (:8000, virtual | real)
 ├── start_grab_sim.sh       # 잡기 시뮬레이터 (fake_robot + 서버 + 가상 박스, DDS 도메인 1)
-├── launcher.sh / run_launcher.py   # 웹 런처 (:80)
+├── launcher.sh / apps/launcher/run_launcher.py   # 웹 런처 (:80)
 ├── sim/                    # fake_robot.py, sim_server.py
 ├── gripper/                # Dex1-1 그리퍼 잡기 웹 (pick_web.py :50030, 수집 · 정책 실행, data/ · models/ 는 git 제외)
 ├── trainer/                # 학습 PC ACT 학습 웹 (trainer_server.py :50100, act_model.py, train_act.py)
@@ -188,6 +188,6 @@ h2-motion-control/
 | D435i 장착 위치 | `camera` |
 | 인식 장치 (박스 = GPU) | `vision` |
 | 머리 카메라 인식 | `head_track` |
-| 연결 로봇 확인 | `identity.mode_machine` (`utils/check_robot_id.py` 로 측정) |
+| 연결 로봇 확인 | `identity.mode_machine` (`tools/check_robot_id.py` 로 측정) |
 
 로그는 `logs/<name>_<date>.log` 에 타임스탬프와 함께 기록됩니다. 종료는 `Ctrl+C`.

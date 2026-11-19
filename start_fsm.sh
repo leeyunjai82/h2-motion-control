@@ -30,4 +30,4 @@ fi
 # 로봇별 SDK (H2: robot.yaml sdk.commit) — 없으면 처음 한 번 받는다
 ensure_robot_sdk || exit 1
 
-sudo "$TV_PY" "$SCRIPT_DIR/utils/init_fsm.py" "$1" "$ROBOT" $CHECK_ARG
+sudo "$TV_PY" "$SCRIPT_DIR/tools/init_fsm.py" "$1" "$ROBOT" $CHECK_ARG

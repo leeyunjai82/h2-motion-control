@@ -19,7 +19,7 @@
 
 ```bash
 cd ~/project/h2-motion-control
-./utils/env_snapshot.sh                 # → env_snapshot/<호스트명>/  (root 불필요, 읽기만 함)
+./tools/env_snapshot.sh                 # → env_snapshot/<호스트명>/  (root 불필요, 읽기만 함)
 git add env_snapshot/ && git commit -m "가상환경 스냅샷 $(hostname) $(date +%F)" && git push
 ```
 
@@ -135,8 +135,8 @@ source activate_tv.sh                     # tv + H2 SDK(third_party) — 처음�
 python -c "import numpy, torch, cv2, pinocchio, sksparse, unitree_sdk2py, openvino; from pinocchio import casadi; print('numpy', numpy.__version__, '| torch', torch.__version__)"
 #   numpy 1.24.4 | torch 2.4.1+cpu
 echo $OMP_NUM_THREADS                     # 1
-python utils/get_dev.py | head -3         # Available devices 에 CPU, GPU, NPU
-python common/ctrl/hw_usage.py --sec 3    # CPU / GPU / NPU 숫자 (못 읽으면 이유)
+python tools/get_dev.py | head -3         # Available devices 에 CPU, GPU, NPU
+python pitron/core/hw_usage.py --sec 3    # CPU / GPU / NPU 숫자 (못 읽으면 이유)
 sudo -n "$TV_PY" -c "print('sudo ok')"    # 비밀번호를 묻지 않아야 정상 (환경 이름 tv 그대로면 sudoers 수정 불필요)
 
 ./start_grab_sim.sh                            # 가상 잡기 — http://<pc-ip>:50000/ 에서 Box → Grab Now 가 끝까지 가면 정상
@@ -145,7 +145,7 @@ sudo -n "$TV_PY" -c "print('sudo ok')"    # 비밀번호를 묻지 않아야 정
 스냅샷과 비교 (다르면 그 줄이 바뀐 패키지):
 
 ```bash
-./utils/env_snapshot.sh /tmp/after
+./tools/env_snapshot.sh /tmp/after
 diff env_snapshot/$(hostname)/pip_pkgs.txt /tmp/after/pip_pkgs.txt && echo "pip 같음"
 diff env_snapshot/$(hostname)/conda_explicit.txt /tmp/after/conda_explicit.txt && echo "conda 같음"
 ```
@@ -167,7 +167,7 @@ IK 속도 확인은 INSTALL 13단계 (6) — 수 ms 면 정상, 수십 ms 면 �
 | Dex1-1 그리퍼 (`dialout`, unitree_sdk2 C++ · dex1_1_service 빌드) | INSTALL 10 |
 | GStreamer (머리 카메라 RGB 디코딩) | `sudo apt install gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav` |
 | 방화벽 (머리 카메라 RGB UDP 5004/5006) | ufw 를 켰으면 `sudo ufw allow from 192.168.123.0/24` |
-| Intel GPU / NPU 드라이버 (OpenVINO GPU·NPU) | 패키지 이름·버전 확인 필요 — 예전 PC 의 `system.txt` (커널, `intel-*` / `libze*` apt 목록, NPU 펌웨어)와 맞추고 `python utils/get_dev.py` 로 GPU·NPU 가 보이는지 확인 |
+| Intel GPU / NPU 드라이버 (OpenVINO GPU·NPU) | 패키지 이름·버전 확인 필요 — 예전 PC 의 `system.txt` (커널, `intel-*` / `libze*` apt 목록, NPU 펌웨어)와 맞추고 `python tools/get_dev.py` 로 GPU·NPU 가 보이는지 확인 |
 | H2 SDK `third_party/unitree_sdk2_python-814556d` | `source activate_tv.sh` 가 자동으로 받음 |
 
 ---

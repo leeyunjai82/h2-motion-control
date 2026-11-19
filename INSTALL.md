@@ -38,7 +38,7 @@ sudo apt install -y wget curl
 - `curl` : `start_grab_sim.sh` / `start_editor.sh` 가 서버 응답 확인에 사용 (가상환경 활성화 전에 호출).
 - 빌드 도구(build-essential, libssl-dev, libsuitesparse-dev 등)는 **필요 없습니다** — cyclonedds 는 pip 바이너리 휠,
   scikit-sparse 는 conda-forge 패키지로 설치합니다.
-- 머리 카메라(`head_track`, `utils/check_head_cam.py`) RGB 디코딩 — 없으면 `start_robot.sh` 가 head_track 을 건너뜀:
+- 머리 카메라(`head_track`, `tools/check_head_cam.py`) RGB 디코딩 — 없으면 `start_robot.sh` 가 head_track 을 건너뜀:
   `sudo apt install -y gstreamer1.0-tools gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-libav`
 - OpenCV 가 `libGL.so.1` 을 찾지 못하면 (서버판 Ubuntu 등): `sudo apt install -y libgl1 libglib2.0-0`
 - 로그 타임스탬프(`awk strftime`) : 24.04 기본 `mawk 1.3.4 20240123` 에서 동작 확인.
@@ -145,7 +145,7 @@ python -c "import numpy, torch, cv2, pinocchio, sksparse, unitree_sdk2py, openvi
   운영 mini PC 실설치에서 `numpy 1.24.4 | torch 2.4.1+cpu` 확인 (CPU 판 torch 정상).
 - `openvino`, `logging-mp` 는 버전을 고정하지 않았습니다 — 운영 mini PC 의 `pip freeze` 값과 맞추는 것을 권장 (확인 필요).
 - `unitree_sdk2py`: requirements 의 고정 커밋 `f559291` 은 tv 환경 기본값이고 `unitree_sdk2py.h2` 가 없습니다.
-  H2 는 `robots/h2/robot.yaml sdk.commit` (814556d) 을 `third_party/` 에 받아 `common/robot_env.py` 가 그쪽을 먼저 씁니다
+  H2 는 `robots/h2/robot.yaml sdk.commit` (814556d) 을 `third_party/` 에 받아 `pitron/core/robot_env.py` 가 그쪽을 먼저 씁니다
   (`activate_tv.sh` / `start_*.sh` 가 처음 한 번 자동으로 받음).
 
 ### 평소 사용 (conda 는 필요할 때만)
@@ -176,7 +176,7 @@ sudo visudo -f /etc/sudoers.d/h2-motion
   source robot_env.sh && echo "$TV_PY"
   sudo -n "$TV_PY" -c "print('ok')"     # 비밀번호를 묻지 않아야 정상
   ```
-- 로봇 이름(h2)은 sudo 뒤에서 **명령 인자**로 넘기므로(`init_fsm.py <mode> h2`, `run_launcher.py h2`) sudoers 에 `SETENV` 를 줄 필요가 없습니다.
+- 로봇 이름(h2)은 sudo 뒤에서 **명령 인자**로 넘기므로(`init_fsm.py <mode> h2`, `apps/launcher/run_launcher.py h2`) sudoers 에 `SETENV` 를 줄 필요가 없습니다.
 - `launcher.sh` 는 시작 시 `sudo -v` 로 비밀번호를 한 번 묻습니다 (NOPASSWD 불필요).
 
 ---
@@ -255,13 +255,13 @@ sudo ./dex1_1_gripper_server -n enp45s0              # 'Dex1-1 Gripper Server st
 
 # 다른 터미널
 cd ~/project/h2-motion-control && source activate_tv.sh
-python gripper/check_dex1.py enp45s0 --sec 15          # 읽기만 — 손으로 여닫아 q 확인 (닫힘 ≈ 0, 끝까지 벌림 ≈ 5.3)
-python gripper/move_test.py enp45s0 --side left   # 천천히 2.7 → 0.3 rad (left / right / 기본 양손)
+python tools/check_dex1.py enp45s0 --sec 15          # 읽기만 — 손으로 여닫아 q 확인 (닫힘 ≈ 0, 끝까지 벌림 ≈ 5.3)
+python tools/move_test.py enp45s0 --side left   # 천천히 2.7 → 0.3 rad (left / right / 기본 양손)
 ```
 
 - 서비스는 모터 ID 0 → `rt/dex1/right`, ID 1 → `rt/dex1/left` 로 내보냄. 이 로봇은 토픽 이름에 맞춰 **ID 0 을 오른손, ID 1 을 왼손**에 닮
-  (`gripper/gripper.yaml topics`) → 이 저장소 도구 · 공식 도구(`test_dex1_1_gripper_server -l/-r`, xr_teleoperate) 모두 같은 손.
-  달기 전에 그리퍼 하나만 전원을 넣고 `gripper/check_dex1.py` 로 어느 쪽 q 가 변하는지 보고 ID 를 확인할 것.
+  (`apps/gripper_pick/gripper.yaml topics`) → 이 저장소 도구 · 공식 도구(`test_dex1_1_gripper_server -l/-r`, xr_teleoperate) 모두 같은 손.
+  달기 전에 그리퍼 하나만 전원을 넣고 `tools/check_dex1.py` 로 어느 쪽 q 가 변하는지 보고 ID 를 확인할 것.
 - 명령이 끊기면 서비스가 BRAKE · kp = kd = 0 (힘 풀림). 잡은 물체를 놓칠 수 있으니 실제 사용 코드는 명령을 끊김 없이 보낼 것.
 - 서비스가 Python 쪽이 붙는 순간 `ddsi_xt_type_init_impl with invalid type object` 뒤 세그멘테이션 오류로 죽은 적이 한 번 있음 (재현 안 됨).
   다시 나오면 `sudo gdb -batch -ex run -ex bt --args ./dex1_1_gripper_server -n enp45s0 2>&1 | tee /tmp/dex1_gdb.log` 로 스택을 남길 것.
@@ -333,7 +333,7 @@ for _ in range(50): ik.solve_ik(L,R,q,dq)
 print(f'IK avg: {(time.time()-t)/50*1000:.1f} ms')"; cd ..
 
 # (7) 로봇 식별값 (로봇 연결 후, 읽기 전용) — 3단계 안전장치 기준값 측정용
-python utils/check_robot_id.py
+python tools/check_robot_id.py
 ```
 
 ---

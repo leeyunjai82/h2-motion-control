@@ -44,7 +44,7 @@ torso 원점 바닥 1.13 m — pelvis 1.01 m 가정, 확인 필요):
 
 ![v1 / v3 옆모습](side_v1_v3.png)
 
-장착 후 실측 (2026-10-09): `utils/check_rsimu.py --sec 5` → 64.9° → `robot.yaml camera` **z 0.365, pitch_deg 64.9** 반영.
+장착 후 실측 (2026-10-09): `tools/check_rsimu.py --sec 5` → 64.9° → `robot.yaml camera` **z 0.365, pitch_deg 64.9** 반영.
 v1 로 되돌리려면 `bracket.py` 의 `UP = 0.0`, `PITCH = 45.0` (git 이력에 v1 출력 파일 있음).
 아래 사진은 v1 기준.
 
@@ -104,7 +104,7 @@ v1 로 되돌리려면 `bracket.py` 의 `UP = 0.0`, `PITCH = 45.0` (git 이력�
 4. 가로대 → 요크 발: 가로대 끝 너트 홈에 너트 (위는 위에서, 아래는 아래에서), 요크 바깥면에서 M6×40 2개씩.
 5. 틈 확인: 등판–요크 3 mm 이상, 어깨 위 15 mm 이상, 가슴–가로대 5 mm 이상.
 6. 카메라 보정 후 `robot.yaml camera` 갱신 — 설계값 **x 0.130, y 0.000, z 0.365, pitch_deg 60.0** (v3, torso_link 기준, 렌즈 앞면 중심. v1 은 z 0.350 · 45.0).
-   실측: `utils/check_rsimu.py --sec 5` (몸통 기준 숙임) → `utils/cam_marker_check.py --points 0.35,0.45` (x). 703 서기 기준 렌즈 바닥 높이 약 1.48 m.
+   실측: `tools/check_rsimu.py --sec 5` (몸통 기준 숙임) → `tools/cam_marker_check.py --points 0.35,0.45` (x). 703 서기 기준 렌즈 바닥 높이 약 1.48 m.
 
 ## 검증 (오프라인, 2026-10-08)
 

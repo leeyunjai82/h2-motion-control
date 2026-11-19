@@ -1,0 +1,1081 @@
+#!/usr/bin/env python3
+"""
+H2 URDF Live Motor Visualization Server (Live-only, integrated, offline-ready)
+
+Routes:
+  /            -> Full UI (3D viewer)
+  /robot-only  -> Bare 3D viewport only
+  /dashboard   -> 통합 대시보드 (3D viewer + video + depth)
+  /api/*       -> URDF / mesh / SSE 등
+  /vendor/three.min.js -> 로컬 Three.js (오프라인 동작용)
+  /stream/video_feed -> localhost:50001/video_feed 프록시
+  /stream/depth_feed -> localhost:50001/depth_feed 프록시
+"""
+
+import os
+import sys
+import json
+import time
+import asyncio
+import threading
+import numpy as np
+import httpx
+import uvicorn
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse, StreamingResponse, FileResponse, Response
+from fastapi import Request
+#from starlette.middleware.base import BaseHTTPMiddleware
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.append(current_dir)
+
+import os as _os, sys as _sys  # noqa: E401
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료
+from pitron import paths
+
+ASSETS_DIR = robot_env.ROBOT_DIR
+URDF_PATH  = robot_env.URDF_PATH
+MESH_DIR   = robot_env.MESH_DIR
+VENDOR_DIR = robot_env.VENDOR_DIR   # three.min.js 등 로컬 라이브러리
+
+# ===== Stream upstreams =====
+VIDEO_FEED = "http://localhost:50001/video_feed"
+DEPTH_FEED = "http://localhost:50001/depth_feed"
+
+# ==========================================
+# Robot connection — rt/lowstate 구독 전용 (뷰어는 절대 지령을 보내지 않는다)
+#   예전엔 G1_29_ArmController(motion_mode=False) 를 썼는데, 그 생성자가
+#   rt/lowcmd 송신 스레드(250Hz, 다리 포함 전 관절 고정 지령)를 띄워 버린다.
+# ==========================================
+NUM_MOTORS = int(robot_env.JOINTS["motor_slots"])   # robot.yaml (unitree_hg 35 고정)
+
+
+class LowStateReader:
+    """rt/lowstate 만 읽는다. Publisher 없음."""
+
+    def __init__(self):
+        from unitree_sdk2py.core.channel import ChannelSubscriber, ChannelFactoryInitialize
+        from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_ as hg_LowState
+        robot_env.dds_init()
+        self._q = np.zeros(NUM_MOTORS)
+        self._rpy = np.zeros(3)
+        self._temp = None                 # 모터 온도 (°C) — 필드 없으면 None
+        self._tau = None                  # 추정 토크 tau_est (Nm)
+        self._lock = threading.Lock()
+        self.connected = False
+        self._sub = ChannelSubscriber("rt/lowstate", hg_LowState)
+        self._sub.Init()
+        threading.Thread(target=self._loop, daemon=True).start()
+        # 첫 수신 대기 (최대 3초) — 페이지 첫 로드 시 연결 표시가 맞도록
+        t0 = time.time()
+        while not self.connected and time.time() - t0 < 3.0:
+            time.sleep(0.1)
+        if not self.connected:
+            print("[Warning] rt/lowstate 아직 수신 없음 — 수신되면 자동 반영")
+
+    def _loop(self):
+        while True:
+            msg = self._sub.Read()
+            if msg is not None:
+                q = np.array([msg.motor_state[i].q for i in range(NUM_MOTORS)])
+                rpy = np.array(msg.imu_state.rpy)
+                temp, tau = self._read_temp_tau(msg)
+                with self._lock:
+                    self._q, self._rpy = q, rpy
+                    self._temp, self._tau = temp, tau
+                self.connected = True
+            time.sleep(0.002)
+
+    @staticmethod
+    def _read_temp_tau(msg):
+        """hg MotorState_ 의 temperature(int16[2] — [0] 외부, [1] 권선 (공식 底层服务接口) 중 큰 값)와 tau_est. 표시용.
+        필드 형식이 다르면 None."""
+        try:
+            temp = []
+            for i in range(NUM_MOTORS):
+                t = msg.motor_state[i].temperature
+                temp.append(float(max(t)) if hasattr(t, "__len__") else float(t))
+        except Exception:
+            temp = None
+        try:
+            tau = [float(msg.motor_state[i].tau_est) for i in range(NUM_MOTORS)]
+        except Exception:
+            tau = None
+        return temp, tau
+
+    def get_temp_tau(self):
+        with self._lock:
+            return self._temp, self._tau
+
+    def get_current_motor_q(self):
+        with self._lock:
+            return self._q.copy()
+
+    def get_imu_rpy(self):
+        with self._lock:
+            return self._rpy.copy()
+
+
+try:
+    ctrl = LowStateReader()
+    ROBOT_AVAILABLE = True
+    print("[System] rt/lowstate 구독 시작 (read-only)")
+except Exception as e:
+    ROBOT_AVAILABLE = False
+    ctrl = None
+    print(f"[Warning] No robot (simulation mode): {e}")
+
+# URDF 관절 이름 → 모터 슬롯 (robots/<ROBOT>/robot.yaml joints.map)
+JOINT_TO_MOTOR = {str(k): int(v) for k, v in robot_env.JOINTS["map"].items()}
+
+app = FastAPI(title="H2 URDF Viewer")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+#class IframeSecurityMiddleware(BaseHTTPMiddleware):
+#    async def dispatch(self, request: Request, call_next):
+#        response = await call_next(request)
+#        response.headers["X-Frame-Options"] = "SAMEORIGIN"
+#        response.headers["Content-Security-Policy"] = "frame-ancestors 'self';"
+#        return response
+
+# 미들웨어 등록
+#app.add_middleware(IframeSecurityMiddleware)
+
+
+# ==========================================
+# API
+# ==========================================
+@app.get('/api/urdf')
+def get_urdf():
+    return FileResponse(URDF_PATH, media_type='text/xml')
+
+@app.get('/api/meshes')
+def list_meshes():
+    files = [f for f in os.listdir(MESH_DIR) if f.lower().endswith('.stl')]
+    return {'files': files}
+
+@app.get('/api/mesh/{filename}')
+def get_mesh(filename: str):
+    path = os.path.join(MESH_DIR, filename)
+    if not os.path.exists(path):
+        for f in os.listdir(MESH_DIR):
+            if f.lower() == filename.lower():
+                path = os.path.join(MESH_DIR, f)
+                break
+    return FileResponse(path, media_type='application/octet-stream')
+
+@app.get('/api/joint_states')
+async def joint_states():
+    async def gen():
+        while True:
+            live = bool(ROBOT_AVAILABLE and ctrl and ctrl.connected)
+            if live:
+                q   = ctrl.get_current_motor_q()
+                imu = ctrl.get_imu_rpy().tolist()
+            else:
+                q   = np.zeros(NUM_MOTORS)
+                imu = [0.0, 0.0, 0.0]
+            data = {j: float(q[i]) for j, i in JOINT_TO_MOTOR.items()}
+            data['_imu']       = imu
+            data['_connected'] = live
+            if live:
+                temp, tau = ctrl.get_temp_tau()
+                if temp is not None:
+                    data['_temp'] = {j: temp[i] for j, i in JOINT_TO_MOTOR.items()}
+                if tau is not None:
+                    data['_tau'] = {j: tau[i] for j, i in JOINT_TO_MOTOR.items()}
+            yield f"data: {json.dumps(data)}\n\n"
+            await asyncio.sleep(0.05)
+    return StreamingResponse(
+        gen(),
+        media_type='text/event-stream',
+        headers={'Cache-Control': 'no-cache', 'X-Accel-Buffering': 'no'}
+    )
+
+@app.get('/api/logo')
+def get_logo():
+    """robot.yaml dashboard.logo — 3D 로봇 가슴 로고판 설정 (없으면 {})."""
+    return (robot_env.CFG.get('dashboard') or {}).get('logo') or {}
+
+@app.get('/api/status')
+def status():
+    return {'connected': bool(ROBOT_AVAILABLE and ctrl and ctrl.connected)}
+
+# ==========================================
+# Local vendor (Three.js 등)
+# ==========================================
+@app.get('/vendor/three.min.js')
+def vendor_three():
+    path = os.path.join(VENDOR_DIR, 'three.min.js')
+    if not os.path.exists(path):
+        return Response(
+            content=f"// three.min.js not found at {path}\n"
+                    f"// 다음 명령으로 다운로드:\n"
+                    f"//   curl -o {path} https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+            media_type='application/javascript',
+            status_code=404,
+        )
+    return FileResponse(path, media_type='application/javascript')
+
+# ==========================================
+# MJPEG proxy (video / depth)
+# ==========================================
+async def _stream_proxy(upstream_url: str):
+    """스트림(MJPEG/SSE) 또는 일반 응답을 그대로 흘려보냄."""
+    print(f"[proxy] -> {upstream_url}")
+    client = httpx.AsyncClient(timeout=None)
+    try:
+        req = client.build_request("GET", upstream_url)
+        resp = await client.send(req, stream=True)
+    except Exception as e:
+        await client.aclose()
+        print(f"[proxy] connect FAIL: {e!r}")
+        return Response(content=str(e), status_code=502)
+
+    ctype = resp.headers.get("content-type", "application/octet-stream")
+    print(f"[proxy]    status={resp.status_code} ctype={ctype}")
+
+    async def iterator():
+        try:
+            async for chunk in resp.aiter_raw():
+                yield chunk
+        except Exception as e:
+            print(f"[proxy] stream error: {e!r}")
+        finally:
+            await resp.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        iterator(),
+        status_code=resp.status_code,
+        media_type=ctype,
+    )
+
+@app.get("/video_feed")
+async def video_feed():
+    return await _stream_proxy(VIDEO_FEED)
+
+@app.get("/depth_feed")
+async def depth_feed():
+    return await _stream_proxy(DEPTH_FEED)
+
+# ==========================================
+# HTML (3D viewer)
+# ==========================================
+HTML_PAGE = r"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>H2 URDF Live Viewer</title>
+<script src="/vendor/three.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0a0a0f;color:#d0d0d8;font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;font-size:13px}
+header{background:#0f0f1a;border-bottom:1px solid #00b7eb30;padding:0 16px;display:flex;align-items:center;gap:12px;height:44px;flex-shrink:0}
+header h1{font-size:14px;color:#00b7eb;font-weight:600;letter-spacing:.5px}
+.badge{font-size:10px;padding:2px 8px;border-radius:10px;background:#1a1a2a;color:#555;border:1px solid #222}
+.badge.ok{color:#4caf80;border-color:#4caf5044}
+.badge.live{color:#00b7eb;border-color:#00b7eb44;animation:pulse 1.5s infinite}
+.badge.err{color:#ff6666;border-color:#ff444444}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.5}}
+.main{display:flex;flex:1;overflow:hidden;min-height:0}
+.left{width:210px;background:#0d0d16;border-right:1px solid #1a1a28;display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.sec{padding:10px 12px;border-bottom:1px solid #1a1a28}
+.sec-title{font-size:10px;text-transform:uppercase;color:#444;letter-spacing:1.2px;margin-bottom:8px}
+.tb{display:flex;align-items:center;gap:7px;width:100%;padding:6px 9px;background:#12121e;border:1px solid #1e1e2e;border-radius:7px;color:#666;font-size:11px;cursor:pointer;margin-bottom:5px;transition:all .15s;text-align:left}
+.tb:hover{border-color:#00b7eb33;color:#9fdcf0}
+.tb.on{background:#00b7eb10;border-color:#00b7eb55;color:#00b7eb}
+.tb .ic{width:13px;flex-shrink:0;text-align:center;font-size:11px}
+.info-row{display:flex;justify-content:space-between;font-size:11px;padding:2px 0;color:#444}
+.info-val{color:#666}
+.imu-row{font-size:11px;padding:3px 0;color:#2f6a7a}
+.status-dot{width:7px;height:7px;border-radius:50%;background:#333;flex-shrink:0}
+.status-dot.on{background:#4caf80;box-shadow:0 0 5px #4caf8088}
+.status-dot.err{background:#ff4444}
+.viewport{flex:1;position:relative;overflow:hidden;background:#0a0a0f}
+canvas#cv{display:block;width:100%!important;height:100%!important}
+.hud{position:absolute;bottom:10px;left:10px;font-size:10px;color:#282838;pointer-events:none;line-height:1.9}
+.vizleg{position:absolute;top:10px;left:10px;font-size:11px;color:#c9d4e0;background:#0a0a0fcc;border:1px solid #2a2a3a;
+  border-radius:6px;padding:6px 10px;pointer-events:none;line-height:1.7;display:none;z-index:50}
+.vizleg i{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:5px;vertical-align:-1px}
+.heatbar{position:absolute;top:10px;right:10px;z-index:50;display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.heatbar .bt{display:flex;border:1px solid #2a2a3a;border-radius:6px;overflow:hidden;background:#0a0a0fcc}
+.heatbar .bt button{background:transparent;border:none;color:#888;font:inherit;font-size:11px;padding:5px 10px;cursor:pointer}
+.heatbar .bt button.on{background:#1c232d;color:#00b7eb;font-weight:700}
+.heatbar .hl{background:#0a0a0fcc;border:1px solid #2a2a3a;border-radius:6px;padding:6px 10px;font-size:11px;
+  color:#c9d4e0;line-height:1.6;min-width:170px;display:none}
+.heatbar .hl .sc{height:6px;border-radius:3px;margin:3px 0 5px;background:linear-gradient(90deg,#2f6fff,#3ddc97,#ffd34a,#ff5a4a)}
+.heatbar .hl .r{display:flex;justify-content:space-between;gap:10px}.heatbar .hl .r span:last-child{font-weight:700}
+.load-overlay{position:absolute;inset:0;background:#0a0a0fdd;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+.load-title{font-size:15px;color:#00b7eb;font-weight:500}
+.pbar-bg{width:280px;height:5px;background:#1a1a28;border-radius:3px}
+.pbar-fill{height:100%;background:#00b7eb;border-radius:3px;transition:width .07s;width:0%}
+.pbar-text{font-size:11px;color:#555}
+.tooltip{position:absolute;background:#14141e;border:1px solid #2a2a3a;border-radius:6px;padding:5px 10px;font-size:11px;color:#aaa;pointer-events:none;z-index:100;display:none}
+.right{width:275px;background:#0d0d16;border-left:1px solid #1a1a28;display:flex;flex-direction:column;flex-shrink:0}
+.right-head{padding:8px 12px;border-bottom:1px solid #1a1a28;display:flex;align-items:center;justify-content:space-between;gap:7px}
+.right-head b{font-size:12px;font-weight:600;color:#aaa;white-space:nowrap}
+.search-box{flex:1;background:#12121e;border:1px solid #1e1e2e;border-radius:5px;padding:4px 8px;color:#aaa;font-size:11px;outline:none;min-width:0}
+.search-box::placeholder{color:#2a2a3a}
+.search-box:focus{border-color:#00b7eb44}
+.jcount{font-size:10px;color:#444;white-space:nowrap}
+.joints{flex:1;overflow-y:auto;padding:7px}
+.no-joint{text-align:center;color:#2a2a3a;font-size:11px;padding:40px 16px;line-height:1.8}
+.group-header{display:flex;align-items:center;gap:6px;padding:5px 4px;cursor:pointer;color:#444;font-size:10px;text-transform:uppercase;letter-spacing:.8px;user-select:none;margin-top:3px}
+.group-header:hover{color:#666}
+.garr{font-size:8px;transition:transform .15s;flex-shrink:0}
+.garr.open{transform:rotate(90deg)}
+.group-body{overflow:hidden}
+.ji{margin-bottom:5px;background:#12121e;border-radius:7px;padding:6px 9px;border:1px solid #1a1a28}
+.ji-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;gap:4px}
+.ji-name{font-size:10px;color:#666;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.ji-val{font-size:11px;color:#00b7eb;font-weight:600;min-width:46px;text-align:right;flex-shrink:0;font-family:monospace}
+.ji-bar{position:relative;height:4px;background:#1a1a28;border-radius:2px;overflow:hidden}
+.ji-bar-fill{position:absolute;top:0;height:100%;background:#00b7eb;transition:left .08s linear,width .08s linear;border-radius:2px}
+.ji-bar-zero{position:absolute;top:0;left:50%;width:1px;height:100%;background:#333}
+::-webkit-scrollbar{width:3px}
+::-webkit-scrollbar-track{background:transparent}
+::-webkit-scrollbar-thumb{background:#1e1e2e;border-radius:2px}
+
+/* Dashboard mode: keep right (Joint States) panel, hide header + left */
+body.dashboard-mode header,
+body.dashboard-mode .left,
+body.dashboard-mode .hud,
+body.dashboard-mode .tooltip { display: none !important; }
+body.dashboard-mode .main { flex: 1; }
+body.dashboard-mode .right { width: 240px; }
+</style>
+</head>
+<body>
+<script src="/i18n.js"></script>
+<header>
+  <h1>&#x1F916; H2 Live Viewer</h1>
+  <span class="badge" id="statusBadge">Loading...</span>
+  <span class="badge live" id="liveBadge" style="display:none">● LIVE</span>
+  <span style="margin-left:auto;font-size:10px;color:#2a2a3a" id="imuDisp">IMU: -</span>
+  <span id="lang-slot" style="margin-left:10px"></span>
+</header>
+
+<div class="main">
+  <div class="left">
+    <div class="sec">
+      <div class="sec-title">Connection</div>
+      <div style="display:flex;align-items:center;gap:8px">
+        <div class="status-dot" id="connDot"></div>
+        <span style="font-size:11px;color:#555" id="connText">Checking...</span>
+      </div>
+    </div>
+    <div class="sec">
+      <div class="sec-title">View</div>
+      <button class="tb on" id="gridBtn"><span class="ic">&#x22DE;</span>Grid</button>
+      <button class="tb" id="wireBtn"><span class="ic">&#x25A6;</span>Wireframe</button>
+      <button class="tb" id="axisBtn"><span class="ic">&#x2197;</span>Joint Axes</button>
+      <button class="tb" id="ssBtn"><span class="ic">&#x1F4F7;</span>Screenshot</button>
+    </div>
+    <div class="sec" id="infoSec" style="display:none">
+      <div class="sec-title">Model Info</div>
+      <div id="infoRows"></div>
+    </div>
+    <div class="sec" id="imuSec" style="display:none">
+      <div class="sec-title">IMU (Pelvis)</div>
+      <div id="imuRows"></div>
+    </div>
+  </div>
+
+  <div class="viewport" id="vp">
+    <canvas id="cv"></canvas>
+    <div class="load-overlay" id="loadOv">
+      <div class="load-title">Loading model...</div>
+      <div class="pbar-bg"><div class="pbar-fill" id="pbar"></div></div>
+      <div class="pbar-text" id="ptext">Loading URDF...</div>
+    </div>
+    <div class="hud">
+      <span id="fpsEl">FPS: --</span>
+      <span style="color:#1e1e28">Left-click rotate / Right-click pan / Wheel zoom</span>
+    </div>
+    <div class="tooltip" id="tt"></div>
+    <div class="vizleg" id="vizLeg"></div>
+    <div class="heatbar">
+      <div class="bt"><button id="autoBtn" title="천천히 좌우로 회전 (마우스 조작 시 멈추고 5초 후 재개)">자동 회전</button></div>
+      <div class="bt"><button class="on" data-hm="base">기본</button><button data-hm="temp">모터 온도</button><button data-hm="load">부하</button></div>
+      <div class="hl" id="heatList"></div>
+    </div>
+  </div>
+
+  <div class="right">
+    <div class="right-head">
+      <b>Joint States</b>
+      <input class="search-box" id="searchBox" placeholder="Search..." type="text">
+      <span class="jcount" id="jcount">-</span>
+    </div>
+    <div class="joints" id="jointsEl">
+      <div class="no-joint">Loading...</div>
+    </div>
+  </div>
+</div>
+
+<script>
+class Orbit {
+  constructor(cam,el){
+    this.cam=cam;this.el=el;this.target=new THREE.Vector3(0,.8,0);
+    this.phi=1.2;this.theta=0.5;this.r=3.5;
+    this._dn=false;this._btn=-1;this._lx=0;this._ly=0;
+    this.lastInput=0;          // 마지막 사용자 조작 시각 (자동 회전 일시정지용)
+    el.addEventListener('mousedown',e=>{this.lastInput=performance.now();this._dn=true;this._btn=e.button;this._lx=e.clientX;this._ly=e.clientY;});
+    window.addEventListener('mousemove',e=>{
+      if(!this._dn)return;
+      this.lastInput=performance.now();
+      const dx=e.clientX-this._lx,dy=e.clientY-this._ly;this._lx=e.clientX;this._ly=e.clientY;
+      if(this._btn===0){this.theta-=dx*.005;this.phi=Math.max(.04,Math.min(Math.PI-.04,this.phi-dy*.005));}
+      else if(this._btn===2){const f=this.r*.0012;const rt=new THREE.Vector3().setFromMatrixColumn(cam.matrix,0);const up=new THREE.Vector3().setFromMatrixColumn(cam.matrix,1);this.target.addScaledVector(rt,-dx*f).addScaledVector(up,dy*f);}
+      this.update();
+    });
+    window.addEventListener('mouseup',()=>this._dn=false);
+    el.addEventListener('wheel',e=>{e.preventDefault();this.lastInput=performance.now();this.r=Math.max(.15,Math.min(60,this.r*(e.deltaY>0?1.1:.9)));this.update();},{passive:false});
+    el.addEventListener('contextmenu',e=>e.preventDefault());
+    this.update();
+  }
+  update(){const s=Math.sin(this.phi);this.cam.position.set(this.target.x+this.r*s*Math.sin(this.theta),this.target.y+this.r*Math.cos(this.phi),this.target.z+this.r*s*Math.cos(this.theta));this.cam.lookAt(this.target);}
+  focusBox(box){const c=box.getCenter(new THREE.Vector3());const sz=box.getSize(new THREE.Vector3()).length();this.target.copy(c);this.r=sz*1.3;this.update();}
+}
+
+function parseSTL(buf){
+  const dv=new DataView(buf);
+  if(buf.byteLength<84)return parseASCII(new TextDecoder().decode(buf));
+  const n=dv.getUint32(80,true);
+  if(Math.abs(buf.byteLength-(84+n*50))<=4)return parseBin(dv,n);
+  return parseASCII(new TextDecoder().decode(buf));
+}
+function parseBin(dv,n){
+  const pos=new Float32Array(n*9),nrm=new Float32Array(n*9);let o=84;
+  for(let i=0;i<n;i++){
+    const nx=dv.getFloat32(o,true),ny=dv.getFloat32(o+4,true),nz=dv.getFloat32(o+8,true);o+=12;
+    for(let j=0;j<3;j++){const b=i*9+j*3;pos[b]=dv.getFloat32(o,true);pos[b+1]=dv.getFloat32(o+4,true);pos[b+2]=dv.getFloat32(o+8,true);nrm[b]=nx;nrm[b+1]=ny;nrm[b+2]=nz;o+=12;}
+    o+=2;
+  }
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nrm,3));return g;
+}
+function parseASCII(txt){
+  const pos=[],nrm=[];let nx=0,ny=0,nz=0;
+  for(const ln of txt.split('\n')){const l=ln.trim();
+    if(l.startsWith('facet normal')){const m=l.match(/normal\s+([\S]+)\s+([\S]+)\s+([\S]+)/);if(m){nx=+m[1];ny=+m[2];nz=+m[3];}}
+    else if(l.startsWith('vertex')){const m=l.match(/vertex\s+([\S]+)\s+([\S]+)\s+([\S]+)/);if(m){pos.push(+m[1],+m[2],+m[3]);nrm.push(nx,ny,nz);}}
+  }
+  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(nrm,3));return g;
+}
+
+function parseURDF(xml){
+  const doc=new DOMParser().parseFromString(xml,'text/xml');
+  const links={},joints={},materials={};
+
+  doc.querySelectorAll('robot > material').forEach(m=>{
+    const name=m.getAttribute('name');
+    const c=m.querySelector('color')?.getAttribute('rgba');
+    if(c){const [r,g,b]=c.split(/\s+/).map(Number);
+      materials[name]=(Math.round(r*255)<<16)|(Math.round(g*255)<<8)|Math.round(b*255);}
+  });
+  materials['white']=0xe8e8e8;
+  materials['dark']=0x1e1e1e;
+
+  doc.querySelectorAll('link').forEach(el=>{
+    const name=el.getAttribute('name');links[name]={name,visuals:[]};
+    el.querySelectorAll('visual').forEach(v=>{
+      const me=v.querySelector('geometry mesh');if(!me)return;
+      const fn=me.getAttribute('filename')||'';
+      const sc=(me.getAttribute('scale')||'1 1 1').split(/\s+/).map(Number);
+      const matName=v.querySelector('material')?.getAttribute('name')||'';
+      links[name].visuals.push({fn,sc,origin:parseOrig(v.querySelector('origin')),matName});
+    });
+  });
+  doc.querySelectorAll('joint').forEach(el=>{
+    const name=el.getAttribute('name'),type=el.getAttribute('type')||'fixed';
+    const parent=el.querySelector('parent')?.getAttribute('link')||'';
+    const child=el.querySelector('child')?.getAttribute('link')||'';
+    const axEl=el.querySelector('axis');
+    const axis=(axEl?.getAttribute('xyz')||'0 0 1').split(/\s+/).map(Number);
+    const lim=el.querySelector('limit');
+    joints[name]={name,type,parent,child,origin:parseOrig(el.querySelector('origin')),axis,
+      limit:{lower:lim?+lim.getAttribute('lower'):-3.14,upper:lim?+lim.getAttribute('upper'):3.14,
+             effort:lim&&lim.getAttribute('effort')?+lim.getAttribute('effort'):null}};
+  });
+  return{links,joints,materials};
+}
+function parseOrig(el){
+  if(!el)return{xyz:[0,0,0],rpy:[0,0,0]};
+  return{xyz:(el.getAttribute('xyz')||'0 0 0').split(/\s+/).map(Number),rpy:(el.getAttribute('rpy')||'0 0 0').split(/\s+/).map(Number)};
+}
+const basename=s=>s.split(/[/\\]/).pop().toLowerCase();
+const sid=n=>n.replace(/\W/g,'_');
+
+// ============ Logo: 가슴 로고판 (robot.yaml dashboard.logo → GET /api/logo) ============
+//   cfg = {link, center:[x,y,z] m, size:[w,h] m, tilt_deg, bg, lines:[[글자, 색], ...]} — 그 link 에 세운 판 하나에 줄마다 가운데 정렬.
+//   bg(둥근 사각형) 가 있어야 밝은 몸통(URDF white 0.7) 위에서도 흰 글자가 보임 (2026-10-16 사용자 시안: pitron / circulus / intel).
+//   장식이라 allMeshes 에 넣지 않음 — 열지도·클릭 선택이 material.color 를 바꾸면 판 전체가 물듦.
+function makeLogoPlate(cfg){
+  const [width,height]=cfg.size;
+  const lines=(cfg.lines||[]).map(([text,color])=>({text:String(text),color}));
+
+  const canvas=document.createElement('canvas');
+  canvas.height=512;
+  canvas.width =Math.min(2048, Math.max(256, Math.round(512*width/Math.max(height,0.001))));
+  const ctx=canvas.getContext('2d');
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+
+  // 배경: 둥근 사각형 (반지름 = 높이의 12 %)
+  if(cfg.bg){
+    const W=canvas.width,H=canvas.height,r=H*0.12;
+    ctx.fillStyle=cfg.bg;
+    ctx.beginPath();
+    ctx.moveTo(r,0);ctx.arcTo(W,0,W,H,r);ctx.arcTo(W,H,0,H,r);ctx.arcTo(0,H,0,0,r);ctx.arcTo(0,0,W,0,r);
+    ctx.closePath();ctx.fill();
+  }
+
+  // 글자: 여백 9 % 안을 줄 수만큼 채우고(줄 간격 0.95 × 글자 크기), 가장 긴 줄이 너비를 넘으면 줄임
+  const PAD=0.09, LINE_PITCH=0.95;
+  let fontSize=Math.floor(canvas.height*(1-2*PAD)/(Math.max(lines.length,1)*LINE_PITCH));
+  const setFont=()=>{ctx.font=`700 ${fontSize}px "Segoe UI", Arial, sans-serif`;};
+  setFont();
+  const maxW=canvas.width*(1-2*PAD);
+  const widest=Math.max(1,...lines.map(l=>ctx.measureText(l.text).width));
+  if(widest>maxW){
+    fontSize=Math.max(12,Math.floor(fontSize*maxW/widest));
+    setFont();
+  }
+  ctx.textBaseline='middle';ctx.textAlign='center';
+  if(!cfg.bg){ctx.strokeStyle='#000';ctx.lineWidth=Math.max(2,fontSize*0.06);ctx.lineJoin='round';}
+  const pitch=fontSize*LINE_PITCH;
+  const y0=canvas.height/2-pitch*(lines.length-1)/2;
+  lines.forEach((l,k)=>{
+    const y=y0+k*pitch;
+    if(!cfg.bg)ctx.strokeText(l.text,canvas.width/2,y);
+    ctx.fillStyle=l.color;
+    ctx.fillText(l.text,canvas.width/2,y);
+  });
+
+  const tex=new THREE.CanvasTexture(canvas);
+  tex.anisotropy=8;tex.needsUpdate=true;
+  const mat=new THREE.MeshBasicMaterial({map:tex,transparent:true,depthWrite:false,side:THREE.DoubleSide});
+  const plane=new THREE.Mesh(new THREE.PlaneGeometry(width,height),mat);
+
+  // PlaneGeometry(XY, +z 를 봄) → link 의 +x(앞)를 보고 위가 +z, 그다음 위쪽을 뒤로 tilt_deg
+  plane.rotation.x=Math.PI/2;
+  plane.rotation.y=Math.PI/2;
+  plane.quaternion.premultiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0,1,0),-(cfg.tilt_deg||0)*Math.PI/180));
+  plane.position.set(...cfg.center);
+  plane.renderOrder=10;
+  plane.userData={linkName:cfg.link,logo:true};
+  return plane;
+}
+
+const cv=document.getElementById('cv'),vp=document.getElementById('vp');
+const renderer=new THREE.WebGLRenderer({canvas:cv,antialias:true,preserveDrawingBuffer:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setClearColor(0x0a0a0f);
+const scene=new THREE.Scene();
+const camera=new THREE.PerspectiveCamera(45,1,.001,500);
+const orbit=new Orbit(camera,cv);
+scene.add(new THREE.AmbientLight(0xffffff,.55));
+const dl1=new THREE.DirectionalLight(0xffffff,.85);dl1.position.set(5,10,5);scene.add(dl1);
+const dl2=new THREE.DirectionalLight(0x8899ff,.3);dl2.position.set(-5,5,-5);scene.add(dl2);
+const grid=new THREE.GridHelper(14,28,0x181828,0x181828);scene.add(grid);
+const raycaster=new THREE.Raycaster();const mouse=new THREE.Vector2();
+function resize(){const w=vp.clientWidth,h=vp.clientHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
+resize();new ResizeObserver(resize).observe(vp);
+
+let robotRoot=null,jointObjs={},baseQs={},jointDefs={};
+let allMeshes=[],allAxes=[],wireMode=false,axisMode=false;
+let selectedMesh=null;
+let valEls={},barEls={},jointLimits={};
+let liveEvt=null;
+
+let fps=0,fpsT=performance.now();
+// ── 자동 회전: 현재 시점을 중심으로 좌우 ±15° 를 20초 주기로 천천히 왕복 (+ 상하 ±2°)
+//    마우스 조작 중 정지 → 마지막 조작 5초 후 그 시점을 새 중심으로 재개.
+//    재개 시 진폭을 3초에 걸쳐 0→1 로 키워 화면이 튀지 않게 한다. 표시 전용 (로봇과 무관).
+const AUTO={on:true,amp:15*Math.PI/180,ampPhi:2*Math.PI/180,period:20000,idle:5000,ramp:3000,
+  run:false,t0:0,th0:0,ph0:0};
+try{const v=localStorage.getItem('g1dash.auto');if(v!==null)AUTO.on=v==='1';}catch(e){}
+function autoBtnSync(){const b=document.getElementById('autoBtn');if(b)b.classList.toggle('on',AUTO.on);}
+document.getElementById('autoBtn').addEventListener('click',()=>{
+  AUTO.on=!AUTO.on;AUTO.run=false;autoBtnSync();
+  try{localStorage.setItem('g1dash.auto',AUTO.on?'1':'0');}catch(e){}});
+autoBtnSync();
+function autoTick(now){
+  if(!AUTO.on||orbit._dn||now-orbit.lastInput<AUTO.idle){AUTO.run=false;return;}
+  if(!AUTO.run){AUTO.run=true;AUTO.t0=now;AUTO.th0=orbit.theta;AUTO.ph0=orbit.phi;}
+  const t=now-AUTO.t0,k=Math.min(1,t/AUTO.ramp),w=2*Math.PI*t/AUTO.period;
+  orbit.theta=AUTO.th0+AUTO.amp*k*Math.sin(w);
+  orbit.phi=Math.max(.04,Math.min(Math.PI-.04,AUTO.ph0+AUTO.ampPhi*k*Math.sin(2*w)));
+  orbit.update();
+}
+function renderLoop(now){
+  requestAnimationFrame(renderLoop);
+  autoTick(now);
+  renderer.render(scene,camera);
+  fps++;if(now-fpsT>=1000){const el=document.getElementById('fpsEl');if(el)el.textContent='FPS: '+fps;fps=0;fpsT=now;}
+}
+requestAnimationFrame(renderLoop);
+
+async function loadRobot(){
+  document.getElementById('loadOv').style.display='flex';
+  const pbar=document.getElementById('pbar'),ptext=document.getElementById('ptext');
+  try{
+    if(robotRoot){scene.remove(robotRoot);robotRoot=null;}
+    jointObjs={};baseQs={};allMeshes=[];allAxes=[];valEls={};barEls={};jointLimits={};
+
+    ptext.textContent='Loading URDF...';pbar.style.width='5%';
+    const urdfTxt=await(await fetch('/api/urdf')).text();
+    const{links,joints,materials}=parseURDF(urdfTxt);
+    jointDefs=joints;
+
+    ptext.textContent='Fetching mesh list...';pbar.style.width='10%';
+    const meshListData=await(await fetch('/api/meshes')).json();
+    const serverFiles=new Set(meshListData.files.map(f=>f.toLowerCase()));
+
+    const needed=new Set();
+    for(const l of Object.values(links))
+      for(const v of l.visuals){const b=basename(v.fn);if(serverFiles.has(b))needed.add(b);}
+
+    // 가슴 로고판 설정 (robot.yaml dashboard.logo) — 없거나 못 읽으면 로고 없이
+    let logoCfg={};
+    try{const r=await fetch('/api/logo');if(r.ok)logoCfg=await r.json();}catch(e){}
+    if(!(logoCfg&&logoCfg.link&&Array.isArray(logoCfg.center)&&Array.isArray(logoCfg.size)))logoCfg={};
+
+    const geos={};const total=needed.size;let loaded=0;
+    await Promise.all([...needed].map(async b=>{
+      const buf=await(await fetch('/api/mesh/'+b)).arrayBuffer();
+      const geo=parseSTL(buf);geo.computeVertexNormals();geos[b]=geo;
+      loaded++;pbar.style.width=`${10+(loaded/total)*85}%`;ptext.textContent=`STL ${loaded} / ${total}`;
+    }));
+
+    ptext.textContent='Building scene...';pbar.style.width='98%';
+    await new Promise(r=>setTimeout(r,0));
+
+    const childSet=new Set(Object.values(joints).map(j=>j.child));
+    const rootName=Object.keys(links).find(l=>!childSet.has(l))||Object.keys(links)[0];
+
+    function mkLink(lname){
+      const link=links[lname];if(!link)return null;
+      const grp=new THREE.Group();grp.name='link:'+lname;
+
+      for(const v of link.visuals){
+        const b=basename(v.fn),geo=geos[b];if(!geo)continue;
+        let color=(materials[v.matName]!==undefined)?materials[v.matName]:0xb0b0b0;
+        if(/hand|finger|thumb|palm/i.test(lname)) color=0x1a1a1a;
+        const isDark=color<0x555555;
+        const mat=new THREE.MeshPhongMaterial({color,specular:isDark?0x222222:0x666666,shininess:isDark?55:25});
+        const mesh=new THREE.Mesh(geo,mat);mesh.userData={linkName:lname};
+        mesh.position.set(...v.origin.xyz);mesh.setRotationFromEuler(new THREE.Euler(...v.origin.rpy,'XYZ'));mesh.scale.set(...v.sc);
+        allMeshes.push(mesh);grp.add(mesh);
+      }
+      if(logoCfg.link===lname)grp.add(makeLogoPlate(logoCfg));
+
+      const ax=new THREE.AxesHelper(.08);ax.visible=false;allAxes.push(ax);grp.add(ax);
+      for(const jt of Object.values(joints).filter(j=>j.parent===lname)){
+        const jg=new THREE.Group();jg.name='joint:'+jt.name;
+        jg.position.set(...jt.origin.xyz);jg.setRotationFromEuler(new THREE.Euler(...jt.origin.rpy,'XYZ'));
+        jointObjs[jt.name]=jg;baseQs[jt.name]=jg.quaternion.clone();
+        const child=mkLink(jt.child);if(child)jg.add(child);grp.add(jg);
+      }
+      return grp;
+    }
+    robotRoot=mkLink(rootName);
+    if(robotRoot){
+      robotRoot.rotation.x=-Math.PI/2;
+      scene.add(robotRoot);
+      const box=new THREE.Box3().setFromObject(robotRoot);
+      robotRoot.position.y=-box.min.y;
+      orbit.focusBox(new THREE.Box3().setFromObject(robotRoot));
+      vizInit();
+    }
+    buildJointDisplays(joints);
+    const mv=Object.values(joints).filter(j=>j.type!=='fixed').length;
+    const infoSec=document.getElementById('infoSec');if(infoSec)infoSec.style.display='block';
+    const infoRows=document.getElementById('infoRows');
+    if(infoRows)infoRows.innerHTML=
+      [['Links',Object.keys(links).length],['Joints',Object.keys(joints).length],['Movable',mv],['Meshes',allMeshes.length]]
+      .map(([k,v])=>`<div class="info-row"><span>${k}</span><span class="info-val">${v}</span></div>`).join('');
+    const b=document.getElementById('statusBadge');b.textContent='Ready';b.className='badge ok';
+    pbar.style.width='100%';
+
+    await checkConnection();
+    startSSE();
+    document.getElementById('liveBadge').style.display='';
+
+  }catch(e){console.error(e);document.getElementById('statusBadge').textContent='Error: '+e.message;document.getElementById('statusBadge').className='badge err';}
+  document.getElementById('loadOv').style.display='none';
+}
+
+async function checkConnection(){
+  try{
+    const d=await(await fetch('/api/status')).json();
+    const dot=document.getElementById('connDot');const txt=document.getElementById('connText');
+    if(dot&&txt){
+      if(d.connected){dot.className='status-dot on';txt.textContent='Robot connected';txt.style.color='#4caf80';}
+      else{dot.className='status-dot err';txt.textContent='Simulation mode';txt.style.color='#ff6666';}
+    }
+  }catch(e){console.error(e);}
+}
+
+function startSSE(){
+  if(liveEvt)liveEvt.close();
+  liveEvt=new EventSource('/api/joint_states');
+  liveEvt.onmessage=e=>{
+    const data=JSON.parse(e.data);
+    if(data._imu){
+      const [r,p,y]=data._imu;
+      const imuDispEl=document.getElementById('imuDisp');
+      if(imuDispEl)imuDispEl.textContent=
+        `IMU  R:${(r*180/Math.PI).toFixed(1)}°  P:${(p*180/Math.PI).toFixed(1)}°  Y:${(y*180/Math.PI).toFixed(1)}°`;
+      const imuSec=document.getElementById('imuSec');if(imuSec)imuSec.style.display='block';
+      const imuRows=document.getElementById('imuRows');
+      if(imuRows)imuRows.innerHTML=
+        [['Roll',(r*180/Math.PI).toFixed(2)+'°'],['Pitch',(p*180/Math.PI).toFixed(2)+'°'],['Yaw',(y*180/Math.PI).toFixed(2)+'°']]
+        .map(([k,v])=>`<div class="info-row imu-row"><span>${k}</span><span class="info-val">${v}</span></div>`).join('');
+    }
+    if(data._temp)heat.temp=data._temp;
+    if(data._tau)heat.tau=data._tau;
+    delete data._imu;delete data._connected;delete data._temp;delete data._tau;
+    applyPose(data);
+  };
+  liveEvt.onerror=()=>{setTimeout(startSSE,1000);};
+}
+
+function buildJointDisplays(joints){
+  const movable=Object.values(joints).filter(j=>j.type!=='fixed');
+  const jcountEl=document.getElementById('jcount');if(jcountEl)jcountEl.textContent=movable.length;
+  const groups={'Head':[],'Waist/Pelvis':[],'Left Arm':[],'Right Arm':[],'Left Hand':[],'Right Hand':[],'Left Leg':[],'Right Leg':[],'Other':[]};
+  for(const j of movable){const n=j.name.toLowerCase();
+    if(n.includes('head'))groups['Head'].push(j);
+    else if(n.includes('waist'))groups['Waist/Pelvis'].push(j);
+    else if(n.includes('left')&&(n.includes('shoulder')||n.includes('elbow')||n.includes('wrist')))groups['Left Arm'].push(j);
+    else if(n.includes('right')&&(n.includes('shoulder')||n.includes('elbow')||n.includes('wrist')))groups['Right Arm'].push(j);
+    else if(n.includes('left')&&(n.includes('hand')||n.includes('finger')||n.includes('thumb')||n.includes('index')||n.includes('middle')||n.includes('palm')))groups['Left Hand'].push(j);
+    else if(n.includes('right')&&(n.includes('hand')||n.includes('finger')||n.includes('thumb')||n.includes('index')||n.includes('middle')||n.includes('palm')))groups['Right Hand'].push(j);
+    else if(n.includes('left')&&(n.includes('hip')||n.includes('knee')||n.includes('ankle')))groups['Left Leg'].push(j);
+    else if(n.includes('right')&&(n.includes('hip')||n.includes('knee')||n.includes('ankle')))groups['Right Leg'].push(j);
+    else groups['Other'].push(j);
+  }
+  for(const j of movable)jointLimits[j.name]={lo:j.limit.lower,hi:j.limit.upper};
+
+  const el=document.getElementById('jointsEl');
+  if(!el)return;
+  if(!movable.length){el.innerHTML='<div class="no-joint">No movable joints</div>';return;}
+  let html='';
+  for(const[gname,jlist]of Object.entries(groups)){
+    if(!jlist.length)continue;const gid=sid(gname);
+    html+=`<div class="group-header" onclick="toggleG('${gid}')"><span class="garr open" id="arr_${gid}">&#x25B6;</span><span>${gname}</span><span style="color:#2a2a3a;margin-left:4px">(${jlist.length})</span></div><div class="group-body" id="gb_${gid}">`;
+    for(const j of jlist){
+      html+=`<div class="ji" id="ji_${sid(j.name)}" data-joint="${j.name}">
+        <div class="ji-head">
+          <span class="ji-name" title="${j.name}">${j.name}</span>
+          <span class="ji-val" id="v_${sid(j.name)}">0.0°</span>
+        </div>
+        <div class="ji-bar"><div class="ji-bar-zero"></div><div class="ji-bar-fill" id="b_${sid(j.name)}"></div></div>
+      </div>`;
+    }
+    html+='</div>';
+  }
+  el.innerHTML=html;
+  movable.forEach(j=>{valEls[j.name]=document.getElementById('v_'+sid(j.name));barEls[j.name]=document.getElementById('b_'+sid(j.name));});
+  setTimeout(()=>document.querySelectorAll('.group-body').forEach(b=>b.style.maxHeight=b.scrollHeight+'px'),60);
+}
+
+window.toggleG=function(gid){
+  const body=document.getElementById('gb_'+gid),arr=document.getElementById('arr_'+gid);
+  const open=arr.classList.contains('open');
+  body.style.maxHeight=open?'0px':body.scrollHeight+'px';arr.classList.toggle('open',!open);
+};
+const searchBox=document.getElementById('searchBox');
+if(searchBox)searchBox.addEventListener('input',function(){
+  const q=this.value.toLowerCase().trim();
+  document.querySelectorAll('.ji').forEach(el=>el.style.display=(!q||el.dataset.joint?.toLowerCase().includes(q))?'':'none');
+});
+
+function setAngle(jname,angle){
+  const jobj=jointObjs[jname],jdef=jointDefs[jname];if(!jobj||!jdef)return;
+  const ax=new THREE.Vector3(...jdef.axis).normalize();
+  jobj.quaternion.copy(baseQs[jname]).multiply(new THREE.Quaternion().setFromAxisAngle(ax,angle));
+}
+
+function applyPose(joints){
+  for(const[jname,angle]of Object.entries(joints)){
+    setAngle(jname,angle);
+    if(valEls[jname])valEls[jname].textContent=(angle*180/Math.PI).toFixed(1)+'°';
+    const lim=jointLimits[jname],bar=barEls[jname];
+    if(bar&&lim){
+      const range=Math.max(Math.abs(lim.lo),Math.abs(lim.hi),0.001);
+      const ratio=Math.max(-1,Math.min(1,angle/range));
+      if(ratio>=0){bar.style.left='50%';bar.style.width=(ratio*50)+'%';}
+      else{bar.style.left=(50+ratio*50)+'%';bar.style.width=(-ratio*50)+'%';}
+    }
+  }
+}
+
+const gridBtn=document.getElementById('gridBtn');
+if(gridBtn)gridBtn.addEventListener('click',function(){grid.visible=!grid.visible;this.classList.toggle('on',grid.visible);});
+const wireBtn=document.getElementById('wireBtn');
+if(wireBtn)wireBtn.addEventListener('click',function(){wireMode=!wireMode;this.classList.toggle('on',wireMode);allMeshes.forEach(m=>{if(m.material&&m.material.wireframe!==undefined)m.material.wireframe=wireMode;});});
+const axisBtn=document.getElementById('axisBtn');
+if(axisBtn)axisBtn.addEventListener('click',function(){axisMode=!axisMode;this.classList.toggle('on',axisMode);allAxes.forEach(a=>a.visible=axisMode);});
+const ssBtn=document.getElementById('ssBtn');
+if(ssBtn)ssBtn.addEventListener('click',()=>{renderer.render(scene,camera);const a=document.createElement('a');a.download='h2_viewer.png';a.href=cv.toDataURL('image/png');a.click();});
+
+cv.addEventListener('click',e=>{
+  if(!allMeshes.length)return;
+  const rect=cv.getBoundingClientRect();
+  mouse.x=((e.clientX-rect.left)/rect.width)*2-1;
+  mouse.y=-((e.clientY-rect.top)/rect.height)*2+1;
+  raycaster.setFromCamera(mouse,camera);
+  const hits=raycaster.intersectObjects(allMeshes);
+  if(selectedMesh){if(selectedMesh.material.color)selectedMesh.material.color.set(selectedMesh.userData.origColor||0x78909c);selectedMesh=null;}
+  if(!hits.length)return;
+  selectedMesh=hits[0].object;
+  if(selectedMesh.material.color){
+    selectedMesh.userData.origColor=selectedMesh.material.color.getHex();
+    selectedMesh.material.color.set(0x00b7eb);
+  }
+  const lname=selectedMesh.userData.linkName;
+  Object.values(jointDefs).forEach(j=>{
+    if(j.child===lname||j.parent===lname){const el=document.getElementById('ji_'+sid(j.name));if(el)el.scrollIntoView({block:'nearest',behavior:'smooth'});}
+  });
+  const tt=document.getElementById('tt');
+  if(tt){tt.textContent=lname;tt.style.display='block';
+    tt.style.left=(e.clientX-rect.left+10)+'px';tt.style.top=(e.clientY-rect.top+8)+'px';
+    setTimeout(()=>tt.style.display='none',2000);}
+});
+
+// ==========================================
+// 인식 박스 / 손 목표 표시 — robot_server(:50000) GET /viz, torso_link 기준 좌표(m)
+//   torso_link 그룹에 붙이므로 허리 회전을 그대로 따라간다.
+//   주황: 박스 파지점 L/R + 옆면(L–R × 높이), 파랑: 윗면 중심, 초록: 현재 손(IK) 목표
+//   보라: 비교용 다른 추정 방식(잡기에 안 씀) 파지점 L/R + 윗면 중심 + 옆면 테두리
+// ==========================================
+const VIZ_URL=`http://${location.hostname}:50000/viz`;
+let vizGrp=null,vizTimer=null;const vz={};
+function vizInit(){
+  const torso=robotRoot&&robotRoot.getObjectByName('link:torso_link');
+  if(!torso)return;
+  if(vizGrp&&vizGrp.parent)vizGrp.parent.remove(vizGrp);
+  vizGrp=new THREE.Group();vizGrp.name='viz';torso.add(vizGrp);
+  const mat=(c,o)=>new THREE.MeshBasicMaterial({color:c,depthTest:false,transparent:o!==undefined,opacity:o??1,side:THREE.DoubleSide});
+  const sph=(c,r)=>new THREE.Mesh(new THREE.SphereGeometry(r,16,12),mat(c));
+  vz.top=sph(0x4aa8ff,.014);vz.L=sph(0xffb454,.018);vz.R=sph(0xffb454,.018);
+  vz.tL=sph(0x3ddc97,.024);vz.tR=sph(0x3ddc97,.024);
+  vz.face=new THREE.Mesh(new THREE.BufferGeometry(),mat(0xffb454,.18));
+  vz.edge=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0xffb454,depthTest:false}));
+  vz.tline=new THREE.Line(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0x3ddc97,depthTest:false}));
+  vz.oL=sph(0xc58bff,.012);vz.oR=sph(0xc58bff,.012);vz.oTop=sph(0xc58bff,.010);
+  vz.oEdge=new THREE.LineSegments(new THREE.BufferGeometry(),new THREE.LineBasicMaterial({color:0xc58bff,depthTest:false}));
+  Object.values(vz).forEach(o=>{o.renderOrder=999;o.visible=false;vizGrp.add(o);});
+  if(!vizTimer)vizTimer=setInterval(vizPoll,250);
+}
+function vizSetPts(obj,pts){obj.geometry.setAttribute('position',new THREE.Float32BufferAttribute(pts.flat(),3));
+  obj.geometry.computeBoundingSphere();}
+async function vizPoll(){
+  let d=null;
+  try{d=await(await fetch(VIZ_URL)).json();}catch(e){d=null;}
+  const leg=document.getElementById('vizLeg');
+  const b=d&&d.box,t=d&&d.targets;
+  // 박스
+  ['L','R','top','face','edge'].forEach(k=>vz[k].visible=false);
+  if(b){
+    vz.L.position.set(...b.L);vz.R.position.set(...b.R);vz.L.visible=vz.R.visible=true;
+    if(b.top){vz.top.position.set(...b.top);vz.top.visible=true;}
+    if(b.h){
+      const Lb=[b.L[0],b.L[1],b.L[2]-b.h],Rb=[b.R[0],b.R[1],b.R[2]-b.h];
+      vizSetPts(vz.face,[b.L,b.R,Rb, b.L,Rb,Lb]);
+      vizSetPts(vz.edge,[b.L,b.R, b.R,Rb, Rb,Lb, Lb,b.L]);
+      vz.face.visible=vz.edge.visible=true;
+    }
+  }
+  // 비교용 다른 방식
+  const o=d&&d.other;
+  ['oL','oR','oTop','oEdge'].forEach(k=>vz[k].visible=false);
+  if(o){
+    vz.oL.position.set(...o.L);vz.oR.position.set(...o.R);vz.oL.visible=vz.oR.visible=true;
+    if(o.top){vz.oTop.position.set(...o.top);vz.oTop.visible=true;}
+    const oh=o.h||0,Lb=[o.L[0],o.L[1],o.L[2]-oh],Rb=[o.R[0],o.R[1],o.R[2]-oh];
+    vizSetPts(vz.oEdge,oh?[o.L,o.R, o.R,Rb, Rb,Lb, Lb,o.L]:[o.L,o.R]);vz.oEdge.visible=true;
+  }
+  // 손 목표
+  ['tL','tR','tline'].forEach(k=>vz[k].visible=false);
+  if(t){
+    vz.tL.position.set(...t.L);vz.tR.position.set(...t.R);
+    vizSetPts(vz.tline,[t.L,t.R]);
+    vz.tL.visible=vz.tR.visible=vz.tline.visible=true;
+  }
+  // 범례
+  if(leg){
+    if(b||t){
+      const w=b?Math.hypot(b.L[0]-b.R[0],b.L[1]-b.R[1]):0;
+      const mn=m=>m==='plane'?'평면':'기본';
+      const c=d.cmp;
+      leg.innerHTML=(b?`<div><i style="background:#ffb454"></i>인식 박스 (${mn(b.method)}) · 폭 ${(w*100).toFixed(1)}cm`+
+          (b.h?` · 높이 ${(b.h*100).toFixed(1)}cm`:'')+'</div>':'')+
+        (o?`<div><i style="background:#c58bff"></i>비교 (${mn(o.method)})`+
+          (c&&c.dL_cm!=null?` · 차이 L ${c.dL_cm} / R ${c.dR_cm} cm`:'')+
+          (c&&c.tilt_deg!=null?` · 기울기 ${c.tilt_deg}°`:'')+'</div>':'')+
+        (t?'<div><i style="background:#3ddc97"></i>손 목표 (IK)</div>':'')+
+        (d.stage?`<div style="color:#ffb454">▶ ${d.stage_idx+1}/${d.stages.length} ${d.stage}</div>`:'');
+      leg.style.display='block';
+    }else leg.style.display='none';
+  }
+}
+
+// ==========================================
+// 모터 온도 / 부하 색상 (표시 전용) — SSE 의 _temp(°C), _tau(Nm) 사용
+//   온도: 25°C 파랑 → 75°C 빨강 (표시용 눈금)
+//   부하: |tau_est| / URDF effort(관절 최대 토크) 0 → 1
+//   관절 → 그 관절이 움직이는 child 링크의 메시를 칠한다. 대응 없는 링크는 회색.
+// ==========================================
+const heat={mode:'base',temp:null,tau:null};
+const HEAT_T0=25,HEAT_T1=75;
+function heatColor(x){                        // 0..1 → 파랑-초록-노랑-빨강
+  x=Math.max(0,Math.min(1,x));
+  const st=[[0,[0x2f,0x6f,0xff]],[.4,[0x3d,0xdc,0x97]],[.7,[0xff,0xd3,0x4a]],[1,[0xff,0x5a,0x4a]]];
+  for(let i=1;i<st.length;i++)if(x<=st[i][0]){const[a,ca]=st[i-1],[b,cb]=st[i],k=(x-a)/(b-a);
+    return new THREE.Color(...ca.map((v,j)=>(v+(cb[j]-v)*k)/255));}
+  return new THREE.Color(1,.35,.29);
+}
+function heatApply(){
+  const list=document.getElementById('heatList');
+  if(heat.mode==='base'){
+    allMeshes.forEach(m=>{if(m.material&&m.material.color&&m.userData.baseHex!==undefined)m.material.color.setHex(m.userData.baseHex);});
+    list.style.display='none';return;}
+  const src=heat.mode==='temp'?heat.temp:heat.tau;
+  const linkJoint={};Object.values(jointDefs).forEach(j=>{if(j.type!=='fixed')linkJoint[j.child]=j.name;});
+  const val=jn=>{if(!src||src[jn]===undefined)return null;
+    if(heat.mode==='temp')return (src[jn]-HEAT_T0)/(HEAT_T1-HEAT_T0);
+    const e=jointDefs[jn]?.limit?.effort;return e?Math.abs(src[jn])/e:null;};
+  allMeshes.forEach(m=>{
+    if(!m.material||!m.material.color)return;
+    if(m.userData.baseHex===undefined)m.userData.baseHex=m.material.color.getHex();
+    const v=val(linkJoint[m.userData.linkName]);
+    if(v===null)m.material.color.setHex(0x3a3a44);else m.material.color.copy(heatColor(v));
+  });
+  // 상위 3개
+  if(!src){list.innerHTML=`<div>${heat.mode==='temp'?'모터 온도':'부하'} 데이터 없음</div><div style="color:#888">로봇 연결 시 표시</div>`;
+    list.style.display='block';return;}
+  const rows=Object.keys(src).map(jn=>({jn,raw:src[jn],v:val(jn)})).filter(r=>r.v!==null)
+    .sort((a,b)=>b.v-a.v).slice(0,3);
+  const nm=jn=>jn.replace(/_joint$/,'').replace(/_/g,' ');
+  list.innerHTML=`<div>${heat.mode==='temp'?`모터 온도 (${HEAT_T0}–${HEAT_T1}°C)`:'부하 (|토크| / 최대 토크)'}</div><div class="sc"></div>`+
+    rows.map(r=>`<div class="r"><span>${nm(r.jn)}</span><span style="color:#${heatColor(r.v).getHexString()}">`+
+      (heat.mode==='temp'?`${r.raw.toFixed(0)}°C`:`${Math.round(r.v*100)}% · ${Math.abs(r.raw).toFixed(1)}Nm`)+'</span></div>').join('');
+  list.style.display='block';
+}
+document.querySelectorAll('.heatbar button[data-hm]').forEach(b=>b.addEventListener('click',()=>{
+  heat.mode=b.dataset.hm;
+  document.querySelectorAll('.heatbar button[data-hm]').forEach(x=>x.classList.toggle('on',x===b));
+  heatApply();}));
+setInterval(()=>{if(heat.mode!=='base')heatApply();},300);
+
+window.addEventListener('load',()=>loadRobot());
+</script>
+</body>
+</html>"""
+
+# ==========================================
+# Dashboard HTML (3D viewer + video + depth)
+# ==========================================
+DASHBOARD_HTML = """<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>Robot Streams</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #111; color: #eee;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    overflow: hidden;
+    padding: 12px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 3fr 2fr;     /* 위 60% / 아래 40% 비율 */
+    gap: 12px;
+    width: 100%;
+    height: 100%;
+    max-width: 1600px;
+    margin: 0 auto;
+  }
+  .panel {
+    background: #1c1c1c; border: 1px solid #2a2a2a;
+    border-radius: 8px; overflow: hidden;
+    display: flex; flex-direction: column;
+    min-height: 0;                   /* grid child가 줄어들 수 있게 */
+  }
+  .panel.full { grid-column: 1 / -1; }
+  .panel h2 {
+    font-size: 14px; font-weight: 500;
+    padding: 8px 14px; background: #232323;
+    border-bottom: 1px solid #2a2a2a; color: #00b7eb;
+    flex: 0 0 auto;
+  }
+  .panel iframe, .panel img {
+    flex: 1 1 auto;
+    width: 100%;
+    min-height: 0;
+    border: 0;
+    background: #000;
+    display: block;
+  }
+  .panel img { object-fit: cover; }
+</style>
+</head>
+<body>
+<script src="/i18n.js"></script>
+  <div class="grid">
+    <div class="panel full">
+      <h2>Robot (3D Viewer + Joint States)</h2>
+      <iframe id="robot-iframe" src="/robot-only?embed=1"></iframe>
+    </div>
+    <div class="panel">
+      <h2>Video Feed</h2>
+      <img src="/video_feed" alt="video_feed">
+    </div>
+    <div class="panel">
+      <h2>Depth Feed</h2>
+      <img src="/depth_feed" alt="depth_feed">
+    </div>
+  </div>
+</body>
+</html>"""
+
+# ==========================================
+# Pages
+# ==========================================
+@app.get('/')
+def index():
+    return HTMLResponse(HTML_PAGE)
+
+@app.get('/i18n.js', include_in_schema=False)
+def i18n_js():
+    return FileResponse(paths.I18N_JS, media_type='application/javascript')
+
+@app.get('/robot-only')
+def robot_dashboard():
+    return HTMLResponse(HTML_PAGE.replace('<body>', '<body class="dashboard-mode">', 1))
+
+@app.get('/dashboard')
+def dashboard():
+    return HTMLResponse(DASHBOARD_HTML)
+
+
+if __name__ == '__main__':
+    uvicorn.run(app, host='0.0.0.0', port=50003, timeout_graceful_shutdown=2)

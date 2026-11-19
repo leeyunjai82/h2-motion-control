@@ -1,0 +1,528 @@
+<!DOCTYPE html>
+<!-- 데이터 수집 · 추론 화면 (잡기 웹 /collect) — 색 · 글꼴 · 카드는 학습 화면 (apps/trainer/trainer_web.html) 과 같음 -->
+<html lang="ko"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>pitron collect</title>
+<style>
+:root{
+  --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
+  --ink:#c9d4e0; --dim:#6b7785;
+  --accent:#00b7eb; --accent2:#7fd8f5; --accent-tint:rgba(0,183,235,.20); --accent-deep:#08465a;
+  --ok:#3ddc97; --warn:#ff6b6b; --amber:#ffb454; --r:10px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;background:var(--bg);color:var(--ink);
+  font-size:13px;line-height:1.45;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%);
+  height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.topbar{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);flex-wrap:wrap;
+  background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
+.logo{font-weight:700;letter-spacing:.5px;font-size:15px;color:var(--accent)}.logo b{color:var(--ink)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:none}
+.dot.live{background:var(--ok);box-shadow:0 0 8px var(--ok)}.dot.err{background:var(--warn);box-shadow:0 0 8px var(--warn)}
+.topbar .right{margin-left:auto;display:flex;gap:14px;align-items:center;font-size:11px;color:var(--dim);flex-wrap:wrap}
+.chips{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;padding:4px 10px;border-radius:999px;
+  border:1px solid var(--line);background:var(--panel2);color:var(--dim);white-space:nowrap}
+.chip b{color:var(--ink);font-weight:700}
+.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.ok{color:var(--ok);border-color:#1f5a43}.chip.info{color:var(--accent);border-color:#0b5a70}
+.chip.busy{color:var(--amber);border-color:#6a4a1f}.chip.err{color:var(--warn);border-color:#5a2b2b}
+.dsbar{display:flex;gap:10px;align-items:center}
+.grid{display:grid;grid-template-columns:5fr 3fr 3fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
+.col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
+.card.fill{flex:1 1 0;min-height:160px;display:flex;flex-direction:column}
+.card.fill>.card-b{flex:1;min-height:0;display:flex;flex-direction:column}
+.camgrid{flex:1;min-height:0;display:grid;grid-template-rows:3fr 2fr;gap:8px}
+.camcell{min-height:0;display:flex;flex-direction:column}
+.camcell img{flex:1;min-height:0;width:100%;height:100%;object-fit:contain}
+.camrow{min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:8px}
+pre.log{flex:1;min-height:80px;overflow:auto;background:#05080c;border:1px solid var(--line);border-radius:8px;padding:8px;
+  font-size:11px;line-height:1.45;color:#a9b6c4;white-space:pre-wrap;word-break:break-all;font-family:inherit}
+.card.alert{border-color:var(--amber)}
+.card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
+  padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--panel2);gap:8px}
+.card.alert .card-h{box-shadow:inset 3px 0 0 var(--amber)}
+.card-h .tag{color:var(--accent);font-weight:700;text-transform:none;letter-spacing:.3px}
+.card-b{padding:13px}
+.btn{font-family:inherit;font-size:12px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);
+  padding:8px 10px;border-radius:7px;cursor:pointer;transition:.12s;white-space:nowrap;text-decoration:none;display:inline-block;text-align:center}
+.btn:hover{border-color:var(--accent);color:var(--accent)}.btn:active{transform:translateY(1px)}
+.btn:disabled,.btn.off{opacity:.4;cursor:not-allowed;pointer-events:none}
+.btn.primary{background:var(--accent);color:#04121f;border:none;font-weight:700}.btn.primary:hover{background:#33c5ef;color:#04121f}
+.btn.warn{border-color:#5a2b2b;color:var(--warn)}.btn.warn:hover{border-color:var(--warn)}
+.btn.big{font-size:14px;padding:12px 10px;font-weight:700;flex:1}
+.btn.sm{padding:4px 9px;font-size:11px}
+.kbd{font-size:10px;font-weight:400;opacity:.7;margin-left:6px}
+.row{display:flex;gap:8px;align-items:center}.row>.grow{flex:1}
+.btns{display:flex;gap:8px;margin-top:10px}
+.hint{font-size:11px;color:var(--dim);margin-top:8px;line-height:1.5}.hint b{color:var(--ink);font-weight:400}
+.mini{font-size:10px;color:var(--dim);margin-bottom:3px;display:block}
+.in{background:#0c1117;border:1px solid var(--line);color:var(--ink);padding:6px 8px;border-radius:6px;font-family:inherit;font-size:12px}
+.in:focus{outline:none;border-color:var(--accent2)}
+.sw{display:flex;align-items:center;gap:10px;cursor:pointer;user-select:none;font-size:12px}
+.sw input{display:none}
+.sw .tr{width:34px;height:18px;border-radius:9px;background:var(--line);position:relative;transition:.15s;flex:none}
+.sw .tr::after{content:"";position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:var(--dim);transition:.15s}
+.sw input:checked+.tr{background:var(--accent-deep)}.sw input:checked+.tr::after{left:18px;background:var(--accent)}
+.ok{color:var(--ok)}.warn{color:var(--amber)}.bad{color:var(--warn)}.sub{color:var(--dim);font-size:11.5px}
+.msg{font-size:12px;min-height:18px;margin-top:8px}
+.big-num{font-size:22px;font-weight:700;color:var(--ink)}.big-num small{font-size:12px;font-weight:400;color:var(--dim);margin-left:8px}
+.cams img{display:block;border-radius:8px;background:#05080c;border:1px solid var(--line)}
+.camlbl{font-size:10px;color:var(--dim);margin:4px 2px 0;letter-spacing:.5px}
+.hands{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+.hand{font-size:11px;padding:4px 9px;border-radius:7px;background:var(--panel2);border:1px solid var(--line)}
+.rec{display:inline-flex;align-items:center;gap:8px;font-weight:700;color:var(--warn)}
+.recdot{width:9px;height:9px;border-radius:50%;background:var(--warn);animation:blink 1s infinite}
+@keyframes blink{50%{opacity:.25}}
+input[type=file].in{width:100%}
+#epm{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;z-index:10}
+#epm .box{position:absolute;inset:24px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
+  display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+#epm .top{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2);
+  box-shadow:inset 3px 0 0 var(--accent)}
+#epm .top b{font-size:13px;color:var(--accent)}#epm .top .btn{margin-left:auto}
+#eplist{overflow-y:auto;border-right:1px solid var(--line)}
+.ep{padding:7px 12px;border-bottom:1px solid var(--line);cursor:pointer;font-size:12px;display:flex;gap:8px;align-items:baseline}
+.ep:hover{background:var(--panel2)}.ep.sel{background:var(--accent-tint)}
+.ep .t{margin-left:auto;color:var(--dim);font-size:10.5px}
+#epview{overflow-y:auto;padding:12px 14px}
+#epcams{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:8px}
+#epcams img{width:100%;background:#05080c;border-radius:6px;display:block;border:1px solid var(--line)}
+.ctlrow{display:flex;gap:10px;align-items:center;margin:10px 0}
+.ctlrow input[type=range]{flex:1;accent-color:var(--accent)}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+/* 낮은 화면 · 좁은 화면: 한 화면에 안 들어가면 페이지 스크롤 (카메라는 비율대로) */
+@media(max-width:1300px),(max-height:720px){
+  body{height:auto;min-height:100vh;overflow:auto}.grid{overflow:visible;flex:none}.col{overflow:visible}
+  .card.fill{flex:none}.camgrid{display:block}.camcell img{height:auto}.camrow{margin-top:8px}pre.log{max-height:240px}
+}
+@media(max-width:1300px){.grid{grid-template-columns:1fr 1fr}.col.cams{grid-column:1/-1}}
+@media(max-width:760px){.grid{grid-template-columns:1fr}.topbar .right{margin-left:0;width:100%}
+  #epm .box{inset:6px;grid-template-columns:1fr;grid-template-rows:auto 30vh minmax(0,1fr)}}
+</style></head>
+<body>
+<div class="topbar">
+  <span class="dot" id="livedot"></span>
+  <span class="logo">pitron<b>·collect</b></span>
+  <span style="color:var(--dim);font-size:11px">VR 수집 · 추론 · 50030</span>
+  <div class="dsbar">
+    <span class="mini" style="margin:0">데이터셋</span><input class="in" id="ds" size="16">
+    <label class="sw"><input type="checkbox" id="recon"><span class="tr"></span><span>수집 켬</span></label>
+  </div>
+  <div class="right">
+    <div class="chips">
+      <span class="chip" id="chip-arm">팔 <b>-</b></span>
+      <span class="chip" id="chip-xr">VR <b>-</b></span>
+      <span class="chip" id="chip-rec">녹화 <b>-</b></span>
+      <span class="chip" id="chip-tbl">테이블 <b>-</b></span>
+    </div>
+  </div>
+</div>
+
+<div class="grid">
+  <div class="col cams">
+    <div class="card fill">
+      <div class="card-h">Cameras <span class="tag">머리 · 손목</span></div>
+      <div class="card-b">
+        <div class="camgrid">
+          <div class="camcell"><img id="vhead" src="/video" alt="머리 카메라"><div class="camlbl">BODY · 머리 카메라</div></div>
+          <div class="camrow">
+            <div class="camcell"><img id="vwl" src="/video_wrist/wrist_left" alt="왼손 카메라"><div class="camlbl">WRIST_LEFT · 왼손</div></div>
+            <div class="camcell"><img id="vwr" src="/video_wrist/wrist_right" alt="오른손 카메라"><div class="camlbl">WRIST_RIGHT · 오른손</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <div class="card-h">Episodes <span class="tag" id="ds-tag">-</span></div>
+      <div class="card-b">
+        <div class="big-num" id="next">—</div>
+        <div class="hint" id="dsinfo"></div>
+        <button class="btn" id="epopen" style="width:100%;margin-top:10px">수집 데이터 보기 (에피소드별) ▸</button>
+      </div>
+    </div>
+
+    <div class="card" id="ctl">
+      <div class="card-h">VR 조작 <span class="tag" id="vr-tag">꺼짐</span></div>
+      <div class="card-b">
+        <div class="row">
+          <span class="mini" style="margin:0">관절 속도</span>
+          <select class="in" id="vel"><option>0.2</option><option selected>0.3</option><option>0.5</option></select>
+          <span class="sub">rad/s</span>
+          <label class="sw" style="margin-left:auto"><input type="checkbox" id="notable"><span class="tr"></span><span>테이블 검사 끔</span></label>
+        </div>
+        <div class="btns">
+          <button class="btn primary big" id="start">● 시작<span class="kbd">Space</span></button>
+          <button class="btn warn big" id="stop" disabled>■ 끝 → 준비 자세<span class="kbd">Space</span></button>
+        </div>
+        <div class="msg" id="xrmsg">꺼짐</div>
+        <div class="hands"><span class="hand" id="hr">오른손 —</span><span class="hand" id="hl">왼손 —</span></div>
+        <div id="recline" class="msg"></div>
+        <div class="row" style="margin-top:12px">
+          <span class="mini" style="margin:0">시작 자세</span><span id="rdy" class="grow">—</span>
+          <button class="btn sm" id="rdybtn">준비 자세로</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card alert" id="pend" style="display:none">
+      <div class="card-h">방금 에피소드 <span class="tag" style="color:var(--amber)">저장 / 버리기</span></div>
+      <div class="card-b">
+        <div id="pinfo" class="msg" style="margin-top:0"></div>
+        <div class="btns">
+          <button class="btn primary big" id="keep">저장<span class="kbd">S</span></button>
+          <button class="btn big" id="drop">버리기<span class="kbd">D</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card fill">
+      <div class="card-h">Log <span class="tag" id="log-tag">잡기 웹</span></div>
+      <div class="card-b"><pre class="log" id="log">—</pre></div>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="card">
+      <div class="card-h">Dataset → 학습 PC</div>
+      <div class="card-b">
+        <a id="dl" class="btn primary" href="#" style="display:block">⬇ 데이터셋 zip (저장한 성공 에피소드만)</a>
+        <div class="hint">받은 zip 을 학습 화면 (<b>:50100</b>, <b>./apps/trainer/start_trainer.sh</b> · <b>start_trainer_xpu.sh</b>) 에 올리면 됨</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Policy · 추론 <span class="tag" id="pol-tag">-</span></div>
+      <div class="card-b">
+        <span class="mini">model zip (학습 화면에서 받은 파일)</span>
+        <input class="in" type="file" id="mfile" accept=".zip">
+        <div class="row" style="margin-top:8px">
+          <span class="mini" style="margin:0">장치</span>
+          <select class="in" id="mdev"><option>GPU</option><option>CPU</option><option>NPU</option></select>
+          <button class="btn grow" id="mup">올리고 불러오기</button>
+        </div>
+        <div class="msg" id="minfo">불러온 모델 없음</div>
+        <div class="sub" id="mcheck"></div>
+        <label class="sw" style="margin-top:10px"><input type="checkbox" id="prepeat" checked><span class="tr"></span><span>반복 — 정상으로 끝나면 다음 회 자동 (2 초 뒤)</span></label>
+        <div class="btns">
+          <button class="btn primary big" id="pstart" disabled>▶ 정책 시작</button>
+          <button class="btn warn big" id="pstop" disabled>■ 정지</button>
+        </div>
+        <div class="msg" id="pstate"></div>
+      </div>
+    </div>
+
+    <div class="card fill">
+      <div class="card-h">Robot <span class="tag" id="robot-tag">-</span></div>
+      <div class="card-b"><div id="robot" style="font-size:12px;line-height:1.8">—</div>
+        <div class="hint" style="margin-top:auto">Space 시작 / 끝 · S 저장 · D 버리기 · 에피소드 보기 중에는 Space = 재생</div></div>
+    </div>
+  </div>
+</div>
+
+<div id="epm"><div class="box">
+  <div class="top"><b id="eptitle">에피소드</b><span class="sub" id="epsum"></span><button class="btn sm" id="epclose">닫기 (Esc)</button></div>
+  <div id="eplist"></div>
+  <div id="epview"><div class="sub">왼쪽에서 에피소드를 고르세요</div></div>
+</div></div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const post = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b || {}) });
+  const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.status); return j; };
+let st = null, ds = null, busy = false;
+const SIDE_KO = { right: "오른손", left: "왼손", both: "양손" };
+function chip(id, label, val, cls) { const c = $(id); c.className = "chip " + (cls || ""); c.innerHTML = `${label} <b>${val}</b>`; }
+
+async function recSet() {
+  try { await post("/api/rec", { enabled: $("recon").checked, name: $("ds").value.trim() }); refreshDs(); }
+  catch (e) { $("recon").checked = false; alert(e.message); }
+}
+$("recon").onchange = recSet;
+$("ds").onchange = () => { if ($("recon").checked) recSet(); else refreshDs(); };
+
+async function start() {
+  if (busy || !st || st.xr.active || st.rec.pending) return;
+  if (!$("recon").checked && !confirm("수집이 꺼져 있습니다 (녹화 안 됨). 그래도 시작할까요?")) return;
+  busy = true;
+  try { await post("/api/xr/start", { max_vel: +$("vel").value, no_table: $("notable").checked }); }
+  catch (e) { alert(e.message); } finally { busy = false; }
+}
+const returning = () => st && !st.xr.active && st.busy && st.phase === "running";    // [■ 끝] 뒤 자동 복귀 중
+async function stop() {
+  if (busy) return; busy = true;
+  try { await post(returning() ? "/api/stop" : "/api/xr/stop"); } catch (e) { alert(e.message); } finally { busy = false; }
+}
+async function decide(keep) {
+  if (busy || !st || !st.rec.pending) return;
+  busy = true;
+  try { await post("/api/rec/decide", { keep }); refreshDs(); } catch (e) { alert(e.message); } finally { busy = false; }
+}
+async function toReady() {
+  if (busy || !st || st.busy || st.xr.active || !st.ready) return;
+  const sides = ["right", "left"].filter(s => !st.ready[s].at);
+  if (!sides.length) return;
+  if (!confirm("준비 자세로 옮깁니다 (" + sides.map(s => s === "right" ? "오른팔" : "왼팔").join(" → ") + "). 주변을 확인했나요?")) return;
+  busy = true;
+  try {
+    for (const s of sides) {
+      await post("/api/pose", { side: s, which: "ready", confirm: true });
+      for (let i = 0; i < 200; i++) {                     // 그 팔이 끝날 때까지 (최대 60 초)
+        await new Promise(res => setTimeout(res, 300));
+        const j = await (await fetch("/api/state")).json();
+        if (!j.busy) { if (j.phase === "stopped") throw new Error("자세 이동 중 멈춤 — " + j.stage); break; }
+      }
+    }
+  } catch (e) { alert(e.message); } finally { busy = false; }
+}
+$("rdybtn").onclick = toReady;
+$("start").onclick = start; $("stop").onclick = stop;
+$("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
+document.addEventListener("keydown", e => {
+  if (epOpen) { epKey(e); return; }          // 에피소드 보기 중에는 VR 단축키 (Space = 시작) 안 받음
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
+  if (e.code === "Space") { e.preventDefault(); if (st && (st.xr.active || returning())) stop(); else start(); }
+  else if (e.key === "s" || e.key === "S" || e.key === "ㄴ") decide(true);
+  else if (e.key === "d" || e.key === "D" || e.key === "ㅇ") decide(false);
+});
+
+async function refreshDs() {
+  try {
+    const j = await (await fetch("/api/datasets")).json();
+    const name = $("ds").value.trim();
+    ds = (j.datasets || []).find(d => d.name === name) || null;
+    const cams = Object.entries(j.cameras_now || {}).map(([k, v]) => `${k} ${v.w}×${v.h}`).join(" · ");
+    $("dsinfo").innerHTML = (ds ? `전체 <b>${ds.episodes}</b> 개 (성공 ${ds.ok}) · ${ds.size_mb} MB` : "새 데이터셋 (아직 에피소드 없음)") + (cams ? `<br>카메라 ${cams}` : "");
+    $("ds-tag").textContent = name || "-";
+    render();
+  } catch (e) {}
+}
+
+function render() {
+  if (!st) return;
+  const nsaved = ds ? ds.episodes : 0;
+  $("next").innerHTML = st.rec.pending ? `#${nsaved + 1} <small class="warn">저장 / 버리기</small>`
+    : st.rec.active ? `#${nsaved + 1} <small class="bad">녹화 중</small>`
+    : `저장 ${nsaved} 개<small>다음 #${nsaved + 1}</small>`;
+  // 조작
+  const x = st.xr, r = st.rec;
+  $("start").disabled = x.active || !!r.pending || st.busy && !x.active;
+  const ret = returning();
+  $("stop").disabled = !x.active && !ret;
+  $("stop").firstChild.textContent = ret ? "■ 복귀 멈춤" : "■ 끝 → 준비 자세";
+  const rd = st.ready, ko = { right: "오른팔", left: "왼팔" };
+  if (rd) {
+    const allAt = rd.right.at && rd.left.at;
+    $("rdy").innerHTML = allAt ? '<span class="ok">✓ 양팔 준비 자세</span>'
+      : ["right", "left"].map(s => rd[s].at ? `${ko[s]} <span class="ok">✓</span>` : `${ko[s]} <span class="warn">${rd[s].dist_cm} cm</span>`).join(" · ");
+    $("rdybtn").disabled = allAt || x.active || st.busy || r.active;
+    if (!x.active && !r.pending && !allAt) $("start").disabled = true;
+  } else { $("rdy").innerHTML = '<span class="sub">팔 상태 없음</span>'; $("rdybtn").disabled = true; }
+  $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}`
+    : ret ? `<span class="warn">● ${st.stage}</span> <span class="sub">(녹화 중 · 멈추려면 Space)</span>`
+    : `<span class="sub">${x.msg}</span>` + (st.stage && /복귀/.test(st.stage) ? ` <span class="sub">· ${st.stage}</span>` : "");
+  $("vr-tag").textContent = x.active ? "조작 중" : ret ? "복귀 중" : "꺼짐";
+  const hand = (k, ko) => { const h = (x.hands || {})[k] || {}; const c = h.level === "stop" ? "bad" : h.level === "ok" ? "ok" : "sub";
+    return `${ko} <span class="${c}">${h.state || "—"}</span>${h.reason ? ` <span class="sub">${h.reason}</span>` : ""}`; };
+  $("hr").innerHTML = hand("right", "오른손"); $("hl").innerHTML = hand("left", "왼손");
+  $("recline").innerHTML = r.active ? `<span class="rec"><span class="recdot"></span>녹화 중 ${r.n} 프레임 (${(r.n / 30).toFixed(1)} 초) → ${r.name}</span>`
+    : r.on ? `<span class="sub">수집 켬 → ${r.name} ([● 시작] 부터 [■ 끝] 복귀까지 한 에피소드)</span>` : `<span class="warn">수집 꺼짐 — 녹화 안 됨</span>`;
+  // 결정 대기
+  $("pend").style.display = r.pending ? "" : "none";
+  if (r.pending) {
+    const p = r.pending, ex = p.extra || {};
+    $("pinfo").innerHTML = `${p.n} 프레임 · ${p.duration_s} 초 · 쓴 손 <b>${SIDE_KO[ex.side] || ex.side || "-"}</b>` +
+      (ex.why ? ` · <span class="sub">${ex.why}</span>` : "") + (ex.home ? ` · <span class="${/끝$/.test(ex.home) ? "sub" : "warn"}">${ex.home}</span>` : "") +
+      (ex.side === "both" ? `<br><span class="warn">양손이 다 움직임 (한 손만 쓰는 규칙이면 버리기)</span>` : "");
+  }
+  // 위 상태 칩 · 로봇
+  const armOk = st.arm === "ok";
+  chip("chip-arm", "팔", armOk ? "ok" : "없음", armOk ? "ok" : "err");
+  chip("chip-xr", "VR", x.active ? "조작 중" : ret ? "복귀 중" : "꺼짐", x.active || ret ? "busy" : "");
+  chip("chip-rec", "녹화", r.active ? `${(r.n / 30).toFixed(0)} 초` : r.pending ? "결정 대기" : r.on ? "켬" : "꺼짐", r.active ? "err" : r.pending ? "busy" : r.on ? "info" : "");
+  chip("chip-tbl", "테이블", st.table_z == null ? "안 잼" : `z ${st.table_z.toFixed(3)}`, st.table_z == null ? "busy" : "ok");
+  const g = st.gripper || {}; const gm = k => g[k] ? `${g[k].mm} mm` : "<span class='warn'>상태 없음</span>";
+  const tcp = st.tcp || {}; const tp = k => tcp[k] ? tcp[k].map(v => v.toFixed(2)).join(", ") : "-";
+  const rr = st.ready || {}; const rdy = k => rr[k] ? (rr[k].at ? "<span class='ok'>준비 자세</span>" : `준비 자세에서 ${rr[k].dist_cm} cm`) : "-";
+  $("robot").innerHTML =
+    `<span class="mini" style="display:inline">팔</span> ${armOk ? "<span class='ok'>ok</span>" : `<span class='bad'>${st.arm}</span>`} · 단계 ${st.stage || st.phase || "-"}<br>` +
+    `<span class="mini" style="display:inline">그리퍼</span> 왼 ${gm("left")} · 오른 ${gm("right")}<br>` +
+    `<span class="mini" style="display:inline">집게 위치</span> 왼 [${tp("left")}] · 오른 [${tp("right")}] m<br>` +
+    `<span class="mini" style="display:inline">팔 자세</span> 왼 ${rdy("left")} · 오른 ${rdy("right")}<br>` +
+    `<span class="mini" style="display:inline">테이블</span> ${st.table_z == null ? "<span class='warn'>안 잼</span>" : `z ${st.table_z.toFixed(3)} (점 ${st.table_n || "-"})`}` +
+    (st.cam_pitch ? `<br><span class="mini" style="display:inline">카메라 숙임 차이</span> ${st.cam_pitch.diff > 0 ? "+" : ""}${st.cam_pitch.diff.toFixed(2)}°` : "");
+  $("robot-tag").textContent = armOk ? "연결" : "끊김";
+  const lg = $("log"), atEnd = lg.scrollTop + lg.clientHeight >= lg.scrollHeight - 4;
+  const txt = (st.log || []).join("\n") || "—";
+  if (lg.textContent !== txt) { lg.textContent = txt; if (atEnd) lg.scrollTop = lg.scrollHeight; }
+}
+
+$("mup").onclick = async () => {
+  const f = $("mfile").files[0];
+  if (!f) { alert("모델 zip 을 고르세요"); return; }
+  $("minfo").textContent = "올리는 중…";
+  try {
+    const r = await fetch("/api/model/upload?filename=" + encodeURIComponent(f.name), { method: "POST", body: f });
+    const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
+    $("minfo").textContent = `불러오는 중 (${j.name}, 컴파일 몇 초)…`;
+    await post("/api/model/load", { name: j.name, device: $("mdev").value });
+  } catch (e) { alert(e.message); $("minfo").textContent = "실패: " + e.message; }
+};
+$("pstart").onclick = async () => {
+  const rep = $("prepeat").checked;
+  if (!confirm("실제 팔이 정책대로 움직입니다. 주변을 비우고 E-stop 을 손에 두세요." +
+               (rep ? "\n반복 켬: 한 회가 정상으로 끝나면 2 초 뒤 다음 회를 자동으로 시작합니다 ([■ 정지] 로 멈춤)." : "") + "\n시작할까요?")) return;
+  try { await post("/api/policy/start", { repeat: rep }); } catch (e) { alert(e.message); }
+};
+$("pstop").onclick = () => post("/api/policy/stop").catch(e => alert(e.message));
+
+function renderModel() {
+  const p = st.policy || {}, m = p.loaded;
+  $("minfo").innerHTML = m ? `<b>${m.name}</b><br><span class="sub">${m.device} · ${SIDE_KO[m.side] || m.side} · 추론 ${m.infer_ms} ms · 에피소드 ${m.episodes ?? "-"} · 스텝 ${m.steps ?? "-"}</span>`
+                           : ($("minfo").textContent.startsWith("올리는") || $("minfo").textContent.startsWith("불러오는") ? $("minfo").textContent : "불러온 모델 없음");
+  const bad = p.check || [];
+  $("mcheck").innerHTML = m && !p.running ? (bad.length ? bad.map(b => `<div class="warn">· ${b}</div>`).join("") : '<span class="ok">시작 조건 OK</span>') : "";
+  const waitNext = !p.running && p.waiting_next && /다음 회/.test(p.phase || "");
+  $("pstart").disabled = !m || p.running || waitNext || bad.length > 0;
+  $("pstop").disabled = !p.running && !waitNext;
+  const runNo = p.repeat ? `${p.run_no} 회째 · ` : "";
+  $("pstate").innerHTML = p.running ? `<span class="ok">● 실행 중</span> ${runNo}${p.phase || ""} · ${p.step} 스텝 · 추론 ${p.infer_ms ?? "-"} ms`
+                        : waitNext ? `<span class="warn">● ${p.phase}</span> <span class="sub">— 끝: ${p.why_end}</span>`
+                        : (p.why_end ? `<span class="sub">끝: ${p.why_end}</span>` : "");
+  $("pol-tag").textContent = p.running ? "실행 중" : m ? "준비" : "-";
+  const name = $("ds").value.trim();
+  $("dl").href = name ? `/api/dataset/zip?name=${encodeURIComponent(name)}&only_ok=true` : "#";
+  $("dl").classList.toggle("off", !(ds && ds.ok > 0) || !!(st.rec && st.rec.active));
+}
+
+// ---------------- 에피소드 보기 ----------------
+let epOpen = false, epName = "", epCur = null, epI = 0, epPlay = null, epList = [];
+const SIDE_SHORT = { right: "오른손", left: "왼손", both: "양손", none: "안 씀" };
+const hhmm = s => (s || "").replace(/^\d{4}-(\d\d)-(\d\d)T(\d\d:\d\d).*$/, "$1/$2 $3");
+$("epopen").onclick = () => openEp($("ds").value.trim());
+$("epclose").onclick = closeEp;
+$("epm").onclick = e => { if (e.target.id === "epm") closeEp(); };
+
+async function openEp(name) {
+  if (!name) { alert("데이터셋 이름을 넣으세요"); return; }
+  epName = name; epOpen = true; $("epm").style.display = "block";
+  $("eptitle").textContent = `수집 데이터 — ${name}`;
+  await loadEpList();
+}
+function closeEp() { epOpen = false; stopPlay(); $("epm").style.display = "none"; refreshDs(); }
+
+async function loadEpList() {
+  try {
+    const j = await (await fetch(`/api/dataset/episodes?name=${encodeURIComponent(epName)}`)).json();
+    epList = j.episodes || [];
+  } catch (e) { epList = []; }
+  const nok = epList.filter(x => x.ok).length;
+  const nr = epList.filter(x => x.side === "right").length, nl = epList.filter(x => x.side === "left").length;
+  $("epsum").textContent = `${epList.length} 개 (성공 ${nok}) · 오른손 ${nr} · 왼손 ${nl}`;
+  $("eplist").innerHTML = epList.length ? epList.map(x =>
+    `<div class="ep${epCur && epCur.ep === x.ep ? " sel" : ""}" data-ep="${x.ep}">
+       <span class="${x.ok ? "ok" : "bad"}">${x.ok ? "✓" : "✗"}</span><b>${x.ep.replace(/^ep_0*/, "#")}</b>
+       <span>${SIDE_SHORT[x.side] || x.side || "-"}</span><span class="sub">${x.duration_s ?? "-"} 초</span>
+       <span class="t">${hhmm(x.created)}</span></div>`).join("")
+    : '<div class="sub" style="padding:12px">저장된 에피소드 없음</div>';
+  document.querySelectorAll("#eplist .ep").forEach(el => el.onclick = () => showEp(el.dataset.ep));
+}
+
+async function showEp(ep) {
+  stopPlay();
+  $("epview").innerHTML = '<div class="sub">불러오는 중…</div>';
+  try {
+    const r = await fetch(`/api/dataset/episode?name=${encodeURIComponent(epName)}&ep=${ep}`);
+    const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
+    epCur = j; epI = 0;
+  } catch (e) { $("epview").innerHTML = `<div class="bad">못 불러옴: ${e.message}</div>`; return; }
+  document.querySelectorAll("#eplist .ep").forEach(el => el.classList.toggle("sel", el.dataset.ep === ep));
+  const m = epCur.meta;
+  $("epview").innerHTML = `
+    <div style="margin-bottom:8px"><b>${ep}</b> · <span class="${m.ok ? "ok" : "bad"}">${m.ok ? "성공" : "실패"}</span>
+      · 쓴 손 <b>${SIDE_SHORT[m.side] || m.side || "-"}</b> · ${epCur.n} 프레임 · ${m.duration_s} 초 · ${hhmm(m.created)}
+      ${m.why ? `<span class="sub"> · 끝난 이유: ${m.why}</span>` : ""}</div>
+    <div id="epcams">${epCur.cameras.map(c => `<div><img data-cam="${c}" alt="${c}"><div class="camlbl">${c.toUpperCase()}</div></div>`).join("")}</div>
+    <div class="ctlrow">
+      <button class="btn primary" id="epplay">▶ 재생</button>
+      <input type="range" id="epslider" min="0" max="${epCur.n - 1}" value="0">
+      <span id="eppos" class="sub" style="min-width:130px"></span>
+    </div>
+    <div class="sub" id="epgrip"></div>
+    <div class="hint">Space 재생/멈춤 · ← → 한 프레임 · Shift+← → 1 초 · Esc 닫기</div>
+    <div class="btns" style="margin-top:16px"><button class="btn warn" id="epdel">이 에피소드 지우기</button></div>`;
+  $("epplay").onclick = togglePlay;
+  $("epslider").oninput = e => { stopPlay(); setFrame(+e.target.value); };
+  $("epdel").onclick = delEp;
+  setFrame(0);
+}
+
+function setFrame(i) {
+  if (!epCur) return;
+  epI = Math.max(0, Math.min(epCur.n - 1, i | 0));
+  const q = `name=${encodeURIComponent(epName)}&ep=${epCur.ep}&i=${epI}`;
+  document.querySelectorAll("#epcams img").forEach(img => { img.src = `/api/dataset/frame?${q}&cam=${img.dataset.cam}`; });
+  $("epslider").value = epI;
+  $("eppos").textContent = `${epI + 1} / ${epCur.n} · ${epCur.t[epI].toFixed(1)} 초`;
+  const g = epCur.grip_q;
+  $("epgrip").textContent = `그리퍼 q (실측) — 왼 ${g.left[epI].toFixed(2)} · 오른 ${g.right[epI].toFixed(2)} rad`;
+}
+function togglePlay() { if (epPlay) stopPlay(); else startPlay(); }
+function startPlay() {
+  if (!epCur) return;
+  if (epI >= epCur.n - 1) setFrame(0);
+  let t0 = performance.now() - epCur.t[epI] * 1000;
+  $("epplay").textContent = "⏸ 멈춤";
+  const tick = () => {
+    if (!epPlay) return;
+    const imgs = [...document.querySelectorAll("#epcams img")];
+    if (imgs.every(im => im.complete)) {           // 앞 프레임 다 받은 뒤에 다음 (느린 PC 에서 밀리지 않게 — 시간 기준으로 건너뜀)
+      const tt = (performance.now() - t0) / 1000;
+      let j = epI; while (j < epCur.n - 1 && epCur.t[j + 1] <= tt) j++;
+      if (j !== epI) setFrame(j);
+      if (epI >= epCur.n - 1) { stopPlay(); return; }
+    }
+    epPlay = requestAnimationFrame(tick);
+  };
+  epPlay = requestAnimationFrame(tick);
+}
+function stopPlay() { if (epPlay) cancelAnimationFrame(epPlay); epPlay = null; const b = $("epplay"); if (b) b.textContent = "▶ 재생"; }
+function epKey(e) {
+  if (e.key === "Escape") { closeEp(); return; }
+  if (!epCur || e.target.tagName === "INPUT" && e.target.type !== "range") return;
+  if (e.code === "Space") { e.preventDefault(); togglePlay(); }
+  else if (e.key === "ArrowRight") { e.preventDefault(); stopPlay(); setFrame(epI + (e.shiftKey ? 30 : 1)); }
+  else if (e.key === "ArrowLeft") { e.preventDefault(); stopPlay(); setFrame(epI - (e.shiftKey ? 30 : 1)); }
+}
+async function delEp() {
+  if (!epCur || !confirm(`${epCur.ep} 를 지울까요? (되돌릴 수 없음)`)) return;
+  try { await post("/api/dataset/episode/delete", { name: epName, ep: epCur.ep }); }
+  catch (e) { alert(e.message); return; }
+  stopPlay(); epCur = null;
+  $("epview").innerHTML = '<div class="sub">지웠습니다. 왼쪽에서 다른 에피소드를 고르세요</div>';
+  loadEpList();
+}
+
+async function poll() {
+  try {
+    st = await (await fetch("/api/state")).json();
+    if ($("ds").value === "" && st.rec.name) { $("ds").value = st.rec.name; refreshDs(); }
+    $("recon").checked = !!st.rec.on;
+    if ($("notable").dataset.init !== "1" && st.table_z == null) { $("notable").checked = true; }
+    $("notable").dataset.init = "1";
+    $("livedot").className = "dot live";
+    render(); renderModel();
+  } catch (e) { $("livedot").className = "dot err"; $("xrmsg").innerHTML = '<span class="bad">잡기 웹 응답 없음</span>'; }
+  setTimeout(poll, 300);
+}
+poll();
+setInterval(refreshDs, 3000);
+</script>
+</body>
+</html>
