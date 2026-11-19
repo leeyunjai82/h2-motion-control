@@ -32,10 +32,11 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정이면 종료
+from pitron import ports  # noqa: E402
 
 import numpy as np
 
-ARM_SERVER = "http://localhost:50022"
+ARM_SERVER = ports.url("arm_server")
 J = robot_env.JOINTS
 ARM = [int(s) for s in J["arm"]]
 CX, CY, CZ, CP = robot_env.CAMERA_X, robot_env.CAMERA_Y, robot_env.CAMERA_Z, robot_env.CAMERA_PITCH

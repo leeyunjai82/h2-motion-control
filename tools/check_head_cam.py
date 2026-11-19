@@ -51,6 +51,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.drivers.camera.head_cam import PC1, RGB_PORTS, DepthRx, RgbRx, my_ip, web_urls   # noqa: E402
+from pitron import ports  # noqa: E402
 
 WIN = "H2 head camera (q quit, s save, click = depth)"
 
@@ -345,7 +346,7 @@ def main():
 
     # 화면 없는데 OpenCV(Qt) 창을 열면 프로세스가 강제 종료됨 → 미리 판단해서 웹으로
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")) or sys.platform != "linux"
-    web_port = a.web if a.web is not None else (None if has_display else 50014)
+    web_port = a.web if a.web is not None else (None if has_display else ports.PORTS["head_cam_check"])
 
     dep_rx = None
     if not a.no_depth:

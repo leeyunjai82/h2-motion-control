@@ -29,7 +29,7 @@ import os as _os, sys as _sys  # noqa: E401
 _ROOT = _os.path.abspath(_os.path.join(HERE, "..", ".."))  # 저장소 루트 (pitron)
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
-from pitron import paths  # noqa: E402 — 표준 라이브러리만
+from pitron import paths, ports  # noqa: E402 — 표준 라이브러리만
 REPO = os.path.dirname(os.path.dirname(HERE))
 PAGE = os.path.join(HERE, "act_viewer.html")
 THREE = os.path.join(REPO, "web", "vendor", "three.min.js")
@@ -136,6 +136,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(PAGE, "text/html; charset=utf-8")
             if p == "/vendor/three.min.js":
                 return self._file(THREE, "application/javascript")
+            if p == "/web/robot3d.js":
+                return self._file(os.path.join(paths.WEB_DIR, "robot3d.js"), "application/javascript")
             if p == "/api/robot":
                 return self._json(robot_info())
             if p == "/api/files":
@@ -164,7 +166,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser(description="ACT 데이터셋 · 모델 보기")
     ap.add_argument("--data", default=Handler.data_dir, help="zip 을 둔 폴더 (기본 data/viewer)")
-    ap.add_argument("--port", type=int, default=8800)
+    ap.add_argument("--port", type=int, default=ports.PORTS["act_viewer"])
     ap.add_argument("--host", default="127.0.0.1", help="다른 PC 에서 보려면 0.0.0.0")
     ap.add_argument("--no-browser", action="store_true")
     a = ap.parse_args()

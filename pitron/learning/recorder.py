@@ -24,13 +24,14 @@ import cv2
 import numpy as np
 
 from pitron import paths
+from pitron.learning import formats
 
-EP_FORMAT = "h2-gripper-episodes-v1"
-FPS = 30.0
+EP_FORMAT = formats.DATASET_FORMAT
+FPS = formats.FPS
 JPEG_Q = 90
 DATA_DIR = paths.data_dir("datasets", legacy="gripper/data")   # data/datasets (git 제외)
-NAME_RE = re.compile(r"^[A-Za-z0-9_\-]{1,40}$")
-EP_RE = re.compile(r"^ep_\d{6}$")
+NAME_RE = formats.DATASET_NAME_RE
+EP_RE = formats.EPISODE_RE
 
 
 # ---------------- 손목 카메라 (USB UVC, OpenCV) ----------------

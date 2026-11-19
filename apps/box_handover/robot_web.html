@@ -38,7 +38,7 @@
   2.9 - Wrist RPY 기본 pitch 30 (robot.yaml grab.wrist_rpy_deg), 페이지를 열면 서버의 지금 손목 값으로 채움
   2.8 - 위 칩에 이 PC 의 CPU / GPU / NPU 사용률 (robot_server /hw, 1초). 카드 머리에 실제 실행 장치 배지
         (Camera View = detect_box, Head Vision = 왼눈 L / 오른눈 R — OpenVINO EXECUTION_DEVICES, AUTO 로 바뀐 것도 실제 장치로)
-  2.7 - 우측 위 Head Vision 카드: 머리 카메라(head_track :50013)가 인식한 것만 잘라 한 줄 (왼눈 얼굴·사람, 오른눈 사물).
+  2.7 - 우측 위 Head Vision 카드: 머리 카메라(head_track :__PORT_HEAD_TRACK__)가 인식한 것만 잘라 한 줄 (왼눈 얼굴·사람, 오른눈 사물).
         head_track 이 없으면(G1 등) 카드 숨김. Robot View 는 남는 높이로 줄어듦
   2.6 - AI 오버레이에 박스 추정 방식 비교(기울기, L/R·중심 차이, 높이)
   2.5 - 한/EN 전환 버튼 (i18n.js), 로봇 뷰 iframe 에 언어 전달
@@ -300,7 +300,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
 .segbtn{font:inherit;font-size:9px;letter-spacing:1px;padding:1px 6px;border-radius:4px;border:1px solid var(--line);background:transparent;color:var(--dim);cursor:pointer}
 .segbtn.on{color:var(--accent);border-color:var(--accent)}
 
-/* head vision strip (head_track :50013) — 인식된 것만 한 줄 */
+/* head vision strip (head_track :__PORT_HEAD_TRACK__) — 인식된 것만 한 줄 */
 .vision-b{padding:6px 8px;overflow-x:auto;overflow-y:hidden}
 .vision-strip{height:90px;width:auto;max-width:none;display:block;border-radius:6px}
 .vision-full{width:100%;height:auto;max-height:200px;object-fit:contain;display:block;border-radius:6px}   /* 두 눈 전체 (/pair) */
@@ -426,7 +426,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
             <span id="auto-lbl" style="color:var(--dim);white-space:nowrap">Auto Grab : OFF</span>
           </label>
           <span class="hint dev-only" style="white-space:nowrap">
-            <a id="link-box" href="#" target="_blank" style="color:var(--accent2)" title="Box 인식">:50010</a>
+            <a id="link-box" href="#" target="_blank" style="color:var(--accent2)" title="Box 인식">:__PORT_DETECT_BOX__</a>
           </span>
         </div>
       </div>
@@ -563,22 +563,22 @@ function logEv(msg,cls){
   if(atEnd)el.scrollTop=el.scrollHeight;
 }
 let curMode='none';
-document.getElementById('link-dash').href=`http://${host}:50003/dashboard`;
-document.getElementById('link-box').href=`http://${host}:50010/`;
+document.getElementById('link-dash').href=`http://${host}:__PORT_DASHBOARD__/dashboard`;
+document.getElementById('link-box').href=`http://${host}:__PORT_DETECT_BOX__/`;
 // robot-only 3D 뷰 (50003)
 // 언어는 포트가 달라 localStorage 공유가 안 되므로 ?lang= 로 넘기고, 전환 시엔 i18n.js 가 postMessage
 const LANG=()=>(window.G1I18N&&G1I18N.lang)||'ko';
-document.getElementById('robot-frame').src=`http://${host}:50003/robot-only?embed=1&lang=${LANG()}`;
+document.getElementById('robot-frame').src=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${LANG()}`;
 window.addEventListener('g1lang',e=>{
-  document.getElementById('link-dash').href=`http://${host}:50003/dashboard?lang=${e.detail}`;
-  document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only?lang=${e.detail}`;});
-document.getElementById('link-robotonly').href=`http://${host}:50003/robot-only`;
+  document.getElementById('link-dash').href=`http://${host}:__PORT_DASHBOARD__/dashboard?lang=${e.detail}`;
+  document.getElementById('link-robotonly').href=`http://${host}:__PORT_DASHBOARD__/robot-only?lang=${e.detail}`;});
+document.getElementById('link-robotonly').href=`http://${host}:__PORT_DASHBOARD__/robot-only`;
 
-// 머리 카메라 (head_track :50013, H2). 기본 = 두 눈 전체 화면 작게 (/pair), CROP = 인식된 것만 잘라 한 줄 (/strip).
+// 머리 카메라 (head_track :__PORT_HEAD_TRACK__, H2). 기본 = 두 눈 전체 화면 작게 (/pair), CROP = 인식된 것만 잘라 한 줄 (/strip).
 // 10초마다 /strip.jpg 로 살아 있는지 보고, 없으면 카드 숨김 (G1 등)
 (function(){
   const card=document.getElementById('card-vision'), img=document.getElementById('vision-strip');
-  const base=`http://${host}:50013`;
+  const base=`http://${host}:__PORT_HEAD_TRACK__`;
   document.getElementById('link-vision').href=`${base}/`;
   let live=false, crop=false, pairOk=true, shown='';
   try{crop=localStorage.getItem('hv_crop')==='1';}catch(e){}
@@ -688,7 +688,7 @@ function applyMode(m){
   // 모드 바뀌면 이전 자동 끄고 체크 초기화
   const chk=document.getElementById('auto-chk');
   if(curMode!==m && curMode!=='none' && chk.checked){
-    fetch(`http://${host}:50010/set_auto_mode?enabled=false`).catch(()=>{});
+    fetch(`http://${host}:__PORT_DETECT_BOX__/set_auto_mode?enabled=false`).catch(()=>{});
   }
   if(curMode!==m){chk.checked=false;
     document.getElementById('auto-lbl').textContent='Auto Grab : OFF';
@@ -704,7 +704,7 @@ function applyMode(m){
 function updateFeed(m){
   const img=document.getElementById('detect-feed'),none=document.getElementById('feed-none'),
     tag=document.getElementById('feed-tag'),badge=document.getElementById('cam-badge');
-  const url={box:`http://${host}:50010/video_feed`}[m];
+  const url={box:`http://${host}:__PORT_DETECT_BOX__/video_feed`}[m];
   if(url){img.src=url+'?t='+Date.now();img.style.display='block';none.style.display='none';
     tag.textContent=m.toUpperCase();badge.style.display='';
     document.getElementById('grab-msg').textContent=m.toUpperCase()+' mode · detecting';}
@@ -724,7 +724,7 @@ function toggleAuto(){
     lbl.textContent='Auto Grab : OFF';lbl.style.color='var(--dim)';
     return;
   }
-  fetch(`http://${host}:50010/set_auto_mode?enabled=${on}`).then(()=>{
+  fetch(`http://${host}:__PORT_DETECT_BOX__/set_auto_mode?enabled=${on}`).then(()=>{
     lbl.textContent='Auto Grab : '+(on?'ON':'OFF');
     lbl.style.color=on?'var(--accent)':'var(--dim)';
     toast('Auto '+(on?'ON':'OFF'));
@@ -850,7 +850,7 @@ pollStatus();
 function pollCoord(){
   const co=document.getElementById('coord');
   if(curMode==='none'){DET=null;co.textContent='';devBadges('dev-cam',[]);return;}
-  fetch(`http://${host}:50010/status`).then(r=>r.json()).then(d=>{
+  fetch(`http://${host}:__PORT_DETECT_BOX__/status`).then(r=>r.json()).then(d=>{
     DET=d;
     if(d.found&&d.torso){
       const x=(d.torso.x*100).toFixed(1),y=(d.torso.y*100).toFixed(1),z=(d.torso.z*100).toFixed(1);
@@ -870,7 +870,7 @@ setInterval(pollCoord, 400);
 let segOn=false;
 function setSeg(v){segOn=!!v;document.getElementById('seg-btn').classList.toggle('on',segOn);}
 function toggleSeg(){
-  fetch(`http://${host}:50010/set_overlay?seg=${!segOn}`).then(r=>r.json())
+  fetch(`http://${host}:__PORT_DETECT_BOX__/set_overlay?seg=${!segOn}`).then(r=>r.json())
     .then(d=>{setSeg(d.show_seg);toast(d.show_seg?'SEG 표시 켬':'SEG 끔 — 파지점 L/T/R 만');})
     .catch(()=>toast('detect server not reachable'));}
 
@@ -977,7 +977,7 @@ function kpiAdd(h){
 }
 function pollHuman(){
   if(document.getElementById('card-vision').style.display==='none'){HUM=[];document.getElementById('human').innerHTML='';return;}
-  fetch(`http://${host}:50013/detections`).then(r=>r.json()).then(d=>{
+  fetch(`http://${host}:__PORT_HEAD_TRACK__/detections`).then(r=>r.json()).then(d=>{
     HUM=Array.isArray(d)?d:[];
     const tags=HUM.map(h=>{
       const who=h.age!=null?` · ${h.male==null?'':(h.male>=0.5?'M ':'F ')}${Math.round(h.age)}`:'';

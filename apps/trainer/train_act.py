@@ -36,11 +36,12 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.learning.act_model import ACT, ACTConfig, ACTExport, ACTExportMulti, IMAGENET_MEAN, IMAGENET_STD   # noqa: E402
+from pitron.learning import formats   # noqa: E402
 from pitron.learning.dataset import (EpisodeDataset, GRIP_FORMAT, GripperEpisodeDataset, compute_stats,          # noqa: E402
                      compute_stats_gripper, dataset_format, load_episodes, load_gripper_episodes)
 
-MODEL_FORMAT = "h2-act-v1"
-MODEL_FORMAT_GRIP = "h2-gripper-act-v1"
+MODEL_FORMAT = formats.MODEL_FORMAT_BOX
+MODEL_FORMAT_GRIP = formats.MODEL_FORMAT
 DEFAULT_TRAIN = {
     "name": "", "steps": 40000, "batch_size": 8, "lr": 1e-5, "lr_backbone": 1e-5, "weight_decay": 1e-4,
     "grad_clip": 10.0, "image": "auto", "chunk_size": 100, "kl_weight": 10.0, "dim_model": 512,
@@ -183,7 +184,7 @@ def export(out_dir, ckpt_path, emit_progress=True):
     name = meta["name"]
     zpath = os.path.join(out_dir, f"{name}.zip")
     with zipfile.ZipFile(zpath, "w", zipfile.ZIP_DEFLATED) as z:
-        for fn in ("policy.xml", "policy.bin", "meta.json"):
+        for fn in formats.MODEL_FILES:
             z.write(os.path.join(mdir, fn), f"{name}/{fn}")
     log(f"model zip → {zpath} ({os.path.getsize(zpath) / 1e6:.1f} MB)")
     if emit_progress:

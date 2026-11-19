@@ -54,6 +54,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료 (카메라 장착값이 로봇별)
+from pitron import ports
 import io
 import time
 import json
@@ -77,10 +78,10 @@ from pitron.core.hw_usage import yolo_devices
 # ==========================================
 # 설정
 # ==========================================
-PORT          = 50010
-COLOR_URL     = os.environ.get("RS_COLOR_URL", "http://localhost:50001/video_feed")
-DEPTH_URL     = os.environ.get("RS_DEPTH_URL", "http://localhost:50001/depth_raw")
-ROBOT_SERVER  = os.environ.get("ROBOT_SERVER", "http://localhost:50000")
+PORT          = ports.PORTS["detect_box"]
+COLOR_URL     = os.environ.get("RS_COLOR_URL", ports.url("rs_stream", "/video_feed"))
+DEPTH_URL     = os.environ.get("RS_DEPTH_URL", ports.url("rs_stream", "/depth_raw"))
+ROBOT_SERVER  = os.environ.get("ROBOT_SERVER", ports.url("robot_server"))
 
 # 카메라 K (robot.yaml camera.intrinsics)
 CAM_FX, CAM_FY, CAM_PPX, CAM_PPY = robot_env.CAMERA_K   # robot.yaml camera.intrinsics (카메라마다 다름)
@@ -655,7 +656,7 @@ async def set_overlay(seg: bool = None):
 @app.get("/", response_class=HTMLResponse)
 async def index():
     a = auto_mode
-    return (HTML_PAGE.replace("__AX_MIN__", f"{a['x_min']:.2f}").replace("__AX_MAX__", f"{a['x_max']:.2f}")
+    return ports.fill(HTML_PAGE.replace("__AX_MIN__", f"{a['x_min']:.2f}").replace("__AX_MAX__", f"{a['x_max']:.2f}")
             .replace("__AY_MIN__", f"{a['y_min']:.2f}").replace("__AY_MAX__", f"{a['y_max']:.2f}")
             .replace("__AZ_MIN__", f"{a['z_min']:.2f}").replace("__AZ_MAX__", f"{a['z_max']:.2f}")
             .replace("__DWELL__", f"{a['dwell_sec']:.1f}"))
@@ -678,7 +679,7 @@ button{background:#FF9800;border:none;color:#000;padding:8px;border-radius:5px;c
 .bar{height:6px;background:#333;border-radius:3px;overflow:hidden;margin-top:8px}
 .bar-fill{height:100%;width:0;background:#FF9800;transition:width .15s}
 </style></head><body>
-<h1>📦 Detect Box (50010)</h1>
+<h1>📦 Detect Box (__PORT_DETECT_BOX__)</h1>
 <div id="wrap">
   <img src="/video_feed" style="width:100%;max-width:848px;height:auto">
   <div class="panel">

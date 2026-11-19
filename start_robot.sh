@@ -6,6 +6,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT/config/ports.env"   # 포트 (한 곳)
 # robot.yaml 없음 / enabled: false 면 여기서 거부 (이전 서버 정리보다 먼저)
 source "$ROOT/robot_env.sh" || exit 1
 require_robot
@@ -132,27 +133,27 @@ trap cleanup INT TERM
 #   ※ 로그: 하루 단위 파일(_$DAY) + append(>>) + 줄별 타임스탬프
 #     $!는 python PID 유지(graceful 종료 보존)
 # ==========================================
-echo "[start] rs_stream     (50001) ..."
+echo "[start] rs_stream     (${PORT_RS_STREAM}) ..."
 python -u services/camera/rs_stream.py          > >(stamp >> "$LOG_DIR/rs_stream_$DAY.log")     2>&1 &
 PIDS+=($!); NAMES+=("rs_stream")
 sleep 2
 
-echo "[start] arm_server    (50022) ..."
+echo "[start] arm_server    (${PORT_ARM_SERVER}) ..."
 python -u services/arm/arm_server.py         > >(stamp >> "$LOG_DIR/arm_server_$DAY.log")    2>&1 &
 PIDS+=($!); NAMES+=("arm_server")
 sleep 4
 
-echo "[start] robot_server  (50000) ..."
+echo "[start] robot_server  (${PORT_ROBOT_SERVER}) ..."
 python -u apps/box_handover/robot_server.py       > >(stamp >> "$LOG_DIR/robot_server_$DAY.log")  2>&1 &
 PIDS+=($!); NAMES+=("robot_server")
 sleep 3
 
-echo "[start] dashboard     (50003) ..."
+echo "[start] dashboard     (${PORT_DASHBOARD}) ..."
 python -u services/dashboard/dashboard.py          > >(stamp >> "$LOG_DIR/dashboard_$DAY.log")     2>&1 &
 PIDS+=($!); NAMES+=("dashboard")
 sleep 2
 
-echo "[start] detect_box    (50010) ..."
+echo "[start] detect_box    (${PORT_DETECT_BOX}) ..."
 python -u apps/box_handover/detect_box.py    > >(stamp >> "$LOG_DIR/detect_box_$DAY.log")    2>&1 &
 PIDS+=($!); NAMES+=("detect_box")
 sleep 1
@@ -162,7 +163,7 @@ if [ "$HEADCAM" = "1" ]; then
   echo "[start] head_cam_on         ... 머리 카메라 로봇 서비스 준비 (로그 head_track_$DAY.log)"
   python -u tools/head_cam_on.py > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
   PIDS+=($!); NAMES+=("head_cam_on")
-  echo "[start] head_track    (50013) ... 머리 카메라 왼눈 얼굴·나이성별 / 오른눈 행동 (보기만)"
+  echo "[start] head_track    (${PORT_HEAD_TRACK}) ... 머리 카메라 왼눈 얼굴·나이성별 / 오른눈 행동 (보기만)"
   python -u services/head_vision/head_track.py       > >(stamp >> "$LOG_DIR/head_track_$DAY.log")    2>&1 &
   PIDS+=($!); NAMES+=("head_track")
   sleep 1
@@ -170,18 +171,18 @@ fi
 
 cat <<EOF2
   ✓ H2 서버 실행 중
-    - arm_server    : http://localhost:50022/status    (팔 전용 — arm_sdk 단독 점유)
-    - Robot control : http://localhost:50000/          (제어 + 잡기)
-    - Dashboard     : http://localhost:50003/dashboard (3D viewer + video + depth)
-    - rs_stream     : http://localhost:50001/video_feed
-    - detect_box    : http://localhost:50010/          (박스 인식)
-    - head_track    : http://localhost:50013/          (머리 카메라 인식 — 로봇 서비스는 head_cam_on 이 준비, 로그 head_track_$DAY.log)
+    - arm_server    : http://localhost:${PORT_ARM_SERVER}/status    (팔 전용 — arm_sdk 단독 점유)
+    - Robot control : http://localhost:${PORT_ROBOT_SERVER}/          (제어 + 잡기)
+    - Dashboard     : http://localhost:${PORT_DASHBOARD}/dashboard (3D viewer + video + depth)
+    - rs_stream     : http://localhost:${PORT_RS_STREAM}/video_feed
+    - detect_box    : http://localhost:${PORT_DETECT_BOX}/          (박스 인식)
+    - head_track    : http://localhost:${PORT_HEAD_TRACK}/          (머리 카메라 인식 — 로봇 서비스는 head_cam_on 이 준비, 로그 head_track_$DAY.log)
 
   사용:
-    1) http://localhost:50000/ 접속 (제어)
+    1) http://localhost:${PORT_ROBOT_SERVER}/ 접속 (제어)
     2) Grab Mode → Box, Handover → Place(내려놓기) 또는 Center(건네기)
-    3) [Grab Now] (수동) — 자동은 50010 웹에서 자동 ON + 영역 설정
-    4) 로봇 시각화는 http://localhost:50003/dashboard
+    3) [Grab Now] (수동) — 자동은 ${PORT_DETECT_BOX} 웹에서 자동 ON + 영역 설정
+    4) 로봇 시각화는 http://localhost:${PORT_DASHBOARD}/dashboard
 
   로그: $LOG_DIR  (하루 단위 _$DAY + append + 타임스탬프)
   실시간: tail -f $LOG_DIR/robot_server_$DAY.log

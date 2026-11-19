@@ -22,12 +22,13 @@ robot_server 가 기존에 쓰던 ArmControllerWrapper 인터페이스를 최대
 호출도 기존과 같이 동작이 끝나야 리턴한다.
 """
 
+from pitron import ports
 import json
 import threading
 import urllib.request
 import numpy as np
 
-ARM_SERVER = "http://localhost:50022"
+ARM_SERVER = ports.url("arm_server")
 
 
 def _post(path, body=None, timeout=60.0):

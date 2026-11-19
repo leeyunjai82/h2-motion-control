@@ -50,7 +50,7 @@ ls $HOME/miniconda3/envs/                                             # tv 가 �
 ```
 
 - `conda env remove -n tv` 는 conda 26.7.1 에서 `CondaToSNonInteractiveError` (기본 채널 약관) 로 실패합니다 — 위 명령을 쓰세요.
-- `third_party/` (H2 SDK 814556d) 와 `common/models/` 는 가상환경 밖이라 그대로 둡니다.
+- `third_party/` (H2 SDK 814556d) 와 `models/` 는 가상환경 밖이라 그대로 둡니다.
 - 버전이 바뀔 때만 지울 캐시 (안 지워도 동작에는 문제 없음 — 첫 실행이 느려질 뿐):
 
   | 캐시 | 언제 지움 |

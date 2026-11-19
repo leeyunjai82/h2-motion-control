@@ -18,13 +18,15 @@ import threading
 import time
 import urllib.request
 
+from pitron import ports
+
 # (이름, 포트, 경로, 필수 여부) — 필수 서버가 응답 없으면 빨강, 선택 서버면 회색
 SERVICES = (
-    ("arm_server", 50022, "/status", True),
-    ("rs_stream", 50001, "/", True),
-    ("detect_box", 50010, "/status", True),
-    ("head_track", 50013, "/status", False),
-    ("dashboard", 50003, "/api/status", False),
+    ("arm_server", ports.PORTS["arm_server"], "/status", True),
+    ("rs_stream", ports.PORTS["rs_stream"], "/", True),
+    ("detect_box", ports.PORTS["detect_box"], "/status", True),
+    ("head_track", ports.PORTS["head_track"], "/status", False),
+    ("dashboard", ports.PORTS["dashboard"], "/api/status", False),
 )
 
 

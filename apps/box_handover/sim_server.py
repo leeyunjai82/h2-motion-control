@@ -32,6 +32,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env
+from pitron import ports
 
 if not robot_env.SIM:
     print("[sim_server] ❌ ROBOT_SIM=1 에서만 실행 (start_grab_sim.sh)")
@@ -49,10 +50,10 @@ from unitree_sdk2py.idl.unitree_hg.msg.dds_ import LowState_
 # SIM_CAMERA=real (start_grab_sim.sh real-cam): 카메라·인식은 실물 (rs_stream + detect_box:50010), 로봇만 가상.
 #   이 서버는 가상 박스/가짜 detect_box 를 끄고 조작 화면만 50012 에서 제공한다.
 REAL_CAM = os.environ.get("SIM_CAMERA", "").strip() == "real"
-PORT = 50012 if REAL_CAM else 50010   # 가상 카메라일 때는 detect_box 자리(50010)를 대신한다
-DETECT = "http://localhost:50010"
-ROBOT_SERVER = "http://localhost:50000"
-ARM_SERVER = "http://localhost:50022"
+PORT = ports.PORTS["sim_box"] if REAL_CAM else ports.PORTS["detect_box"]   # 가상 카메라일 때는 detect_box 자리(50010)를 대신한다
+DETECT = ports.url("detect_box")
+ROBOT_SERVER = ports.url("robot_server")
+ARM_SERVER = ports.url("arm_server")
 IMG_W, IMG_H = robot_env.CAMERA_RES   # robot.yaml camera.resolution (rs_stream 과 같음)
 INSET = 0.02                       # L/R = 윗면 좌우 변 중점에서 안쪽 2 cm (box_estimator 와 동일)
 
@@ -371,8 +372,8 @@ def sim_home():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return (HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__REALCAM__", "1" if REAL_CAM else "0")
-            .replace("__CAMTITLE__", "실물 D435i — detect_box :50010 (YOLO)" if REAL_CAM
+    return ports.fill(HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__REALCAM__", "1" if REAL_CAM else "0")
+            .replace("__CAMTITLE__", "실물 D435i — detect_box :__PORT_DETECT_BOX__ (YOLO)" if REAL_CAM
                      else "가상 D435i 화면 (detect_box 대체 /video_feed)"))
 
 
@@ -416,12 +417,12 @@ iframe{width:100%;height:560px;border:0;border-radius:6px;background:#000}
  <div class="card"><h3>상태</h3><table id="st"></table></div>
 </div><div>
  <div class="card"><h3>__CAMTITLE__</h3><img id="cam"></div>
- <div class="card"><h3>3D (dashboard :50003)</h3><iframe id="dash"></iframe></div>
+ <div class="card"><h3>3D (dashboard :__PORT_DASHBOARD__)</h3><iframe id="dash"></iframe></div>
 </div></div>
 <script>
-const host=location.hostname;document.getElementById('dash').src=`http://${host}:50003/dashboard`;
+const host=location.hostname;document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/dashboard`;
 const REALCAM=__REALCAM__;
-document.getElementById('cam').src=REALCAM?`http://${host}:50010/video_feed`:'/video_feed';
+document.getElementById('cam').src=REALCAM?`http://${host}:__PORT_DETECT_BOX__/video_feed`:'/video_feed';
 if(REALCAM)document.getElementById('boxcard').style.display='none';
 const K=['x','y','top','W','D','H'];let inited=false,tmr=null;
 function send(){const b={};K.forEach(k=>b[k]=+document.getElementById(k).value);

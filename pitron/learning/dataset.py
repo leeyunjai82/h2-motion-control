@@ -23,9 +23,11 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-EP_FORMAT = "h2-episodes-v1"
-GRIP_FORMAT = "h2-gripper-episodes-v1"
-GRIP_SIDE_IDX = {"left": list(range(0, 8)), "right": list(range(8, 16)), "both": list(range(16))}
+from pitron.learning import formats
+
+EP_FORMAT = formats.DATASET_FORMAT_BOX
+GRIP_FORMAT = formats.DATASET_FORMAT
+GRIP_SIDE_IDX = formats.SIDE_IDX
 
 
 def dataset_format(root):

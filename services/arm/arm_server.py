@@ -50,12 +50,13 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료
+from pitron import ports  # noqa: E402
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
 from pitron.drivers.arm.arm_controller_wrapper import ArmControllerWrapper
 from pitron.drivers.arm.robot_arm import ARM_LIMITS
 
-PORT = 50022
+PORT = ports.PORTS["arm_server"]
 
 # 기본 자세 (robot_server 와 같은 값 — robot.yaml default_arm_deg 한 곳에서 읽음)
 # None = 미측정 (실기 모터 번호 확인 모드의 H2 등) → release 는 팔을 움직이지 않고 반납, park 는 거부

@@ -35,10 +35,11 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron import paths  # noqa: E402
+from pitron.learning import formats  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = paths.data_dir("policies", legacy="gripper/models")   # 받은 모델 zip 을 푼 곳 (git 제외)
-MODEL_FORMAT = "h2-gripper-act-v1"
+MODEL_FORMAT = formats.MODEL_FORMAT
 NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
 FPS = 30.0
 
@@ -91,7 +92,7 @@ def install_zip(zpath):
         root = roots.pop()
         if not NAME_RE.match(root):
             raise ValueError(f"모델 이름 이상: {root}")
-        want = {f"{root}/policy.xml", f"{root}/policy.bin", f"{root}/meta.json"}
+        want = {f"{root}/{fn}" for fn in formats.MODEL_FILES}
         have = {i.filename for i in files}
         if not want <= have:
             raise ValueError(f"zip 에 {sorted(want - have)} 없음")
@@ -102,7 +103,7 @@ def install_zip(zpath):
         tmp = dst + ".tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         os.makedirs(tmp)
-        for fn in ("policy.xml", "policy.bin", "meta.json"):
+        for fn in formats.MODEL_FILES:
             with z.open(f"{root}/{fn}") as src, open(os.path.join(tmp, fn), "wb") as out:
                 shutil.copyfileobj(src, out)
         shutil.rmtree(dst, ignore_errors=True)

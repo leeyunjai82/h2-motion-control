@@ -38,6 +38,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.learning import recorder as rec
+from pitron import ports
 import policy as pol
 import xr_real
 
@@ -50,7 +51,7 @@ from fastapi.responses import HTMLResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
-PORT = 50030
+PORT = ports.PORTS["pick_web"]
 J_MAP = robot_env.JOINTS["map"]      # URDF 관절 이름 → 슬롯
 DEPTH_WIN, DEPTH_FRAMES = 11, 10     # 클릭 점 깊이: 11 × 11 픽셀 × 최근 10 프레임 (≈ 0.33 초) 중앙값
 DEPTH_SPREAD_WARN = 10.0             # 깊이 흔들림이 이보다 크면 [mm] 계획에 경고

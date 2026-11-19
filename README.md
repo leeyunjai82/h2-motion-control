@@ -4,7 +4,7 @@
 외장 Intel mini PC(Ubuntu 24.04) + 가슴의 Intel RealSense D435i(박스 인식) + H2 머리 쌍안 카메라(얼굴·나이성별·행동 보기)로 구성하고,
 기능별 작은 HTTP 서버로 나눠 돌립니다.
 
-- H2 전용입니다. 로봇 파일·설정은 `robots/h2/`, 공통 코드는 `common/`.
+- H2 전용입니다. 로봇 파일·설정은 `robots/h2/`, 공용 라이브러리는 `pitron/`, 서버는 `services/` · `apps/` (아래 디렉터리).
   `ROBOT` 환경변수는 안 줘도 됩니다 (기본 `h2`, 다른 값은 거부). G1 코드는 git 이력에 있습니다.
 - 설치 : [**INSTALL.md**](./INSTALL.md) · 가상환경 다시 만들기 : [**REBUILD_ENV.md**](./REBUILD_ENV.md) (스냅샷 `tools/env_snapshot.sh`)
 - H2 실측·근거·확인 필요 목록 : [**robots/h2/FACTS.md**](./robots/h2/FACTS.md)
@@ -24,7 +24,7 @@
 
 ## 구성
 
-자원(하드웨어)마다 소유 프로세스는 하나. 나머지는 HTTP 로 통신합니다.
+자원(하드웨어)마다 소유 프로세스는 하나. 나머지는 HTTP 로 통신합니다. 포트는 `config/ports.env` 한 곳에 있습니다.
 
 ```
 rs_stream      :50001   RealSense D435i (단독 점유) → MJPEG / depth API
@@ -35,8 +35,9 @@ robot_server   :50000   잡기 시퀀스 + 제어 웹 UI (CPU·GPU·NPU 사용�
 dashboard      :50003   3D URDF 뷰어 / 관절 상태 (rt/lowstate 읽기 전용)
 simulator      :8000    모션 에디터 (Joint + IK), arm_server 경유
 launcher       :80      FSM 버튼 + start_robot.sh 실행 웹
-pick_web       :50030   그리퍼 잡기 · 데이터 수집 · ACT 정책 실행 (start_gripper.sh, gripper/)
-trainer        :50100   학습 PC(RTX 5090) — 데이터셋 업로드 → ACT 학습 → OpenVINO model zip (trainer/)
+pick_web       :50030   그리퍼 잡기 · 데이터 수집 · ACT 정책 실행 (start_gripper.sh, apps/gripper_pick/)
+trainer        :50100   학습 PC(RTX 5090) — 데이터셋 업로드 → ACT 학습 → OpenVINO model zip (apps/trainer/)
+act_viewer     :8800    전시 PC(Windows) — 데이터셋 · 모델 보기 (apps/act_viewer/start_viewer.bat)
 ```
 
 - **팔**: 모든 프로세스는 `arm_server` 를 거칩니다 (`rt/arm_sdk` 는 publisher 하나만 허용).
@@ -106,7 +107,7 @@ Box 버튼 → 대기 자세 → (자동 또는 Grab Now) → 재검출 → 위�
 - `apps/box_handover/sim_server.py` 가 detect_box(50010) 자리를 대신 → **robot_server / arm_server 는 실기와 같은 코드** 로 잡기 시퀀스를 돕니다.
 - **안전**: `ROBOT_SIM=1` → DDS 도메인 1. 실기(도메인 0)와 섞이지 않고, 실기 스택이 떠 있으면(포트 사용 중) 시작을 거부합니다.
 
-## 그리퍼 잡기 · ACT (`gripper/`, `trainer/`)
+## 그리퍼 잡기 · ACT (`apps/gripper_pick/`, `apps/trainer/`, `apps/act_viewer/`)
 
 Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기) 를 시연자로 써서 에피소드를 모으고 (미니 PC :50030),
 학습 PC (RTX 5090, :50100) 에서 ACT 를 학습해 OpenVINO 로 미니 PC 에서 돌립니다. 박스 양손 잡기와 따로.
@@ -147,33 +148,46 @@ Dex1-1 그리퍼로 한 팔 잡기 (카메라 클릭 → 큐브를 통에 넣기
 
 ## 디렉터리
 
+라이브러리 (`pitron/`, import 만) · 서비스 (`services/`, 장치를 소유하는 서버) · 앱 (`apps/`, 솔루션별 서버와 화면) 으로 나눕니다.
+앱은 라이브러리와 서비스만 쓰고, 앱끼리는 서로 import 하지 않습니다. 각 서버 파일은 시작할 때 저장소 루트를 `sys.path` 에 넣어 `from pitron… import` 를 씁니다.
+
 ```
 h2-motion-control/
-├── robot_env.sh            # ROBOT(h2) 확인 + conda/tv python 경로 (스크립트 공용)
-├── activate_tv.sh          # tv conda 환경 활성화 + H2 SDK(third_party/) 준비
-├── start_fsm.sh            # 자세 전환 (stand / damp / ...)
-├── start_robot.sh          # 전체 스택 (rs_stream, arm, robot, dashboard, detect_box, head_track)
-├── start_editor.sh         # 모션 에디터 (:8000, virtual | real)
-├── start_grab_sim.sh       # 잡기 시뮬레이터 (fake_robot + 서버 + 가상 박스, DDS 도메인 1)
-├── launcher.sh / apps/launcher/run_launcher.py   # 웹 런처 (:80)
-├── sim/                    # fake_robot.py, sim_server.py
-├── gripper/                # Dex1-1 그리퍼 잡기 웹 (pick_web.py :50030, 수집 · 정책 실행, data/ · models/ 는 git 제외)
-├── trainer/                # 학습 PC ACT 학습 웹 (trainer_server.py :50100, act_model.py, train_act.py)
-├── common/
-│   ├── robot_env.py        # robots/h2/robot.yaml 읽기, SDK 경로
-│   ├── robot_server.py     # 잡기 시퀀스 + 웹 UI (robot_web.html)
-│   ├── arm_server.py       # 팔 HTTP 서버 (arm_sdk 소유)
-│   ├── head_track.py       # 머리 카메라 인식
-│   ├── simulator.py        # 모션 에디터 (simulator.html, joint_check.py)
-│   ├── dashboard.py        # 3D URDF 뷰어
-│   ├── rs_stream.py        # D435i 서버
-│   ├── ctrl/               # 팔 래퍼, IK, detect_box, 머리 카메라 수신, OpenVINO 검출, 사용률(hw_usage), TTS
-│   ├── models/             # 박스 seg 모델, OMZ 얼굴·사람·나이성별·행동(0006), polar11s(자세)·yolo11s(COCO) 예비
-│   └── assets/vendor/      # three.min.js
-├── robots/h2/              # URDF, meshes/, motions/, IK 모델 캐시, robot.yaml, FACTS.md, cad/
-├── third_party/            # unitree_sdk2_python-814556d (activate_tv.sh 가 받음)
-└── utils/                  # init_fsm, 카메라 보정·깊이 확인, IMU·식별 확인, grab_reach, arm_sdk_test, env_snapshot(가상환경 기록), robot_services 등
+├── start_robot.sh · start_gripper.sh · start_collect.sh · start_grab_sim.sh · start_editor.sh · start_fsm.sh · launcher.sh
+├── robot_env.sh · activate_tv.sh     # conda tv 환경 · H2 SDK(third_party/) 준비 (스크립트 공용)
+├── robots/h2/              # 로봇 정의 — robot.yaml (관절·게인·IK·카메라·FSM), H2.urdf, meshes/, motions/, FACTS.md, cad/
+│   └── hands/dex1/         #   Dex1-1 그리퍼 — URDF·메시·어댑터 STL, dex1.yaml (토픽·q 범위·TCP·게인)
+├── pitron/                 # 라이브러리 (프로세스 · 포트 없음)
+│   ├── paths.py · ports.py #   폴더 위치 · 포트 (config/ports.env)
+│   ├── core/               #   robot_env (설정 · SDK 경로 · DDS), arm_http, hw_usage, sys_watch, text_to_speech
+│   ├── drivers/            #   arm/ (robot_arm · arm_controller_wrapper), hand/ (dex1_gripper · gripper_config), camera/ (head_cam)
+│   ├── motion/             #   robot_arm_ik (양팔 IK), weighted_moving_filter
+│   ├── perception/         #   ov_detect (OMZ 얼굴 · 사람 · 나이성별 · 행동), box_estimator
+│   └── learning/           #   formats (데이터셋 · 모델 zip 형식), recorder (녹화), dataset, act_model
+├── services/               # 장치 소유 서버 — 앱과 상관없이 같음
+│   ├── arm/arm_server.py           # :50022 팔 (rt/arm_sdk 단독)
+│   ├── camera/rs_stream.py         # :50001 D435i
+│   ├── head_vision/head_track.py   # :50013 머리 카메라 사람 인식
+│   └── dashboard/dashboard.py      # :50003 3D 로봇 뷰
+├── apps/                   # 솔루션
+│   ├── box_handover/       #   박스 핸드오버 — robot_server (:50000) · robot_web.html · detect_box (:50010) · sim_server
+│   ├── gripper_pick/       #   그리퍼 잡기 · VR 수집 · 정책 실행 — pick_web (:50030) · collect.html · xr_* · gripper.yaml (잡기 · VR 값)
+│   ├── trainer/            #   ACT 학습 웹 (:50100, 학습 PC) — train_act · 설치 · 실행 스크립트
+│   ├── act_viewer/         #   ACT 데이터셋 · 모델 보기 (:8800, Windows 전시 PC)
+│   ├── motion_editor/      #   모션 에디터 (:8000) — simulator · joint_check
+│   └── launcher/           #   웹 런처 (:80) — run_launcher
+├── config/                 # ports.env (포트 한 곳), local.example.yaml → local.yaml (PC별: DDS 네트워크 카드, git 제외)
+├── models/                 # AI 모델 — 박스 seg, OMZ 얼굴·사람·나이성별·행동(0006), polar11s · yolo11s
+├── web/                    # 공용 웹 — robot3d.js (URDF · STL 읽기), i18n.js, vendor/three.min.js
+├── sim/fake_robot.py       # 가짜 로봇 (DDS 도메인 1)
+├── tools/                  # 점검 · 보정 — init_fsm, check_rsimu, check_depth, check_head_cam, check_dex1, arm_sdk_test, env_snapshot …
+├── data/                   # (git 제외) datasets/ 수집 · policies/ 받은 모델 · trainer/ 학습 작업 · viewer/ 보기용 zip
+├── logs/                   # (git 제외) 실행 기록
+└── third_party/            # unitree_sdk2_python-814556d (activate_tv.sh 가 받음)
 ```
+
+예전 위치 (`gripper/data` · `gripper/models` · `trainer/data` · `viewer/data`) 에 데이터가 있으면 옮기기 전까지 그대로 읽습니다 (시작할 때 안내가 나옴).
+옮기기: `mkdir -p data && mv gripper/data data/datasets && mv gripper/models data/policies && mv trainer/data data/trainer && mv viewer/data data/viewer` (있는 것만)
 
 ## 설정 — `robots/h2/robot.yaml`
 

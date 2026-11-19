@@ -31,6 +31,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron import paths  # noqa: E402
+from pitron import ports  # noqa: E402
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -38,7 +39,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PORT = int(os.environ.get("TRAINER_PORT", "50100"))
+PORT = int(os.environ.get("TRAINER_PORT", ports.PORTS["trainer"]))
 DATA = os.environ.get("TRAINER_DATA") or paths.data_dir("trainer", legacy="trainer/data")   # data/trainer (git 제외)
 DS_DIR = os.path.join(DATA, "datasets")
 JOB_DIR = os.path.join(DATA, "jobs")

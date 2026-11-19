@@ -11,6 +11,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT/config/ports.env"   # 포트 (한 곳)
 source "$ROOT/robot_env.sh" || exit 1
 # 시뮬은 enabled: false 로봇도 허용 → robots/<ROBOT>/robot.yaml 존재만 확인
 if [ -z "${ROBOT:-}" ] || [ ! -f "$ROOT/robots/${ROBOT}/robot.yaml" ]; then
@@ -33,7 +34,7 @@ DAY="$(date '+%Y%m%d')"
 
 # 실기 스택과 같은 포트를 쓰므로, 이미 떠 있으면 아무것도 죽이지 않고 중단
 busy=""
-for p in 50000 50001 50003 50010 50012 50022; do
+for p in ${PORT_ROBOT_SERVER} ${PORT_RS_STREAM} ${PORT_DASHBOARD} ${PORT_DETECT_BOX} ${PORT_SIM_BOX} ${PORT_ARM_SERVER}; do
   if curl -s -m 1 -o /dev/null "http://localhost:$p/" 2>/dev/null; then busy="$busy $p"; fi
 done
 if [ -n "$busy" ]; then
@@ -74,30 +75,30 @@ wait_http() {  # wait_http <url> <초>
 
 run "fake_robot"   "$ROOT/sim/fake_robot.py" 2
 run "arm_server"   "services/arm/arm_server.py"           1
-wait_http "http://localhost:50022/status" 60
+wait_http "http://localhost:${PORT_ARM_SERVER}/status" 60
 run "robot_server" "apps/box_handover/robot_server.py"    1
-wait_http "http://localhost:50000/grab_status" 60
+wait_http "http://localhost:${PORT_ROBOT_SERVER}/grab_status" 60
 run "dashboard"    "services/dashboard/dashboard.py"      1
 if [ "$CAM" = "real-cam" ]; then
   run "rs_stream"  "services/camera/rs_stream.py"         4
   run "detect_box" "apps/box_handover/detect_box.py"      2
-  wait_http "http://localhost:50010/status" 60
+  wait_http "http://localhost:${PORT_DETECT_BOX}/status" 60
   run "sim_server" "$ROOT/apps/box_handover/sim_server.py" 1
-  wait_http "http://localhost:50012/sim/state" 30
-  SIM_URL="http://localhost:50012/"
+  wait_http "http://localhost:${PORT_SIM_BOX}/sim/state" 30
+  SIM_URL="http://localhost:${PORT_SIM_BOX}/"
 else
   run "sim_server" "$ROOT/apps/box_handover/sim_server.py" 1
-  wait_http "http://localhost:50010/status" 30
-  SIM_URL="http://localhost:50010/"
+  wait_http "http://localhost:${PORT_DETECT_BOX}/status" 30
+  SIM_URL="http://localhost:${PORT_DETECT_BOX}/"
 fi
 
 cat <<EOF
 
   ✓ 시뮬레이터 실행 중  (ROBOT=$ROBOT, 카메라=$CAM, ROBOT_SIM=1, DDS 도메인 1)
     - 시뮬 화면    : $SIM_URL        (잡기 · 상태 · 카메라 · 3D)
-    - 제어 UI      : http://localhost:50000/        (실기와 같은 화면)
-    - 3D 뷰어      : http://localhost:50003/dashboard
-    - arm_server   : http://localhost:50022/status
+    - 제어 UI      : http://localhost:${PORT_ROBOT_SERVER}/        (실기와 같은 화면)
+    - 3D 뷰어      : http://localhost:${PORT_DASHBOARD}/dashboard
+    - arm_server   : http://localhost:${PORT_ARM_SERVER}/status
   로그: $LOG_DIR/sim_*_$DAY.log
   종료: Ctrl+C
 EOF

@@ -40,7 +40,10 @@ except ImportError:
     sys.exit(1)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-WEB_PORT = 50015            # 50001 = rs_stream, 50014 = check_head_cam --web
+if ROOT not in sys.path:
+    sys.path.append(ROOT)
+from pitron import ports  # noqa: E402
+WEB_PORT = ports.PORTS["depth_check"]   # config/ports.env
 
 
 def default_resolution():

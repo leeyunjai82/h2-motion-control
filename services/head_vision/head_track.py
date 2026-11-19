@@ -45,6 +45,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # noqa: E402  ROBOT 필수
+from pitron import ports  # noqa: E402
 from pitron import paths   # noqa: E402
 from pitron.drivers.camera.head_cam import PC1, RGB_PORTS, RgbRx, my_ip, web_urls   # noqa: E402
 from pitron.core.hw_usage import exec_devices, yolo_devices   # noqa: E402
@@ -485,7 +486,7 @@ def main():
     ap.add_argument("--mode", choices=("face", "person", "auto"), default=cfg("mode", "auto"))
     ap.add_argument("--device", default=cfg("device", "CPU"), help="face/person OpenVINO device CPU / GPU / NPU / AUTO")
     ap.add_argument("--no-objects", action="store_true", help="disable right-eye detection")
-    ap.add_argument("--port", type=int, default=int(cfg("port", 50013)))
+    ap.add_argument("--port", type=int, default=ports.PORTS["head_track"])
     ap.add_argument("--face-conf", type=float, default=None, help="override robot.yaml head_track.face_conf")
     ap.add_argument("--person-conf", type=float, default=None, help="override robot.yaml head_track.person_conf")
     a = ap.parse_args()

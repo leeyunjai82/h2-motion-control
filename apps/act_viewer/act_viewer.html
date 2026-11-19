@@ -195,6 +195,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 <div id="toast"></div>
 
 <script src="/vendor/three.min.js"></script>
+<script src="/web/robot3d.js"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
@@ -365,6 +366,7 @@ function updateHero(){                                  // 위쪽 큰 숫자
     $('k-err').textContent=m.val_err_deg!=null?`${num(m.val_err_deg,2)}°`:'-';
   }
 }
+// 손별 state 자리 — pitron/learning/formats.py SIDE_IDX 와 같음
 const SIDE_IDX={left:[...Array(8).keys()],right:[...Array(8).keys()].map(i=>i+8),both:[...Array(16).keys()]};
 function renderChecks(){
   if(!curDs||!curMd){return;}
@@ -540,26 +542,10 @@ window.addEventListener('pointermove',e=>{if(!drag)return;orbit.az-=(e.clientX-d
 renderer.domElement.addEventListener('wheel',e=>{e.preventDefault();orbit.r=Math.max(0.6,Math.min(6,orbit.r*(e.deltaY>0?1.1:0.9)));orbit.last=performance.now();},{passive:false});
 function resize3d(){const w=view.clientWidth,h=view.clientHeight;if(!w||!h)return;renderer.setSize(w,h,false);camera.aspect=w/h;camera.updateProjectionMatrix();}
 
-function parseSTL(buf,cutX){                        // cutX: 메시 x 가 이보다 큰 삼각형은 버림 (H2 손목 메시의 기본 손)
-  const dv=new DataView(buf),geo=new THREE.BufferGeometry();
-  const n=buf.byteLength>=84?dv.getUint32(80,true):0;let pos;
-  if(84+n*50===buf.byteLength){
-    pos=new Float32Array(n*9);let m=0;
-    for(let i=0;i<n;i++){const o=84+i*50+12;
-      if(cutX!=null&&Math.max(dv.getFloat32(o,true),dv.getFloat32(o+12,true),dv.getFloat32(o+24,true))>cutX)continue;
-      for(let k=0;k<9;k++)pos[m*9+k]=dv.getFloat32(o+k*4,true);m++;}
-    pos=pos.subarray(0,m*9);
-  }else{
-    const txt=new TextDecoder().decode(buf),v=[],re=/vertex\s+(\S+)\s+(\S+)\s+(\S+)/g;let m;
-    while((m=re.exec(txt)))v.push(+m[1],+m[2],+m[3]);
-    if(cutX!=null){const w=[];for(let i=0;i+8<v.length;i+=9)if(Math.max(v[i],v[i+3],v[i+6])<=cutX)w.push(...v.slice(i,i+9));pos=new Float32Array(w);}
-    else pos=new Float32Array(v);
-  }
-  geo.setAttribute('position',new THREE.BufferAttribute(pos,3));geo.computeVertexNormals();return geo;
-}
+const parseSTL=(buf,cutX)=>Robot3D.parseSTL(buf,cutX);   // web/robot3d.js (공용)
 const xyz=s=>(s||'0 0 0').trim().split(/\s+/).map(Number);
-function urdfOrigin(obj,el){const o=el&&el.querySelector(':scope>origin');const p=xyz(o&&o.getAttribute('xyz')),r=xyz(o&&o.getAttribute('rpy'));
-  obj.position.set(p[0],p[1],p[2]);obj.quaternion.setFromEuler(new THREE.Euler(r[0],r[1],r[2],'ZYX'));}   // URDF rpy = Rz·Ry·Rx
+function urdfOrigin(obj,el){const o=el&&el.querySelector(':scope>origin');
+  Robot3D.setOrigin(obj,{xyz:xyz(o&&o.getAttribute('xyz')),rpy:xyz(o&&o.getAttribute('rpy'))});}   // URDF rpy = Rz·Ry·Rx (web/robot3d.js)
 function matColor(vis,mats){const m=vis.querySelector('material');if(!m)return[0.7,0.7,0.7];const c=m.querySelector('color');
   if(c)return xyz(c.getAttribute('rgba'));return mats[m.getAttribute('name')]||[0.7,0.7,0.7];}
 function mkMat(rgb){const c=new THREE.Color(rgb[0],rgb[1],rgb[2]);const dark=rgb[0]+rgb[1]+rgb[2]<1.5;

@@ -21,6 +21,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료 — camera.resolution
+from pitron import ports  # noqa: E402
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
@@ -208,4 +209,4 @@ async def index():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=50001, timeout_graceful_shutdown=2)
+    uvicorn.run(app, host="0.0.0.0", port=ports.PORTS["rs_stream"], timeout_graceful_shutdown=2)

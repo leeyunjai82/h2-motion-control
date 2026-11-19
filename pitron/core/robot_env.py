@@ -181,8 +181,22 @@ FSM    = CFG["fsm"]
 _dds_inited = None
 
 
+def dds_interface():
+    """DDS 네트워크 카드 (한 곳): 환경변수 DDS_IFACE → config/local.yaml dds_interface → None (CycloneDDS 자동 선택).
+    USB LAN 등 카드를 더 꽂으면 자동 선택이 바뀔 수 있음 → 그때 config/local.yaml 에 dds_interface: <로봇 쪽 카드> 를 적음."""
+    v = os.environ.get("DDS_IFACE", "").strip()
+    if v:
+        return v
+    p = os.path.join(paths.REPO_ROOT, "config", "local.yaml")
+    if os.path.isfile(p):
+        with open(p, encoding="utf-8") as f:
+            v = str((yaml.safe_load(f) or {}).get("dds_interface") or "").strip()
+        return v or None
+    return None
+
+
 def dds_init(interface=None):
-    """ChannelFactoryInitialize(DDS_DOMAIN[, interface]).
+    """ChannelFactoryInitialize(DDS_DOMAIN[, interface]). interface 를 안 주면 dds_interface() (설정 없으면 자동 선택 — 예전과 같음).
 
     실기: 기존과 똑같이 매번 호출한다 (동작 변경 없음).
     시뮬: 같은 프로세스에서 두 번째 호출은 건너뛴다 — 일부 환경에서 cyclonedds 가 같은 도메인을
@@ -196,7 +210,9 @@ def dds_init(interface=None):
     # SDK 는 인터페이스를 주면 CycloneDDS 기록을 /tmp/cdds.LOG 한 파일에 씀 → 일반 사용자 프로그램이 만든 파일을
     # sudo(root) 프로그램이 못 엶 (Ubuntu fs.protected_regular) → 'create domain error'. 사용자마다 다른 파일로 (2026-11-06)
     _ch.ChannelConfigHasInterface = _ch.ChannelConfigHasInterface.replace("/tmp/cdds.LOG", f"/tmp/cdds_{os.getuid()}.LOG")
+    interface = interface or dds_interface()
     if interface:
+        print(f"[robot_env] DDS 인터페이스 {interface}", file=sys.stderr)
         ChannelFactoryInitialize(DDS_DOMAIN, interface)
     else:
         ChannelFactoryInitialize(DDS_DOMAIN)

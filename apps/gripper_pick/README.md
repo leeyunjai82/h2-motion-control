@@ -1,4 +1,4 @@
-# gripper/ — Dex1-1 그리퍼 (한 팔로 작은 박스 잡기)
+# apps/gripper_pick — Dex1-1 그리퍼 (한 팔로 작은 박스 잡기)
 
 박스 양손 잡기(`apps/box_handover/robot_server.py`, `start_robot.sh`)와 따로 씁니다. 같이 쓰는 것은 arm_server(팔 명령을 혼자 쥐는 서버)와 카메라 보정값(`robots/h2/robot.yaml`, `calib_local.yaml`)뿐입니다.
 

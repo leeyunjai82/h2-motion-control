@@ -29,6 +29,12 @@ import urllib.request
 
 import cv2
 import numpy as np
+
+import os as _os, sys as _sys  # noqa: E401
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+from pitron import ports  # noqa: E402
 import pinocchio as pin
 import yaml
 
@@ -121,10 +127,10 @@ def get(url, timeout=2.0):
 def main():
     ap = argparse.ArgumentParser(description="xr_teleoperate (televuer + H2_ArmIK) → 가상 뷰어 / --real 잡기 웹 (실제 팔)")
     ap.add_argument("--xr", default=os.path.expanduser("~/xr_teleoperate"), help="xr_teleoperate 저장소 경로")
-    ap.add_argument("--viewer", default="http://localhost:50040", help="가상 뷰어 (apps/gripper_pick/xr_viewer.py) — --real 에서는 있으면 같이 보냄")
-    ap.add_argument("--real", nargs="?", const="http://localhost:50030", default=None,
+    ap.add_argument("--viewer", default=ports.url("xr_viewer"), help="가상 뷰어 (apps/gripper_pick/xr_viewer.py) — --real 에서는 있으면 같이 보냄")
+    ap.add_argument("--real", nargs="?", const=ports.url("pick_web"), default=None,
                     help="실제 팔: 잡기 웹 주소 (기본 http://localhost:50030). 잡기 웹 [VR 시작] 동안만 보냄")
-    ap.add_argument("--pick", default="http://localhost:50030", help="영상 (머리 · 손목 카메라) 을 받을 잡기 웹 주소")
+    ap.add_argument("--pick", default=ports.url("pick_web"), help="영상 (머리 · 손목 카메라) 을 받을 잡기 웹 주소")
     ap.add_argument("--hand", action="store_true", help="컨트롤러 대신 손 추적 입력")
     ap.add_argument("--hz", type=float, default=30.0, help="IK · 전송 주기 (xr_teleoperate 기본 30)")
     ap.add_argument("--joint-vmax", type=float, default=None, help="관절 속도 상한 [rad/s] (가상 기본 1.0, --real 은 잡기 웹 세션 값)")

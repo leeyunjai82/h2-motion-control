@@ -36,8 +36,9 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env
+from pitron import ports  # noqa: E402
 
-ARM_SERVER = "http://localhost:50022"
+ARM_SERVER = ports.url("arm_server")
 STEP_DEG = 5.0          # 버튼 한 번 이동량
 MAX_OFFSET_DEG = 15.0   # 기준 대비 최대 이동 (서버에서 제한)
 MOVE_SEC = 1.0
@@ -210,7 +211,7 @@ def check_ik_state():
 @router.get("/check", response_class=HTMLResponse)
 def check_page():
     mode = "가상 (ROBOT_SIM, DDS 도메인 1)" if robot_env.SIM else "실기 (DDS 도메인 0)"
-    return (HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__MODE__", mode)
+    return ports.fill(HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__MODE__", mode)
             .replace("__REAL__", "0" if robot_env.SIM else "1")
             .replace("__STEP__", str(STEP_DEG)).replace("__MAX__", str(MAX_OFFSET_DEG)))
 
@@ -359,7 +360,7 @@ iframe{width:100%;height:640px;border:0;border-radius:6px;background:#000}.note{
 <script>
 const REAL=__REAL__, host=location.hostname;
 document.getElementById('mb').className='badge '+(REAL?'real':'sim');
-document.getElementById('dash').src=`http://${host}:50003/dashboard`;
+document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/dashboard`;
 const res={};let built=false;
 async function api(u){try{const r=await fetch(u,{method:'POST'});const d=await r.json();
   document.getElementById('msg').textContent=u+' → '+(r.ok?'OK':JSON.stringify(d.detail||d));}catch(e){document.getElementById('msg').textContent=u+' 실패 '+e;}}

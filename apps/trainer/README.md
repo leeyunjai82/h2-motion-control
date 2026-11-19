@@ -8,9 +8,9 @@
  (수집)                              (학습 → OpenVINO 변환)              (추론 + 안전 필터)
 ```
 
-이 폴더(`trainer/`)만 있으면 됩니다 — 로봇 SDK·URDF 는 필요 없음.
+저장소를 통째로 clone 해서 씀 (이 폴더 + `pitron/learning` · `pitron/paths.py` · `pitron/ports.py` · `config/ports.env`) — 로봇 SDK·URDF 는 필요 없음.
 
-## 그리퍼 데이터셋 (gripper/ 잡기 웹 녹화, format h2-gripper-episodes-v1)
+## 그리퍼 데이터셋 (apps/gripper_pick 잡기 웹 녹화, format h2-gripper-episodes-v1)
 
 같은 웹에 올리면 형식을 보고 그리퍼로 학습합니다. **손 (그리퍼 데이터셋)** 에서 오른손 / 왼손 (그 손 7 관절 + 그리퍼 = 8) 또는
 양손 16 을 고릅니다 — 그 손으로 녹화한 에피소드만 씀. 카메라는 데이터셋의 카메라 전부 (body 424×240 + 손목 320×240 …,

@@ -23,6 +23,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # robot.yaml · URDF · 카메라 값
+from pitron import ports
 from pitron.drivers.hand import gripper_config
 
 import numpy as np
@@ -47,7 +48,7 @@ if not (isinstance(_tb, dict) and all(isinstance(_tb.get(s), list) and len(_tb[s
     sys.exit("[pick] gripper.yaml pick.tcp_bias_m: left/right 각각 [x, y, z] (각 |값| ≤ 0.05 m)")
 TCP_BIAS = {s: np.array(_tb[s], dtype=float) for s in ("left", "right")}   # 실제 − 계산 (pelvis)
 
-ARM_SERVER = "http://localhost:50022"
+ARM_SERVER = ports.url("arm_server")
 J = robot_env.JOINTS
 ARM = [int(s) for s in J["arm"]]
 SIDES = ("left", "right")

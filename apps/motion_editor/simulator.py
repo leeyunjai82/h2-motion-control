@@ -55,6 +55,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료
+from pitron import ports  # noqa: E402
 from pitron import paths
 
 from unitree_sdk2py.core.channel import ChannelFactoryInitialize
@@ -145,7 +146,7 @@ def _move_ik(left_xyz, right_xyz, left_rpy, right_rpy, duration):
         body["left_rpy"] = [float(v) for v in left_rpy]
     if right_rpy and any(v != 0 for v in right_rpy):
         body["right_rpy"] = [float(v) for v in right_rpy]
-    req = _u.Request("http://localhost:50022/hands",
+    req = _u.Request(ports.url("arm_server", "/hands"),
                      data=_json.dumps(body).encode(),
                      headers={"Content-Type": "application/json"}, method="POST")
     with _u.urlopen(req, timeout=duration + 30.0) as r:
@@ -403,4 +404,4 @@ async def read_root():
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=ports.PORTS["editor"])

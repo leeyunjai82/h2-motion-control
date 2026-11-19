@@ -22,6 +22,7 @@
 set -u
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
+source "$ROOT/config/ports.env"   # 포트 (한 곳)
 MODE="${1:-}"
 if [ "$MODE" != "virtual" ] && [ "$MODE" != "real" ]; then
   echo "Usage: $0 virtual|real" >&2
@@ -63,12 +64,12 @@ TAG="$([ "$MODE" = virtual ] && echo vsim_ || echo "")"
 up() { curl -s -m 1 -o /dev/null "$1" 2>/dev/null; }
 
 # 에디터가 이미 떠 있으면 중단 (아무것도 죽이지 않음)
-if up "http://localhost:8000/"; then
-  echo "❌ 포트 8000 사용 중 — 실행 중인 모션 에디터를 먼저 종료하세요" >&2; exit 1
+if up "http://localhost:${PORT_EDITOR}/"; then
+  echo "❌ 포트 ${PORT_EDITOR} 사용 중 — 실행 중인 모션 에디터를 먼저 종료하세요" >&2; exit 1
 fi
 if [ "$MODE" = "virtual" ]; then
   # 가상 모드는 실기 스택과 같은 포트를 쓰므로 떠 있으면 중단
-  for p in 50003 50022; do
+  for p in ${PORT_DASHBOARD} ${PORT_ARM_SERVER}; do
     if up "http://localhost:$p/"; then
       echo "❌ 포트 $p 사용 중 (실기/다른 시뮬 스택) — 먼저 종료하세요" >&2; exit 1
     fi
@@ -109,29 +110,29 @@ if [ "$MODE" = "virtual" ]; then
 fi
 
 # arm_server — 실기에서 이미 떠 있으면(start_robot.sh 등) 재사용
-if [ "$MODE" = "real" ] && up "http://localhost:50022/status"; then
-  echo "[start] arm_server    (50022) 이미 실행 중 — 재사용"
+if [ "$MODE" = "real" ] && up "http://localhost:${PORT_ARM_SERVER}/status"; then
+  echo "[start] arm_server    (${PORT_ARM_SERVER}) 이미 실행 중 — 재사용"
 else
   run "arm_server" "services/arm/arm_server.py"
-  wait_http "http://localhost:50022/status" 60
+  wait_http "http://localhost:${PORT_ARM_SERVER}/status" 60
 fi
 
 # dashboard (3D) — 실기에서 이미 떠 있으면 재사용
-if [ "$MODE" = "real" ] && up "http://localhost:50003/"; then
-  echo "[start] dashboard     (50003) 이미 실행 중 — 재사용"
+if [ "$MODE" = "real" ] && up "http://localhost:${PORT_DASHBOARD}/"; then
+  echo "[start] dashboard     (${PORT_DASHBOARD}) 이미 실행 중 — 재사용"
 else
   run "dashboard" "services/dashboard/dashboard.py"
 fi
 
 run "simulator" "apps/motion_editor/simulator.py"
-wait_http "http://localhost:8000/" 30
+wait_http "http://localhost:${PORT_EDITOR}/" 30
 
 echo ""
 echo "  ✓ 모션 에디터 실행 중  (ROBOT=$ROBOT, 모드=$MODE$([ "${ROBOT_CHECK:-}" = 1 ] && echo ' · 모터 번호 확인'))"
-echo "    - 모션 에디터     : http://localhost:8000/"
-echo "    - 모터 번호 확인  : http://localhost:8000/check"
-echo "    - 3D             : http://localhost:50003/dashboard"
-echo "    - arm_server     : http://localhost:50022/status"
+echo "    - 모션 에디터     : http://localhost:${PORT_EDITOR}/"
+echo "    - 모터 번호 확인  : http://localhost:${PORT_EDITOR}/check"
+echo "    - 3D             : http://localhost:${PORT_DASHBOARD}/dashboard"
+echo "    - arm_server     : http://localhost:${PORT_ARM_SERVER}/status"
 echo "    - 로그            : $LOG_DIR/${TAG}*_$DAY.log"
 echo "    - 종료            : Ctrl+C"
 echo ""

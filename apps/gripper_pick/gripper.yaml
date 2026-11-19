@@ -79,7 +79,6 @@ wrist_cams:
 # 가상 H2 3D 뷰어 (apps/gripper_pick/xr_viewer.py) — xr_virtual.py (Unitree xr_teleoperate 입력 + H2 IK) 결과를 그림. 로봇 명령 없음.
 #   안전 검사 값은 "실제였으면 멈춤" 표시용 (실제 로봇 단계에서 같은 기준을 씀)
 xr_view:
-  port: 50040
   table_z_m: 0.053            # 테이블 높이 [m, pelvis] — ⚠ 확인 필요: 잡기 웹 테이블 측정값으로 (--table-z, -1.0 = 없음)
   table_x_min_m: 0.15         # 테이블 앞 끝 [m, pelvis x] — 이보다 앞에 있는 그리퍼만 테이블 높이 검사. ⚠ 실제 테이블 위치로 맞출 것
   arm_gap_m: 0.12             # 양팔 (팔꿈치 · 손목 · 집게 가운데) 사이 최소 거리

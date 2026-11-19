@@ -35,6 +35,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료
+from pitron import ports  # noqa: E402
 from pitron import paths
 
 ASSETS_DIR = robot_env.ROBOT_DIR
@@ -43,8 +44,8 @@ MESH_DIR   = robot_env.MESH_DIR
 VENDOR_DIR = robot_env.VENDOR_DIR   # three.min.js 등 로컬 라이브러리
 
 # ===== Stream upstreams =====
-VIDEO_FEED = "http://localhost:50001/video_feed"
-DEPTH_FEED = "http://localhost:50001/depth_feed"
+VIDEO_FEED = ports.url("rs_stream", "/video_feed")
+DEPTH_FEED = ports.url("rs_stream", "/depth_feed")
 
 # ==========================================
 # Robot connection — rt/lowstate 구독 전용 (뷰어는 절대 지령을 보내지 않는다)
@@ -214,6 +215,10 @@ def status():
 # ==========================================
 # Local vendor (Three.js 등)
 # ==========================================
+@app.get('/web/robot3d.js', include_in_schema=False)
+def robot3d_js():
+    return FileResponse(os.path.join(paths.WEB_DIR, 'robot3d.js'), media_type='application/javascript')
+
 @app.get('/vendor/three.min.js')
 def vendor_three():
     path = os.path.join(VENDOR_DIR, 'three.min.js')
@@ -279,6 +284,7 @@ HTML_PAGE = r"""<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>H2 URDF Live Viewer</title>
 <script src="/vendor/three.min.js"></script>
+<script src="/web/robot3d.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 body{background:#0a0a0f;color:#d0d0d8;font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;height:100vh;overflow:hidden;font-size:13px}
@@ -450,72 +456,10 @@ class Orbit {
   focusBox(box){const c=box.getCenter(new THREE.Vector3());const sz=box.getSize(new THREE.Vector3()).length();this.target.copy(c);this.r=sz*1.3;this.update();}
 }
 
-function parseSTL(buf){
-  const dv=new DataView(buf);
-  if(buf.byteLength<84)return parseASCII(new TextDecoder().decode(buf));
-  const n=dv.getUint32(80,true);
-  if(Math.abs(buf.byteLength-(84+n*50))<=4)return parseBin(dv,n);
-  return parseASCII(new TextDecoder().decode(buf));
-}
-function parseBin(dv,n){
-  const pos=new Float32Array(n*9),nrm=new Float32Array(n*9);let o=84;
-  for(let i=0;i<n;i++){
-    const nx=dv.getFloat32(o,true),ny=dv.getFloat32(o+4,true),nz=dv.getFloat32(o+8,true);o+=12;
-    for(let j=0;j<3;j++){const b=i*9+j*3;pos[b]=dv.getFloat32(o,true);pos[b+1]=dv.getFloat32(o+4,true);pos[b+2]=dv.getFloat32(o+8,true);nrm[b]=nx;nrm[b+1]=ny;nrm[b+2]=nz;o+=12;}
-    o+=2;
-  }
-  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.BufferAttribute(pos,3));g.setAttribute('normal',new THREE.BufferAttribute(nrm,3));return g;
-}
-function parseASCII(txt){
-  const pos=[],nrm=[];let nx=0,ny=0,nz=0;
-  for(const ln of txt.split('\n')){const l=ln.trim();
-    if(l.startsWith('facet normal')){const m=l.match(/normal\s+([\S]+)\s+([\S]+)\s+([\S]+)/);if(m){nx=+m[1];ny=+m[2];nz=+m[3];}}
-    else if(l.startsWith('vertex')){const m=l.match(/vertex\s+([\S]+)\s+([\S]+)\s+([\S]+)/);if(m){pos.push(+m[1],+m[2],+m[3]);nrm.push(nx,ny,nz);}}
-  }
-  const g=new THREE.BufferGeometry();g.setAttribute('position',new THREE.Float32BufferAttribute(pos,3));g.setAttribute('normal',new THREE.Float32BufferAttribute(nrm,3));return g;
-}
-
-function parseURDF(xml){
-  const doc=new DOMParser().parseFromString(xml,'text/xml');
-  const links={},joints={},materials={};
-
-  doc.querySelectorAll('robot > material').forEach(m=>{
-    const name=m.getAttribute('name');
-    const c=m.querySelector('color')?.getAttribute('rgba');
-    if(c){const [r,g,b]=c.split(/\s+/).map(Number);
-      materials[name]=(Math.round(r*255)<<16)|(Math.round(g*255)<<8)|Math.round(b*255);}
-  });
-  materials['white']=0xe8e8e8;
-  materials['dark']=0x1e1e1e;
-
-  doc.querySelectorAll('link').forEach(el=>{
-    const name=el.getAttribute('name');links[name]={name,visuals:[]};
-    el.querySelectorAll('visual').forEach(v=>{
-      const me=v.querySelector('geometry mesh');if(!me)return;
-      const fn=me.getAttribute('filename')||'';
-      const sc=(me.getAttribute('scale')||'1 1 1').split(/\s+/).map(Number);
-      const matName=v.querySelector('material')?.getAttribute('name')||'';
-      links[name].visuals.push({fn,sc,origin:parseOrig(v.querySelector('origin')),matName});
-    });
-  });
-  doc.querySelectorAll('joint').forEach(el=>{
-    const name=el.getAttribute('name'),type=el.getAttribute('type')||'fixed';
-    const parent=el.querySelector('parent')?.getAttribute('link')||'';
-    const child=el.querySelector('child')?.getAttribute('link')||'';
-    const axEl=el.querySelector('axis');
-    const axis=(axEl?.getAttribute('xyz')||'0 0 1').split(/\s+/).map(Number);
-    const lim=el.querySelector('limit');
-    joints[name]={name,type,parent,child,origin:parseOrig(el.querySelector('origin')),axis,
-      limit:{lower:lim?+lim.getAttribute('lower'):-3.14,upper:lim?+lim.getAttribute('upper'):3.14,
-             effort:lim&&lim.getAttribute('effort')?+lim.getAttribute('effort'):null}};
-  });
-  return{links,joints,materials};
-}
-function parseOrig(el){
-  if(!el)return{xyz:[0,0,0],rpy:[0,0,0]};
-  return{xyz:(el.getAttribute('xyz')||'0 0 0').split(/\s+/).map(Number),rpy:(el.getAttribute('rpy')||'0 0 0').split(/\s+/).map(Number)};
-}
-const basename=s=>s.split(/[/\\]/).pop().toLowerCase();
+// URDF · STL 읽기 = web/robot3d.js (공용)
+const parseSTL=buf=>Robot3D.parseSTL(buf);
+const parseURDF=Robot3D.parseURDF;
+const basename=Robot3D.basename;
 const sid=n=>n.replace(/\W/g,'_');
 
 // ============ Logo: 가슴 로고판 (robot.yaml dashboard.logo → GET /api/logo) ============
@@ -637,6 +581,7 @@ async function loadRobot(){
     ptext.textContent='Loading URDF...';pbar.style.width='5%';
     const urdfTxt=await(await fetch('/api/urdf')).text();
     const{links,joints,materials}=parseURDF(urdfTxt);
+    materials['white']=0xe8e8e8;materials['dark']=0x1e1e1e;   // 대시보드 색 (URDF white 0.7 · dark 0.4 보다 밝게 · 어둡게)
     jointDefs=joints;
 
     ptext.textContent='Fetching mesh list...';pbar.style.width='10%';
@@ -676,7 +621,7 @@ async function loadRobot(){
         const isDark=color<0x555555;
         const mat=new THREE.MeshPhongMaterial({color,specular:isDark?0x222222:0x666666,shininess:isDark?55:25});
         const mesh=new THREE.Mesh(geo,mat);mesh.userData={linkName:lname};
-        mesh.position.set(...v.origin.xyz);mesh.setRotationFromEuler(new THREE.Euler(...v.origin.rpy,'XYZ'));mesh.scale.set(...v.sc);
+        Robot3D.setOrigin(mesh,v.origin);mesh.scale.set(...v.sc);
         allMeshes.push(mesh);grp.add(mesh);
       }
       if(logoCfg.link===lname)grp.add(makeLogoPlate(logoCfg));
@@ -684,7 +629,7 @@ async function loadRobot(){
       const ax=new THREE.AxesHelper(.08);ax.visible=false;allAxes.push(ax);grp.add(ax);
       for(const jt of Object.values(joints).filter(j=>j.parent===lname)){
         const jg=new THREE.Group();jg.name='joint:'+jt.name;
-        jg.position.set(...jt.origin.xyz);jg.setRotationFromEuler(new THREE.Euler(...jt.origin.rpy,'XYZ'));
+        Robot3D.setOrigin(jg,jt.origin);
         jointObjs[jt.name]=jg;baseQs[jt.name]=jg.quaternion.clone();
         const child=mkLink(jt.child);if(child)jg.add(child);grp.add(jg);
       }
@@ -862,7 +807,7 @@ cv.addEventListener('click',e=>{
 //   주황: 박스 파지점 L/R + 옆면(L–R × 높이), 파랑: 윗면 중심, 초록: 현재 손(IK) 목표
 //   보라: 비교용 다른 추정 방식(잡기에 안 씀) 파지점 L/R + 윗면 중심 + 옆면 테두리
 // ==========================================
-const VIZ_URL=`http://${location.hostname}:50000/viz`;
+const VIZ_URL=`http://${location.hostname}:__PORT_ROBOT_SERVER__/viz`;
 let vizGrp=null,vizTimer=null;const vz={};
 function vizInit(){
   const torso=robotRoot&&robotRoot.getObjectByName('link:torso_link');
@@ -1062,7 +1007,7 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 # ==========================================
 @app.get('/')
 def index():
-    return HTMLResponse(HTML_PAGE)
+    return HTMLResponse(ports.fill(HTML_PAGE))
 
 @app.get('/i18n.js', include_in_schema=False)
 def i18n_js():
@@ -1070,12 +1015,12 @@ def i18n_js():
 
 @app.get('/robot-only')
 def robot_dashboard():
-    return HTMLResponse(HTML_PAGE.replace('<body>', '<body class="dashboard-mode">', 1))
+    return HTMLResponse(ports.fill(HTML_PAGE.replace('<body>', '<body class="dashboard-mode">', 1)))
 
 @app.get('/dashboard')
 def dashboard():
-    return HTMLResponse(DASHBOARD_HTML)
+    return HTMLResponse(ports.fill(DASHBOARD_HTML))
 
 
 if __name__ == '__main__':
-    uvicorn.run(app, host='0.0.0.0', port=50003, timeout_graceful_shutdown=2)
+    uvicorn.run(app, host='0.0.0.0', port=ports.PORTS['dashboard'], timeout_graceful_shutdown=2)

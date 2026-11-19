@@ -16,6 +16,7 @@ import time
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import pick_core as pc      # 모델 · 그리퍼 겉 점 · 몸통 거리 (arm_server 호출 함수는 쓰지 않음)
+from pitron import ports  # noqa: E402
 from pick_core import P
 
 import numpy as np
@@ -26,7 +27,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, Response
 
 V = pc.CFG.get("xr_view") or {}
-_need = ("port", "table_z_m", "table_x_min_m", "arm_gap_m", "back_limit_m", "timeout_s", "dex1_view")
+_need = ("table_z_m", "table_x_min_m", "arm_gap_m", "back_limit_m", "timeout_s", "dex1_view")
 _miss = [k for k in _need if k not in V]
 if _miss:
     sys.exit(f"[xr_view] gripper.yaml xr_view: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
@@ -328,6 +329,10 @@ def make_app(t):
             raise HTTPException(404, "mesh 없음")
         return FileResponse(view.mesh_path[name], media_type="application/octet-stream")
 
+    @app.get("/web/robot3d.js")
+    def robot3d_js():
+        return FileResponse(os.path.join(os.path.dirname(pc.robot_env.VENDOR_DIR), "robot3d.js"), media_type="application/javascript")
+
     @app.get("/vendor/three.min.js")
     def three_js():
         f = os.path.join(pc.robot_env.VENDOR_DIR, "three.min.js")
@@ -359,7 +364,7 @@ def make_app(t):
 
 def main():
     ap = argparse.ArgumentParser(description="가상 H2 3D 뷰어 (xr_virtual.py 입력, 로봇 명령 없음)")
-    ap.add_argument("--port", type=int, default=int(V["port"]))
+    ap.add_argument("--port", type=int, default=ports.PORTS["xr_viewer"])
     ap.add_argument("--table-z", type=float, default=float(V["table_z_m"]), help="테이블 높이 [m, pelvis] (-1.0 = 테이블 없음)")
     a = ap.parse_args()
     t = Viewer(a.table_z)

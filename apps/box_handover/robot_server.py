@@ -99,6 +99,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # robots/h2/robot.yaml (H2 전용)
+from pitron import ports
 from pitron import paths
 
 # ===== 경로 (robots/h2/) =====
@@ -844,7 +845,7 @@ async def lifespan(app: FastAPI):
     def _redetect():
         import urllib.request as _u
         try:
-            raw = _u.urlopen("http://localhost:50010/pose", timeout=1.0).read()
+            raw = _u.urlopen(ports.url("detect_box", "/pose"), timeout=1.0).read()
             d = json.loads(raw)
             return d if d.get("found") else None
         except Exception as e:
@@ -855,7 +856,7 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=_arm_watch, daemon=True, name="arm_watch").start()
     SYS.start()                    # 로봇 FSM · 서버 상태 (제어 화면 System 카드, GET /system)
 
-    print("[robot_server] 준비 완료  http://localhost:50000/")
+    print(f"[robot_server] 준비 완료  {ports.url('robot_server', '/')}")
     yield
 
     # ==========================================
@@ -1052,7 +1053,7 @@ def viz():
     box = other = cmp = None
     if ACTIVE_MODE == "box":
         try:
-            d = json.loads(_u.urlopen("http://localhost:50010/pose", timeout=0.3).read())
+            d = json.loads(_u.urlopen(ports.url("detect_box", "/pose"), timeout=0.3).read())
             if d.get("found") and d.get("L") and d.get("R"):
                 box = {"L": list(camera_to_torso(*d["L"])), "R": list(camera_to_torso(*d["R"])),
                        "top": list(camera_to_torso(*d["top_center"])) if d.get("top_center") else None,
@@ -1097,7 +1098,7 @@ async def grab_manual():
     import urllib.request
     if ACTIVE_MODE == "none":
         return JSONResponse({"ok": False, "reason": "mode is none"})
-    url = "http://localhost:50010/pose"
+    url = ports.url("detect_box", "/pose")
     try:
         raw = urllib.request.urlopen(url, timeout=1.0).read()
         d = json.loads(raw)
@@ -1356,8 +1357,8 @@ def _ui_inject():
 @app.get("/", include_in_schema=False)
 async def index():
     html = open(WEB_HTML_PATH, encoding="utf-8").read()
-    return HTMLResponse(html.replace("</head>", _ui_inject() + "</head>", 1), headers=NO_CACHE)
+    return HTMLResponse(ports.fill(html.replace("</head>", _ui_inject() + "</head>", 1)), headers=NO_CACHE)
 
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=50000, timeout_graceful_shutdown=2)
+    uvicorn.run(app, host="0.0.0.0", port=ports.PORTS["robot_server"], timeout_graceful_shutdown=2)

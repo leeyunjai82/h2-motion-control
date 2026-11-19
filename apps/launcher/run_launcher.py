@@ -53,6 +53,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.core import robot_env   # ROBOT 미지정/미지원이면 여기서 종료
+from pitron import ports  # noqa: E402
 from pitron import paths
 
 import uvicorn
@@ -60,7 +61,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 
-PORT = 80                   # 1024 미만 → root 필요 (launcher.sh 가 sudo 로 실행)
+PORT = ports.PORTS["launcher"]                   # 1024 미만 → root 필요 (launcher.sh 가 sudo 로 실행)
 ROOT = paths.REPO_ROOT
 LOG_DIR = paths.LOGS_DIR
 ROBOT_STOP_WAIT = 20.0      # start_robot.sh 종료 시퀀스(최대 8초 + sweep) 여유
@@ -472,7 +473,7 @@ def status():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return HTML
+    return ports.fill(HTML)
 
 
 @app.get("/i18n.js", include_in_schema=False)
@@ -592,8 +593,8 @@ function warn(title,big,body){return new Promise(res=>{
   document.addEventListener('keydown',esc);
   m.classList.add('show');document.getElementById('m-no').focus();});}
 document.getElementById('links').innerHTML=
-  `<a href="http://${host}:50000/" target="_blank">Control :50000</a>`+
-  `<a href="http://${host}:50003/dashboard" target="_blank">Dashboard :50003</a>`;
+  `<a href="http://${host}:__PORT_ROBOT_SERVER__/" target="_blank">Control :__PORT_ROBOT_SERVER__</a>`+
+  `<a href="http://${host}:__PORT_DASHBOARD__/dashboard" target="_blank">Dashboard :__PORT_DASHBOARD__</a>`;
 let CUR=null;
 // Damp 만 경고 후 실행, lock / run 은 바로 실행
 async function confirmFsm(t){
