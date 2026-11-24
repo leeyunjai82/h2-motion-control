@@ -5,5 +5,9 @@
 #   환경변수 DDS_IFACE 가 있으면 그 값이 우선
 dds_interface:
 
+# 홈 (런처) 의 그리퍼 실기 (VR 수집 · 추론): 로봇 쪽 유선 카드 = dds_interface (비우면 enp45s0 — start_gripper.sh 기본값)
+# Dex1-1 그리퍼 서비스 실행 파일 (비우면 ~/project/dex1_1_service/bin/dex1_1_gripper_server)
+dex1_bin:
+
 # 홈 (런처) 의 '5090 학습 웹' 링크. 비우면 링크를 숨김
 trainer_url:

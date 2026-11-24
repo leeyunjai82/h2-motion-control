@@ -8,8 +8,8 @@ modes:
     label: VR 수집 시작
     cmd: [start_collect.sh]
     real: true
+    gripper: true              # 그리퍼 서비스 · 카메라 숙임 확인은 런처(root)가 함
     open: pick_web:/collect
-    todo: 그리퍼 서비스 권한 처리 후 (지금은 터미널 ./start_collect.sh)
   - id: pick_sim
     step: collect
     label: 가상 (그리퍼 시뮬)
@@ -20,5 +20,5 @@ modes:
     label: 추론 시작
     cmd: [start_gripper.sh]
     real: true
+    gripper: true
     open: pick_web:/collect
-    todo: 그리퍼 서비스 권한 처리 후 (지금은 터미널 ./start_gripper.sh)

@@ -27,6 +27,9 @@ for a in "$@"; do
   esac
 done
 DEX1_BIN="${DEX1_BIN:-$HOME/project/dex1_1_service/bin/dex1_1_gripper_server}"
+# 홈 (런처, root) 에서 실행: 그리퍼 서비스 · 카메라 숙임 확인은 런처가 root 로 미리 함 → 여기서는 sudo · yes 입력 없음
+#   GRIPPER_BY_LAUNCHER=1 · CAM_CHECK_FILE=<런처가 돌린 check_rsimu 출력>. 터미널 실행은 예전과 같음
+BY_LAUNCHER=0; [ "${GRIPPER_BY_LAUNCHER:-}" = "1" ] && BY_LAUNCHER=1
 
 source "$ROOT/robot_env.sh" || exit 1
 if [ ! -f "$ROOT/robots/${ROBOT}/robot.yaml" ]; then echo "❌ robots/${ROBOT}/robot.yaml 없음" >&2; exit 2; fi
@@ -37,6 +40,7 @@ if up "http://localhost:${PORT_PICK_WEB}/"; then
   OLD=$(pgrep -f "start_gripper.sh" | grep -v -w "$$" || true)
   echo "⚠️  잡기 웹(${PORT_PICK_WEB})이 이미 떠 있음 — 앞 실행 $( [ -n "$OLD" ] && echo "(start_gripper.sh PID $(echo $OLD | tr '\n' ' '))" || echo "(창 없이 남은 프로그램)")"
   echo "    끄면 팔은 그 자리 · 그리퍼 힘이 풀림 — 잡고 있는 물건이 있으면 먼저 내려놓기"
+  if [ $BY_LAUNCHER -eq 1 ]; then echo "❌ 터미널에서 띄운 잡기 웹이 남아 있음 — 그 창에서 Ctrl+C 로 끈 뒤 다시" >&2; exit 1; fi
   read -r -p "   앞 실행을 끄고 다시 시작하려면 yes 입력: " ans
   [ "$ans" = "yes" ] || { echo "취소"; exit 1; }
   if [ -n "$OLD" ]; then
@@ -54,12 +58,14 @@ fi
 if [ $SIM -eq 0 ]; then
   echo "⚠️  실기 그리퍼 잡기 (ROBOT=$ROBOT, $IFACE) — 로봇을 거치대에 걸고 FSM 703 (start_fsm.sh stand),"
   echo "    주변을 비우고, E-STOP 을 손에 두세요."
-  read -r -p "   계속하려면 yes 입력: " ans
-  [ "$ans" = "yes" ] || { echo "취소"; exit 1; }
-  [ -x "$DEX1_BIN" ] || { echo "❌ 그리퍼 서비스 없음: $DEX1_BIN (INSTALL.md 10단계, 다른 위치면 DEX1_BIN=...)" >&2; exit 1; }
+  if [ $BY_LAUNCHER -eq 0 ]; then
+    read -r -p "   계속하려면 yes 입력: " ans
+    [ "$ans" = "yes" ] || { echo "취소"; exit 1; }
+  fi
+  [ $BY_LAUNCHER -eq 1 ] || [ -x "$DEX1_BIN" ] || { echo "❌ 그리퍼 서비스 없음: $DEX1_BIN (INSTALL.md 10단계, 다른 위치면 DEX1_BIN=...)" >&2; exit 1; }
   ip -br addr show "$IFACE" 2>/dev/null | grep -q "192.168.123." || {
     echo "❌ $IFACE 에 192.168.123.x 주소 없음 — 로봇 123 대역 포트에 연결됐는지 확인 (ip -br addr)" >&2; exit 1; }
-  sudo -v || exit 1        # 그리퍼 서비스용 — 비밀번호를 여기서 한 번 (끌 때 sudo kill 도 이 인증으로)
+  [ $BY_LAUNCHER -eq 1 ] || sudo -v || exit 1        # 그리퍼 서비스용 — 비밀번호를 여기서 한 번 (끌 때 sudo kill 도 이 인증으로)
 else
   for p in ${PORT_ARM_SERVER}; do
     if up "http://localhost:$p/status"; then echo "❌ 포트 $p 사용 중 (실기 arm_server?) — --sim 은 따로 띄움, 먼저 끄세요" >&2; exit 1; fi
@@ -87,7 +93,7 @@ cleanup() {
     fi
   done
   [ -n "$KEEP" ] && kill "$KEEP" 2>/dev/null
-  if [ $SIM -eq 0 ] && pgrep -f dex1_1_gripper_server >/dev/null; then
+  if [ $SIM -eq 0 ] && [ $BY_LAUNCHER -eq 0 ] && pgrep -f dex1_1_gripper_server >/dev/null; then
     echo "[stop] ⚠ 그리퍼 서비스가 남아 있음 — sudo pkill -f dex1_1_gripper_server"
   fi
   echo "[stop] 완료"; exit 0
@@ -100,7 +106,10 @@ wait_http() {  # wait_http <url> <초>
 }
 
 # 1) 그리퍼 서비스 (실기만)
-if [ $SIM -eq 0 ]; then
+if [ $SIM -eq 0 ] && [ $BY_LAUNCHER -eq 1 ]; then
+  pgrep -f dex1_1_gripper_server >/dev/null || { echo "❌ 그리퍼 서비스가 안 떠 있음 (런처가 띄워야 함)" >&2; exit 1; }
+  echo "[start] dex1_service  런처가 띄움 — 재사용 (끄는 것도 런처)"
+elif [ $SIM -eq 0 ]; then
   ( while true; do sudo -n true 2>/dev/null; sleep 60; done ) & KEEP=$!
   if pgrep -f dex1_1_gripper_server >/dev/null; then
     echo "❌ 그리퍼 서비스가 이미 떠 있음 (다른 창?) — 끄고 다시: sudo pkill -f dex1_1_gripper_server" >&2; exit 1
@@ -169,7 +178,11 @@ fi
 CAM_OK=0.5; CAM_MAX=1.0
 if [ $SIM -eq 0 ] && [ $CAMCHECK -eq 1 ]; then
   echo "[start] 카메라 숙임 확인 (check_rsimu 3 초, 저장 안 함 — 로봇을 건드리지 마세요) ..."
-  CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/tools/check_rsimu.py" --sec 3 "$IFACE" 2>&1)
+  if [ $BY_LAUNCHER -eq 1 ] && [ -n "${CAM_CHECK_FILE:-}" ]; then
+    CR=$(cat "$CAM_CHECK_FILE" 2>/dev/null)          # 런처가 root 로 방금 잰 결과
+  else
+    CR=$(cd "$ROOT" && sudo "$TV_PY" "$ROOT/tools/check_rsimu.py" --sec 3 "$IFACE" 2>&1)
+  fi
   echo "$CR" | stamp >> "$LOG_DIR/check_rsimu_$DAY.log"
   echo "$CR" | grep -E "▶|지금 camera.pitch_deg|❌" | sed 's/^/          /'
   DIFF=$(echo "$CR" | grep "지금 camera.pitch_deg" | sed -n 's/.*(차이 \([-+0-9.]*\).*/\1/p')

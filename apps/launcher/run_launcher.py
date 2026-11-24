@@ -40,6 +40,7 @@ import html
 import json
 import os
 import pwd
+import re
 import signal
 import subprocess
 import sys
@@ -363,11 +364,12 @@ class Job:
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self, args, label, as_user=False, env_extra=None):
+    def start(self, args, label, as_user=False, env_extra=None, keep_lines=False):
         with self.lock:
             if self.running():
                 raise HTTPException(409, f"{self.name} 실행 중: {self.label}")
-            self.lines.clear()
+            if not keep_lines:
+                self.lines.clear()
             self.label, self.rc = label, None
             self.started, self.ended = time.time(), 0.0
             logf = _logfile(self.name)
@@ -448,9 +450,126 @@ def local_cfg():
         return yaml.safe_load(fh) or {}
 
 
+def busy():
+    """실행 중이거나 시작 준비 중 (그리퍼 서비스 · 카메라 확인)."""
+    return job.running() or PREP["on"]
+
+
 def real_running():
     m = CUR_MODE["m"]
-    return job.running() and m is not None and m["real"]
+    return busy() and m is not None and m["real"]
+
+
+# ==========================================
+# 그리퍼 실기 (app.yaml gripper: true) — root 가 필요한 일은 런처가 함 (웹에서는 sudo 비밀번호를 물을 곳이 없음)
+#   ① Dex1-1 그리퍼 서비스 (모터 두 개를 찾을 때까지 최대 3 번 — start_gripper.sh 와 같은 방식)
+#   ② 카메라 숙임 확인 (tools/check_rsimu.py 3 초, root) → 결과 파일을 start_gripper.sh 에 넘김 (판단은 스크립트)
+#   ③ start_gripper.sh (사용자 권한, GRIPPER_BY_LAUNCHER=1) — 끝나면 그리퍼 서비스를 마지막에 끔
+# ==========================================
+PREP = {"on": False, "cancel": False}
+DEX1 = {"proc": None}
+
+
+def robot_iface():
+    return str(local_cfg().get("dds_interface") or "enp45s0")      # start_gripper.sh 기본값과 같음
+
+
+def dex1_bin():
+    home = USER_PW.pw_dir if USER_PW else os.path.expanduser("~")
+    return str(local_cfg().get("dex1_bin") or os.path.join(home, "project", "dex1_1_service", "bin", "dex1_1_gripper_server"))
+
+
+def _say(msg):
+    job.lines.append(f"[{time.strftime('%H:%M:%S')}] [launcher] {msg}")
+
+
+def _kill(p, wait=8):
+    if p is None or p.poll() is not None:
+        return
+    p.terminate()
+    try:
+        p.wait(wait)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait(3)
+
+
+def dex1_start(iface):
+    b = dex1_bin()
+    if not os.access(b, os.X_OK):
+        raise RuntimeError(f"그리퍼 서비스 실행 파일 없음: {b} (다른 위치면 config/local.yaml dex1_bin)")
+    if subprocess.run(["pgrep", "-f", "dex1_1_gripper_server"], capture_output=True).returncode == 0:
+        raise RuntimeError("그리퍼 서비스가 이미 떠 있음 (터미널?) — 끄고 다시: sudo pkill -f dex1_1_gripper_server")
+    logp = os.path.join(LOG_DIR, f"dex1_service_{time.strftime('%Y%m%d')}.log")
+    for attempt in (1, 2, 3):
+        if PREP["cancel"]:
+            raise RuntimeError("취소")
+        _say(f"그리퍼 서비스 {b} -n {iface} … (시도 {attempt}/3)")
+        lines = []
+        p = subprocess.Popen([b, "-n", iface], cwd=os.path.dirname(b), stdin=subprocess.DEVNULL,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1, start_new_session=True)
+
+        def pump(p=p, lines=lines):
+            with open(logp, "a", encoding="utf-8") as f:
+                _own(logp)
+                for ln in p.stdout:
+                    lines.append(ln)
+                    f.write(f"[{time.strftime('%H:%M:%S')}] {ln}")
+                    f.flush()
+        threading.Thread(target=pump, daemon=True).start()
+        t0 = time.time()
+        while time.time() - t0 < 15 and p.poll() is None and not any("Gripper Server started" in x for x in lines):
+            time.sleep(0.3)
+        time.sleep(0.5)
+        found = sorted(set(re.findall(r"Motor ID: ([01])", "".join(lines))))
+        _say(f"그리퍼 서비스 찾은 모터: {found or '없음'}")
+        if found == ["0", "1"] and p.poll() is None:
+            DEX1["proc"] = p
+            return
+        _kill(p, 5)
+        if attempt < 3:
+            _say("둘 다 못 찾음 — 2 초 뒤 다시")
+            time.sleep(2)
+    raise RuntimeError(f"3 번 다 그리퍼 둘 다 못 찾음 (ID 0 = 오른손, ID 1 = 왼손) — 빠진 손 전원 · 485 선 확인 (로그 {logp})")
+
+
+def dex1_stop():
+    p = DEX1["proc"]
+    if p is not None and p.poll() is None:
+        _say("그리퍼 서비스 끔")
+        _kill(p, 8)
+    DEX1["proc"] = None
+
+
+def cam_check(iface):
+    _say("카메라 숙임 확인 (check_rsimu 3 초 — 로봇을 건드리지 마세요) …")
+    r = subprocess.run([sys.executable, os.path.join(ROOT, "tools", "check_rsimu.py"), "--sec", "3", iface],
+                       cwd=ROOT, capture_output=True, text=True, timeout=90)
+    path = os.path.join(LOG_DIR, "launcher_cam_check.txt")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(r.stdout + r.stderr)
+    _own(path)
+    return path
+
+
+def _prep_and_start(m, cmd, env):
+    try:
+        iface = robot_iface()
+        dex1_start(iface)
+        if PREP["cancel"]:
+            raise RuntimeError("취소")
+        if "--no-cam-check" not in cmd:
+            env["CAM_CHECK_FILE"] = cam_check(iface)
+        if PREP["cancel"]:
+            raise RuntimeError("취소")
+        env["GRIPPER_BY_LAUNCHER"] = "1"
+        job.start(["bash"] + cmd + [iface], f"{m['app_title']} · {m['label']}", as_user=True, env_extra=env, keep_lines=True)
+        threading.Thread(target=_watch_end, args=(job.proc, m), daemon=True).start()
+    except Exception as e:  # noqa: BLE001
+        _say(f"❌ 시작 못 함: {e}")
+        dex1_stop()
+    finally:
+        PREP.update(on=False, cancel=False)
 
 
 # ---- 미니 PC 학습: GPU 최대 클럭 제한 (Arc B390 2500 MHz 연속 부하에서 PC 멈춤 — apps/trainer/start_trainer_xpu.sh) ----
@@ -485,6 +604,8 @@ def _watch_end(p, m):
     p.wait()
     if m.get("xpu_cap"):
         xpu_cap(False)
+    if m.get("gripper"):
+        dex1_stop()          # 잡기 웹 · arm_server 가 먼저 끝난 뒤 (start_gripper.sh 와 같은 순서)
 
 
 def start_mode(mid):
@@ -493,7 +614,7 @@ def start_mode(mid):
         raise HTTPException(404, f"모드 없음: {mid}")
     if m.get("todo"):
         raise HTTPException(409, f"아직 웹에서 시작 못 함 — {m['todo']}")
-    if job.running():
+    if busy():
         raise HTTPException(409, f"실행 중: {CUR_MODE['m']['app_title']} · {CUR_MODE['m']['label']} — 먼저 정지")
     if SEQ["busy"]:
         raise HTTPException(409, "종료 진행 중")
@@ -505,6 +626,15 @@ def start_mode(mid):
             raise HTTPException(409, f"FSM {cur} ({FSM_NAME.get(cur, '')}) — {FSM_DAMP} → {FSM_LOCK} → {FSM_RUN} 로 {_LBL['run_enter']} 진입 후 시작")
     CUR_MODE["m"] = m
     SEQ.update(msg="", ok=None)
+    if m.get("gripper") and m["real"]:
+        if USER_PW is None:
+            raise HTTPException(409, "런처가 sudo 로 실행되지 않음 — ./launcher.sh 로 띄울 것")
+        job.lines.clear()
+        job.label, job.rc, job.started, job.ended = f"{m['app_title']} · {m['label']} (준비 중)", None, time.time(), 0.0
+        PREP.update(on=True, cancel=False)
+        threading.Thread(target=_prep_and_start, args=(m, [os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], {}),
+                         daemon=True).start()
+        return
     if m.get("xpu_cap"):
         xpu_cap(True)
     job.start(["bash", os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], f"{m['app_title']} · {m['label']}",
@@ -516,8 +646,15 @@ def start_mode(mid):
 
 def stop_job():
     """bash 에만 SIGTERM → 각 start 스크립트의 trap cleanup (Ctrl+C 와 같은 종료 순서). → 정상 종료 여부"""
+    if PREP["on"]:
+        PREP["cancel"] = True
+        for _ in range(200):
+            if not PREP["on"]:
+                break
+            time.sleep(0.3)
     p = job.proc
     if p is None or p.poll() is not None:
+        dex1_stop()
         return True
     p.send_signal(signal.SIGTERM)
     try:
@@ -550,7 +687,7 @@ def _shutdown():
         SEQ.update(msg=msg, ok=ok)
         fsm.log(f"[종료] {msg}")
     try:
-        if job.running():
+        if busy():
             say("실행 중인 것 정지 중 (팔 기본 자세 · 제어권 반납) …")
             if not stop_job():
                 say("정지가 늦어 강제로 끔 — 팔 반납이 생략됐을 수 있어 자동 Damp 안 함. 로봇을 확인하고 Damp 를 직접 누르세요", False)
@@ -583,9 +720,10 @@ async def lifespan(app: FastAPI):
     yield
     # launcher 종료(Ctrl+C) 시 로봇 서버도 정상 종료 시퀀스로 정지.
     # 남겨두면 다음 start_robot.sh 의 sweep 이 SIGKILL 로 죽여 arm 제어권 반납이 생략된다.
-    if job.running():
+    if busy():
         print("[launcher] 종료 — 실행 중인 것 정지 중...")
         stop_job()
+    dex1_stop()
 
 
 app = FastAPI(title="pitron launcher", lifespan=lifespan)
@@ -613,7 +751,7 @@ def apps_list():
         b["modes"] = []
         for m in a.get("modes") or []:
             o = m.get("open")
-            b["modes"].append({**{k: m.get(k) for k in ("id", "label", "real", "step", "todo")},
+            b["modes"].append({**{k: m.get(k) for k in ("id", "label", "real", "step", "todo", "gripper")},
                                "open": {"port": ports.PORTS[o.split(":", 1)[0]], "path": o.split(":", 1)[1]} if o else None})
         b["links"] = [{"step": l.get("step"), "label": l["label"], "url": url} for l in a.get("links") or []
                       if l.get("url_from") == "trainer_url" and url]
@@ -629,7 +767,7 @@ def app_start(mid: str):
 
 @app.post("/app/stop")
 def app_stop():
-    if not job.running():
+    if not busy():
         return {"ok": True, "already": True}
     threading.Thread(target=stop_job, daemon=True).start()
     return {"ok": True}
@@ -648,7 +786,8 @@ def shutdown():
 def status():
     m = CUR_MODE["m"]
     return {"fsm": fsm.state(real_running()),
-            "job": {**job.state(), "mode": m["id"] if m else None, "real": bool(m and m["real"])},
+            "job": {**job.state(), "running": busy(), "prep": PREP["on"], "mode": m["id"] if m else None,
+                    "real": bool(m and m["real"])},
             "seq": dict(SEQ)}
 
 
@@ -826,7 +965,8 @@ async function fsm(t){if(!await confirmFsm(t))return;
   try{await post('/fsm/'+t);}catch(e){alert(e.message);}poll();}
 async function fsmCancel(){try{await post('/fsm_cancel');}catch(e){}poll();}
 async function appStart(id){const m=APPS.flatMap(a=>a.modes).find(x=>x.id===id);if(!m)return;
-  const msg=m.real?`${m.label} — 실제 로봇이 움직입니다.\n\n· 거치대 · FSM ${FSM.run} 확인\n· 주변을 비우고 E-STOP 을 손에`:`${m.label} — 로봇 없이 (가상)`;
+  const msg=m.real?`${m.label} — 실제 로봇이 움직입니다.\n\n· 거치대 · FSM ${FSM.run} 확인\n· 주변을 비우고 E-STOP 을 손에`+
+    (m.gripper?`\n· 그리퍼 서비스를 켜고 카메라 숙임을 3 초 잽니다 — 그동안 로봇을 건드리지 마세요`:''):`${m.label} — 로봇 없이 (가상)`;
   if(!confirm(msg))return;
   try{await post('/app/'+id+'/start');}catch(e){alert(e.message);}poll();}
 async function appStop(){if(!confirm('실행 중인 것을 정지합니다 (팔 기본 자세 · 제어권 반납 후 종료).'))return;
@@ -878,6 +1018,7 @@ async function poll(){try{const d=await(await fetch('/status')).json();
   document.getElementById('b-shut').disabled=sq.busy;
   document.getElementById('job-mode').textContent=j.label||'';
   if(sq.busy)setState('rb-s','run','종료: '+sq.msg);
+  else if(j.prep)setState('rb-s','run',`${j.label} — 그리퍼 서비스 · 카메라 확인 중`);
   else if(j.running)setState('rb-s','on',`${j.label} — 실행 중 (${Math.floor(j.elapsed/60)}분 ${Math.floor(j.elapsed%60)}초)`);
   else if(sq.msg&&sq.ok!==null)setState('rb-s',sq.ok?'':'err','종료: '+sq.msg);
   else if(j.label)setState('rb-s',j.rc===0?'':'err',`${j.label} — 정지됨 (rc=${j.rc})`);
