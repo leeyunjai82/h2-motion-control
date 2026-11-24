@@ -5,7 +5,7 @@
 #   먼저 (한 번):  ROBOT_CHECK=1 ./start_fsm.sh stand        # 거치대 + FSM 703
 #   ./start_gripper.sh [인터페이스]       # 기본 enp45s0 — 실기: 팔·그리퍼가 움직임
 #   ./start_gripper.sh --sim             # 로봇 없이: fake_robot(DDS 도메인 1) + arm_server + 잡기 웹 (가짜 카메라 · 그리퍼)
-#   ./start_gripper.sh --vr              # VR 수집까지: + xr_virtual --real (Quest 입력) + Quest 페이지 열기 → 수집 화면 /collect
+#   ./start_gripper.sh --vr              # VR 수집까지: 잡기 웹이 Quest 연결 (xr_virtual --real) 을 켜고 Quest 페이지를 엶 → 수집 화면 /collect
 #                                          (보통 ./start_collect.sh 로 실행. xr_teleoperate 경로: XR_DIR, 기본 ~/xr_teleoperate)
 #   ./start_gripper.sh --no-cam-check    # 시작 때 카메라 숙임 확인(check_rsimu 3 초, 저장 안 함 — 기준값과 1° 넘게 다르면 멈춤)을 건너뜀
 #
@@ -92,6 +92,7 @@ cleanup() {
       if [ "${NAMES[$i]}" = "dex1_service" ]; then sudo kill -9 "$pid" 2>/dev/null || true; else kill -9 "$pid" 2>/dev/null || true; fi
     fi
   done
+  pkill -INT -f "apps/gripper_pick/xr_virtual.py" 2>/dev/null || true     # Quest 연결 (잡기 웹이 띄운 것) 이 남았으면
   [ -n "$KEEP" ] && kill "$KEEP" 2>/dev/null
   if [ $SIM -eq 0 ] && [ $BY_LAUNCHER -eq 0 ] && pgrep -f dex1_1_gripper_server >/dev/null; then
     echo "[stop] ⚠ 그리퍼 서비스가 남아 있음 — sudo pkill -f dex1_1_gripper_server"
@@ -204,53 +205,33 @@ if [ $SIM -eq 0 ] && [ $CAMCHECK -eq 1 ]; then
   fi
 fi
 
-# 4) 잡기 웹
+# 4) VR 수집 (--vr): Quest 연결 (xr_virtual: xr_teleoperate + H2 IK, Vuer :8012) 은 잡기 웹이 켜고 adb 로 Quest 페이지까지 엶.
+#    끊기면 수집 화면 [VR 연결] 에서 [재연결] · [Quest 페이지 열기]
+VR_ENV=""
+if [ $VR -eq 1 ]; then
+  XR_DIR="${XR_DIR:-$HOME/xr_teleoperate}"
+  [ -d "$XR_DIR/teleop" ] || { echo "❌ xr_teleoperate 없음: $XR_DIR (XR_DIR 로 지정)" >&2; exit 1; }
+  VR_ENV="XR_AUTOSTART=1 XR_DIR=$XR_DIR"
+fi
+
+# 5) 잡기 웹
 cd "$ROOT"
 echo "[start] pick_web      (${PORT_PICK_WEB}) ..."
 if [ $SIM -eq 1 ]; then
-  ROBOT_SIM=1 python -u apps/gripper_pick/pick_web.py --sim --sim-top-z 0.14 > >(stamp >> "$LOG_DIR/${TAG}pick_web_$DAY.log") 2>&1 &
+  env $VR_ENV ROBOT_SIM=1 python -u apps/gripper_pick/pick_web.py --sim --sim-top-z 0.14 > >(stamp >> "$LOG_DIR/${TAG}pick_web_$DAY.log") 2>&1 &
 else
-  python -u apps/gripper_pick/pick_web.py "$IFACE" > >(stamp >> "$LOG_DIR/pick_web_$DAY.log") 2>&1 &
+  env $VR_ENV python -u apps/gripper_pick/pick_web.py "$IFACE" > >(stamp >> "$LOG_DIR/pick_web_$DAY.log") 2>&1 &
 fi
 PIDS+=($!); NAMES+=("pick_web")
 wait_http "http://localhost:${PORT_PICK_WEB}/" 60 || exit 1
 
-# 5) VR 수집 (--vr): Quest 입력 (xr_teleoperate + H2 IK) → 잡기 웹, Quest 페이지 열기
-if [ $VR -eq 1 ]; then
-  XR_DIR="${XR_DIR:-$HOME/xr_teleoperate}"
-  [ -d "$XR_DIR/teleop" ] || { echo "❌ xr_teleoperate 없음: $XR_DIR (XR_DIR 로 지정)" >&2; exit 1; }
-  # 앞에 띄운 xr_virtual 이 남아 8012 를 잡고 있으면 새 것이 포트를 못 열고 Quest 는 옛 것에 붙음 (입력이 안 옴) → 먼저 정리
-  if pgrep -f "apps/gripper_pick/xr_virtual.py" >/dev/null; then
-    echo "[start] 남아 있는 xr_virtual 끔"; pkill -f "apps/gripper_pick/xr_virtual.py"; sleep 2
-    pgrep -f "apps/gripper_pick/xr_virtual.py" >/dev/null && { pkill -9 -f "apps/gripper_pick/xr_virtual.py"; sleep 1; }
-  fi
-  if curl -sk -m 1 -o /dev/null https://localhost:${PORT_XR_VUER}/; then
-    echo "❌ ${PORT_XR_VUER} 포트를 다른 프로그램이 쓰는 중 — 그 프로그램을 끄고 다시:" >&2
-    ss -ltnp 2>/dev/null | grep ":${PORT_XR_VUER} " >&2
-    exit 1
-  fi
-  echo "[start] xr_virtual    (Vuer ${PORT_XR_VUER}, Quest 입력 → 잡기 웹) ..."
-  python -u apps/gripper_pick/xr_virtual.py --xr "$XR_DIR" --real --display pass-through > >(stamp >> "$LOG_DIR/${TAG}xr_virtual_$DAY.log") 2>&1 &
-  PIDS+=($!); NAMES+=("xr_virtual")
-  for _ in $(seq 1 60); do curl -sk -m 1 -o /dev/null https://localhost:${PORT_XR_VUER}/ && break; sleep 1; done
-  curl -sk -m 1 -o /dev/null https://localhost:${PORT_XR_VUER}/ || { echo "❌ Vuer (${PORT_XR_VUER}) 가 안 뜸 — 로그: $LOG_DIR/${TAG}xr_virtual_$DAY.log" >&2; exit 1; }
-  if command -v adb >/dev/null && [ "$(adb get-state 2>/dev/null)" = "device" ]; then
-    adb shell am broadcast -a com.oculus.vrpowermanager.prox_close >/dev/null 2>&1
-    adb reverse tcp:${PORT_XR_VUER} tcp:${PORT_XR_VUER} >/dev/null
-    adb shell am start -a android.intent.action.VIEW -d "https://localhost:${PORT_XR_VUER}/?ws=wss://localhost:${PORT_XR_VUER}" com.oculus.browser >/dev/null
-    echo "  ✓ Quest: 페이지 열음 — 컨트롤러로 왼쪽 아래 'pass-through'"
-  else
-    echo "  ⚠ Quest 가 adb 에 안 잡힘 (USB · 디버깅 허용 확인) — 연결 뒤:"
-    echo "     adb reverse tcp:${PORT_XR_VUER} tcp:${PORT_XR_VUER} && adb shell am start -a android.intent.action.VIEW -d \"https://localhost:${PORT_XR_VUER}/?ws=wss://localhost:${PORT_XR_VUER}\" com.oculus.browser"
-  fi
-fi
 
 echo ""
 echo "  ✓ 그리퍼 잡기 실행 중 ($([ $SIM -eq 1 ] && echo 'SIM — 가짜 로봇 · 카메라 · 그리퍼' || echo "실기, $IFACE"))"
 echo "    - 잡기 웹     : http://$(hostname -I 2>/dev/null | awk '{print $1}'):${PORT_PICK_WEB}/  (이 PC: http://localhost:${PORT_PICK_WEB}/)"
 [ $VR -eq 1 ] && echo "    - 수집 화면   : http://$(hostname -I 2>/dev/null | awk '{print $1}'):${PORT_PICK_WEB}/collect  (이 PC: http://localhost:${PORT_PICK_WEB}/collect)"
 echo "    - arm_server  : http://localhost:${PORT_ARM_SERVER}/status"
-echo "    - 로그         : $LOG_DIR/${TAG}{dex1_service,arm_server,pick_web$([ $VR -eq 1 ] && echo ',xr_virtual')}_$DAY.log"
+echo "    - 로그         : $LOG_DIR/${TAG}{dex1_service,arm_server,pick_web}_$DAY.log  (Quest 연결 로그도 pick_web 에)"
 echo "    - 종료         : Ctrl+C"
 echo ""
 # 띄운 것이 죽으면 바로 알림 (다시 띄우지는 않음 — 그리퍼 서비스가 죽으면 그리퍼 힘이 풀림)

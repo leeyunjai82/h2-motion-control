@@ -205,6 +205,16 @@ def main():
 
     dt = 1.0 / a.hz
     n_ok, t_print, t_poll = 0, time.monotonic(), 0.0
+    live = {"input": False}
+
+    def hello_loop():                          # 잡기 웹 [VR 연결] 상태 표시용 (1 초마다)
+        while real:
+            try:
+                post(real + "/api/xr/hello", {"input": live["input"], "n": n_ok, "session": sess["active"], "pid": os.getpid()}, timeout=1.0)
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(1.0)
+    threading.Thread(target=hello_loop, daemon=True).start()
 
     def step():
         nonlocal n_ok, t_print, t_poll, q_last
@@ -217,12 +227,16 @@ def main():
                 if s.get("active") and s.get("q0") and s.get("epoch") != sess["epoch"]:
                     q_last = np.array([s["q0"][n] for n in names])
                     reset_ik(q_last)
+                    ho = s.get("hand_offset")              # 웹에서 바꾼 손 오프셋 (세션마다 새로)
+                    if isinstance(ho, list) and len(ho) == 3:
+                        HAND_OFF.update(left=np.array([ho[0], ho[1], ho[2]], float), right=np.array([ho[0], -ho[1], ho[2]], float))
                     base = f"ROBOT ON {float(s['max_vel']):.2f} rad/s - hold GRIP to move"
                     sess.update(active=True, epoch=s["epoch"], vmax=a.joint_vmax or float(s["max_vel"]), base=base, msg=base)
                     print(f"[xr] 실제 팔 세션 #{s['epoch']} 시작 — 그립을 누른 손만 움직임", flush=True)
             except Exception:  # noqa: BLE001
                 pass
         d = tv.get_tele_data()
+        live["input"] = bool(d.motion_data_ready)
         if real and sess["active"] and not d.motion_data_ready:
             # Quest 입력이 아직 없음 (VR 안 들어감 · 화면 꺼짐) — 그 자리 유지 명령만 보내 세션을 살려 둠 (팔은 안 움직임)
             try:

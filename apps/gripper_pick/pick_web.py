@@ -42,6 +42,8 @@ from pitron.learning import recorder as rec
 from pitron.learning import camfit, lerobot_env
 from pitron import ports
 import policy as pol
+import vr_settings
+import xr_bridge
 import xr_real
 
 import cv2
@@ -1196,7 +1198,7 @@ def make_app(r: Runner):
     # ----- VR 조작 (apps/gripper_pick/xr_virtual.py --real → 여기 → arm_server · 그리퍼) -----
     @app.post("/api/xr/start")
     def api_xr_start(body: dict):
-        return r.xr.start(float(body.get("max_vel", xr_real.X["real_max_vel"])), CAM_PITCH_MAX, bool(body.get("no_table", False)))
+        return r.xr.start(float(body.get("max_vel", vr_settings.get()["real_max_vel"])), CAM_PITCH_MAX, bool(body.get("no_table", False)))
 
     @app.post("/api/xr/stop")
     def api_xr_stop():
@@ -1210,6 +1212,48 @@ def make_app(r: Runner):
     @app.get("/api/xr/state")
     def api_xr_state():
         return r.xr.state()
+
+    # ----- VR 연결 (Quest 연결 프로그램 xr_virtual 켜기 · 끄기 · 다시 켜기, adb) · 설정 -----
+    @app.post("/api/xr/hello")
+    def api_xr_hello(body: dict):
+        r.bridge.on_hello(body)
+        return {"ok": True}
+
+    @app.get("/api/vr")
+    def api_vr(adb: bool = False):
+        return {"bridge": r.bridge.status(with_adb=adb), "settings": vr_settings.describe(), "active": r.xr.active,
+                "displays": xr_bridge.DISPLAYS}
+
+    @app.post("/api/vr/bridge")
+    def api_vr_bridge(body: dict):
+        act = str(body.get("action", ""))
+        if act not in ("start", "stop", "restart"):
+            raise HTTPException(400, "action: start · stop · restart")
+        if act != "start" and r.xr.active:
+            raise HTTPException(409, "VR 조작 중 — 먼저 [■ 끝]")
+        try:
+            st = getattr(r.bridge, act)(**({} if act == "stop" else {"display": body.get("display") or None}))
+        except (RuntimeError, ValueError) as e:
+            raise HTTPException(409, str(e))
+        return st
+
+    @app.post("/api/vr/quest")
+    def api_vr_quest():
+        try:
+            return {"msg": r.bridge.quest_open()}
+        except (RuntimeError, OSError) as e:
+            raise HTTPException(409, str(e))
+
+    @app.post("/api/vr/settings")
+    def api_vr_settings(body: dict):
+        if r.xr.active:
+            raise HTTPException(409, "VR 조작 중에는 설정을 바꿀 수 없음 — 먼저 [■ 끝]")
+        try:
+            vr_settings.reset() if body.get("reset") else vr_settings.save(body.get("changes") or {})
+        except (ValueError, TypeError) as e:
+            raise HTTPException(400, str(e))
+        r.say("VR 설정 " + ("기본값으로" if body.get("reset") else "바꿈: " + ", ".join(f"{k}={v}" for k, v in (body.get("changes") or {}).items())))
+        return vr_settings.describe()
 
     @app.get("/api/state")
     def api_state():
@@ -1484,6 +1528,22 @@ def main():
     r = Runner(mdl, cam, grip, a.sim or a.cam_only, cam_pitch=None if (a.sim or a.cam_only) else camp, wrist=wrist)
     r.cam_only = a.cam_only
     r.xr = xr_real.XRTeleop(r)
+    r.bridge = xr_bridge.XRBridge(log=r.say)
+    import atexit
+    atexit.register(lambda: r.bridge.running() and r.bridge.stop())   # 잡기 웹이 끝나면 Quest 연결 프로그램도
+    if os.environ.get("XR_AUTOSTART") == "1":        # start_collect.sh (--vr): 켤 때 Quest 연결까지 (끊기면 수집 화면 [재연결])
+        def _auto():
+            time.sleep(2.0)                          # 웹이 뜬 뒤 (연결 프로그램이 잡기 웹에 붙음)
+            try:
+                r.bridge.start()
+                for _ in range(60):
+                    if r.bridge.status()["vuer"]:
+                        break
+                    time.sleep(1.0)
+                r.bridge.quest_open()
+            except Exception as e:  # noqa: BLE001
+                print(f"[pick] Quest 연결 자동 시작: {e}")
+        threading.Thread(target=_auto, daemon=True).start()
     print(f"[pick] http://0.0.0.0:{a.port}/  ({'SIM' if a.sim else '카메라만' if a.cam_only else 'real'}) — TCP {pc.TCP_OFF.tolist()} m, "
           f"집게 {pc.MM_PER_RAD} mm/rad (계산값)")
     uvicorn.run(make_app(r), host="0.0.0.0", port=a.port, log_level="warning")

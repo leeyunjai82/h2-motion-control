@@ -28,22 +28,26 @@ import pinocchio as pin
 from fastapi import HTTPException
 
 import pick_core as pc
+import vr_settings
 from pick_core import P
 
-X = pc.CFG.get("xr_view") or {}
-_need = ("arm_gap_m", "back_limit_m", "table_x_min_m", "real_max_vel", "grip_open_mm")
-_miss = [k for k in _need if k not in X]
-if _miss:
-    raise SystemExit(f"[xr] gripper.yaml xr_view: 에 {_miss} 없음 — 기본값으로 대신하지 않음")
+X = vr_settings.get()       # 시작 때 값 (기본 gripper.yaml xr_view + 웹에서 바꾼 data/settings/vr.json). 세션마다 다시 읽음
 MAX_VEL_CAP = 1.0           # VR 실기 스트림 max_vel 상한 [rad/s]
 JUMP_RAD = 0.5              # 한 명령에서 관절 목표가 이보다 크게 바뀌면 버림 (IK 튐)
 IDLE_END_S = 1.5            # 이 시간 넘게 명령이 없으면 세션 끝
 if "object_mm" not in P:
     raise SystemExit("[xr] gripper.yaml pick.object_mm (잡는 물건 크기) 없음")
 OBJ_MM = float(P["object_mm"])
-GRIP_OPEN_MM = min(float(X["grip_open_mm"]), pc.gap_mm(pc.Q_HI))   # 트리거 놓음 = 이만큼 벌림 (gripper.yaml xr_view.grip_open_mm — 스크립트 잡기와 따로)
-if GRIP_OPEN_MM <= OBJ_MM + 4:
-    raise SystemExit(f"[xr] xr_view.grip_open_mm {GRIP_OPEN_MM} — 물건 {OBJ_MM} mm 보다 4 mm 넘게 커야 함")
+
+def grip_open_of(cfg):
+    """트리거 놓음 = 이만큼 벌림 (xr_view.grip_open_mm — 스크립트 잡기와 따로). 물건보다 4 mm 넘게 커야 함."""
+    g = min(float(cfg["grip_open_mm"]), pc.gap_mm(pc.Q_HI))
+    if g <= OBJ_MM + 4:
+        raise ValueError(f"grip_open_mm {g} — 물건 {OBJ_MM} mm 보다 4 mm 넘게 커야 함")
+    return g
+
+
+GRIP_OPEN_MM = grip_open_of(X)
 GRIP_CLOSE_MM = max(OBJ_MM - float(P["squeeze_mm"]), pc.gap_mm(pc.Q_LO))      # 트리거 끝까지 = 이만큼만 닫음 (50 − 8 = 42 mm)
 SQUEEZE_Q = float(P["squeeze_mm"]) / pc.MM_PER_RAD   # 그리퍼를 지금 손가락 위치보다 이만큼만 더 조임 (≈ 8 mm) — 물건에 막혀도
                                                       #   완전 닫힘까지 억지로 조이지 않음 (계속 힘이 걸리면 과열). 자동 잡기의 squeeze_mm 와 같음
@@ -59,6 +63,8 @@ class XRTeleop:
         self.epoch = 0
         self.q = None                  # 마지막으로 arm_server 가 받은 목표 (제어 순서, rad)
         self.q0_named = {}
+        self.cfg = dict(X)               # 이번 세션 설정 (세션 시작 때 vr_settings 에서 다시 읽음)
+        self.grip_open_mm = GRIP_OPEN_MM
         self.max_vel = float(X["real_max_vel"])
         self.t_last = 0.0
         self.n = 0
@@ -87,7 +93,7 @@ class XRTeleop:
         T = mdl.tcp(qm, side)
         env = pc.ENVELOPE @ T.rotation.T + T.translation
         plane = None if getattr(self, "no_table", False) else self.r.table_plane
-        front = env[env[:, 0] > float(X["table_x_min_m"])]
+        front = env[env[:, 0] > float(self.cfg["table_x_min_m"])]
         if plane is not None and len(front):
             zt = plane[0] + plane[1] * front[:, 0] + plane[2] * front[:, 1]
             low = float(np.min(front[:, 2] - zt))
@@ -96,10 +102,10 @@ class XRTeleop:
         a = self._arm_pts(qm, "left")
         b = self._arm_pts(qm, "right")
         ag = min(float(np.linalg.norm(x - y)) for x in a for y in b)
-        if ag < float(X["arm_gap_m"]):
+        if ag < float(self.cfg["arm_gap_m"]):
             why.append(f"다른 팔 {ag * 100:.0f} cm")
         back = min(min(float(p[0]) for p in self._arm_pts(qm, side)), float(env[:, 0].min()))
-        if back < float(X["back_limit_m"]):
+        if back < float(self.cfg["back_limit_m"]):
             why.append(f"뒤로 {back * 100:.0f} cm")
         return why
 
@@ -119,6 +125,11 @@ class XRTeleop:
                 raise HTTPException(409, "테이블을 먼저 재세요 ([테이블 점 추가]) — 또는 [테이블 검사 끔] 체크 (테이블 없이 시험)")
             if not (0.0 < float(max_vel) <= MAX_VEL_CAP):
                 raise HTTPException(400, f"속도 0 ~ {MAX_VEL_CAP} rad/s")
+            try:                         # 웹에서 바꾼 설정은 이번 세션부터 (조작 중에는 안 바뀜)
+                cfg = vr_settings.get()
+                self.cfg, self.grip_open_mm = cfg, grip_open_of(cfg)
+            except ValueError as e:
+                raise HTTPException(409, f"VR 설정 이상: {e}")
             ok, msg, q_now = pc.arm_ready_check()
             if not ok:
                 raise HTTPException(409, msg)
@@ -318,7 +329,7 @@ class XRTeleop:
     def grip_target(self, closing, q_meas):
         """트리거 닫힘 비율 · 지금 손가락 q → 보낼 목표 q. 닫는 쪽은 지금 위치보다 SQUEEZE_Q 까지만 (물건에 막히면 거기서 멈춤)."""
         c = min(max(float(closing), 0.0), 1.0)
-        want = pc.q_for_gap(GRIP_OPEN_MM - c * (GRIP_OPEN_MM - GRIP_CLOSE_MM))     # 트리거 0 → grip_open_mm · 1 → 42 mm (물건 50 mm 고정)
+        want = pc.q_for_gap(self.grip_open_mm - c * (self.grip_open_mm - GRIP_CLOSE_MM))     # 트리거 0 → grip_open_mm · 1 → 42 mm (물건 50 mm 고정)
         if q_meas is None:
             return None                     # 그리퍼 상태를 모르면 안 보냄
         return min(max(max(want, float(q_meas) - SQUEEZE_Q), pc.Q_LO), pc.Q_HI)
@@ -336,4 +347,5 @@ class XRTeleop:
         with self.lk:
             age = None if not self.active else round(time.time() - self.t_last, 2)
             return {"active": self.active, "epoch": self.epoch, "msg": self.msg, "max_vel": self.max_vel, "n": self.n,
-                    "age_s": age, "hands": self.hands, "q0": self.q0_named if self.active else None}
+                    "age_s": age, "hands": self.hands, "q0": self.q0_named if self.active else None,
+                    "hand_offset": self.cfg["hand_offset_m"]}

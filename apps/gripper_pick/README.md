@@ -73,6 +73,16 @@ ACT 는 OpenVINO 로 (CPU · GPU · NPU, 변환 결과는 `<모델>/openvino/` �
 
 로봇 없이 화면 · 계획만: `./start_gripper.sh --sim` (fake_robot · arm_server · 잡기 웹, 가짜 카메라 · 그리퍼).
 
+## VR 연결 · 설정 (수집 화면 "VR 연결" 카드)
+
+- `./start_collect.sh` (홈 → VR 수집) 로 켜면 잡기 웹이 Quest 연결 프로그램 (`xr_virtual.py --real`, Vuer :8012) 을 켜고 adb 로 Quest 페이지를 엶
+- 끊기면: [재연결] (연결 프로그램 다시 켜기) · [Quest 페이지 열기] (adb reverse + 헤드셋 브라우저) · [끊기] — VR 조작 중에는 막힘
+- 상태: 연결 프로그램 (Vuer 포트) · Quest (USB, adb) · Quest 입력 (헤드셋에서 버튼을 눌러 입력이 들어오는지, 1 초마다 신호)
+- 화면 방식: pass-through (주변 보임, 기본) · immersive (카메라 영상) — 바꾸면 다시 연결
+- [설정 ▸]: 손 오프셋 · 그리퍼 벌림 · 관절 속도 기본값 · 양팔 최소 거리 · 뒤 한계 · 테이블 앞 끝. 기본값 = `gripper.yaml xr_view`,
+  바꾼 값 = `data/settings/vr.json` (git 제외 — pull 충돌 없음). 다음 [● 시작] 부터 적용, 조작 중에는 못 바꿈. 범위 밖 값은 저장 안 됨 (`vr_settings.py FIELDS`)
+- 확인: 컨테이너 가짜 로봇에서 설정 저장 · 범위 검사 · 기본값 · 세션 시작 때 다시 읽기 · 연결 실패 이유 표시 (2026-11-24). Quest · adb 실기는 아직
+
 ## xr_teleoperate 가상 실행 — `xr_virtual.py` + `xr_viewer.py` (로봇 명령 없음)
 
 Unitree xr_teleoperate 의 Quest 입력 처리 (televuer) 와 H2 IK (`H2_ArmIK`) 를 그대로 쓰고, 로봇 대신 가상 H2 3D 뷰어로 보냄.

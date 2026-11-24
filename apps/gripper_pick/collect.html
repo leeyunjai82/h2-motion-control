@@ -81,6 +81,19 @@ pre.log{flex:1;min-height:80px;overflow:auto;background:#05080c;border:1px solid
 @keyframes blink{50%{opacity:.25}}
 input[type=file].in{width:100%}
 #epm{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;z-index:10}
+/* VR 연결 · 설정 */
+.vrst{display:grid;grid-template-columns:auto 1fr;gap:4px 10px;font-size:12px;margin-bottom:8px}
+.vrst .mini{margin:0}
+.btns4{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:6px}
+#vrm{position:fixed;inset:0;background:rgba(0,0,0,.72);display:none;z-index:11;align-items:center;justify-content:center}
+#vrm .box{width:min(560px,94vw);max-height:90vh;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+#vrm .top{display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2)}
+#vrm .top b{font-size:13px;color:var(--accent)}#vrm .top .btn{margin-left:auto}
+#vrm .fl{display:grid;grid-template-columns:1fr 230px;gap:4px 10px;align-items:center;padding:10px 14px;border-bottom:1px solid var(--line)}
+#vrm .fl .lb{font-size:12px}#vrm .fl .sub{grid-column:1/-1}
+#vrm .fl.changed .lb{color:var(--amber)}
+#vrm .xyz{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+#vrm .in{width:100%}
 #epm .box{position:absolute;inset:24px;background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;
   display:grid;grid-template-columns:300px minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
 #epm .top{grid-column:1/-1;display:flex;align-items:center;gap:10px;padding:10px 14px;border-bottom:1px solid var(--line);background:var(--panel2);
@@ -148,6 +161,29 @@ input[type=file].in{width:100%}
         <div class="hint" id="dsinfo"></div>
         <div id="dsset" class="dsset"></div>
         <button class="btn" id="epopen" style="width:100%;margin-top:10px">수집 데이터 보기 (에피소드별) ▸</button>
+      </div>
+    </div>
+
+    <div class="card" id="vrc">
+      <div class="card-h">VR 연결 <span class="tag" id="vrc-tag">-</span></div>
+      <div class="card-b">
+        <div class="vrst">
+          <span class="mini">연결 프로그램</span><span id="vrc-br">—</span>
+          <span class="mini">Quest (USB)</span><span id="vrc-adb">—</span>
+          <span class="mini">Quest 입력</span><span id="vrc-in">—</span>
+        </div>
+        <div class="btns4">
+          <button class="btn" id="vrc-start">연결</button>
+          <button class="btn" id="vrc-restart">재연결</button>
+          <button class="btn warn" id="vrc-stop">끊기</button>
+          <button class="btn primary" id="vrc-quest">Quest 페이지 열기</button>
+        </div>
+        <div class="row" style="margin-top:8px">
+          <span class="mini" style="margin:0">화면</span>
+          <select class="in" id="vrc-disp"><option value="pass-through">pass-through (주변 보임)</option><option value="immersive">immersive (카메라 영상)</option></select>
+          <button class="btn sm" id="vrc-set" style="margin-left:auto">설정 ▸</button>
+        </div>
+        <div class="msg" id="vrc-msg"></div>
       </div>
     </div>
 
@@ -236,6 +272,12 @@ input[type=file].in{width:100%}
   </div>
 </div>
 
+<div id="vrm"><div class="box">
+  <div class="top"><b>VR 설정</b><span class="sub">바꾼 값은 다음 [● 시작] 부터 · 조작 중에는 못 바꿈</span><button class="btn sm" id="vrm-close">닫기 (Esc)</button></div>
+  <div id="vrm-body"></div>
+  <div class="row" style="padding:12px 14px"><button class="btn" id="vrm-reset">기본값으로</button><button class="btn primary grow" id="vrm-save">저장</button></div>
+</div></div>
+
 <div id="epm"><div class="box">
   <div class="top"><b id="eptitle">에피소드</b><span class="sub" id="epsum"></span><button class="btn sm" id="epclose">닫기 (Esc)</button></div>
   <div id="eplist"></div>
@@ -297,6 +339,7 @@ $("start").onclick = start; $("stop").onclick = stop;
 $("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
 document.addEventListener("keydown", e => {
   if (epOpen) { epKey(e); return; }          // 에피소드 보기 중에는 VR 단축키 (Space = 시작) 안 받음
+  if ($("vrm").style.display === "flex") return;   // VR 설정 창이 열려 있으면 단축키 안 받음 (Space 로 팔이 움직이지 않게)
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
   if (e.code === "Space") { e.preventDefault(); if (st && (st.xr.active || returning())) stop(); else start(); }
   else if (e.key === "s" || e.key === "S" || e.key === "ㄴ") decide(true);
@@ -587,6 +630,76 @@ async function delEp() {
   $("epview").innerHTML = '<div class="sub">지웠습니다. 왼쪽에서 다른 에피소드를 고르세요</div>';
   loadEpList();
 }
+
+// ---------------- VR 연결 (Quest 연결 프로그램 · adb) · 설정 ----------------
+let VR = null, vrAdbT = 0, vrInit = false;
+const dot = (ok, txt) => `<span class="${ok ? "ok" : "bad"}">● ${txt}</span>`;
+async function pollVR() {
+  try {
+    const adb = Date.now() - vrAdbT > 5000;
+    const j = await (await fetch("/api/vr" + (adb ? "?adb=1" : ""))).json();
+    if (adb) vrAdbT = Date.now(); else if (VR && VR.bridge.adb) j.bridge.adb = VR.bridge.adb;
+    VR = j; renderVR();
+  } catch (e) {}
+}
+function renderVR() {
+  const b = VR.bridge;
+  $("vrc-br").innerHTML = b.running ? (b.vuer ? dot(true, `켜짐 (Vuer :${b.port})`) : '<span class="warn">● 켜는 중…</span>') : (b.err ? `<span class="bad">● ${b.err}</span>` : dot(false, "꺼짐"));
+  $("vrc-adb").innerHTML = !b.adb ? "—" : b.adb === "device" ? dot(true, "연결됨") : `<span class="warn">● ${b.adb}</span>`;
+  $("vrc-in").innerHTML = !b.running ? "—" : !b.alive ? '<span class="warn">● 연결 프로그램 응답 없음</span>' : b.input ? dot(true, "들어옴") : '<span class="warn">● 없음 — 헤드셋을 쓰고 페이지의 버튼을 누르세요</span>';
+  $("vrc-tag").textContent = b.running && b.input ? "연결됨" : b.running ? "입력 기다림" : "끊김";
+  $("vrc-msg").textContent = b.quest_msg || "";
+  const act = VR.active;
+  $("vrc-start").disabled = b.running; $("vrc-restart").disabled = act || !b.running; $("vrc-stop").disabled = act || !b.running;
+  $("vrc-quest").disabled = !b.running || !b.vuer;
+  if (!vrInit) {
+    vrInit = true; $("vrc-disp").value = b.display;
+    const v = String(VR.settings.real_max_vel.value), sel = $("vel");       // 관절 속도 기본 = 설정값
+    if (![...sel.options].some(o => o.value === v)) sel.add(new Option(v, v));
+    sel.value = v;
+  }
+}
+async function vrBridge(action) {
+  if (action === "stop" && !confirm("Quest 연결을 끊습니다. 계속?")) return;
+  $("vrc-msg").textContent = action === "stop" ? "끊는 중…" : "연결 중…";
+  try { await post("/api/vr/bridge", { action, display: $("vrc-disp").value }); } catch (e) { alert(e.message); }
+  pollVR();
+}
+$("vrc-start").onclick = () => vrBridge("start");
+$("vrc-restart").onclick = () => vrBridge("restart");
+$("vrc-stop").onclick = () => vrBridge("stop");
+$("vrc-quest").onclick = async () => { $("vrc-msg").textContent = "Quest 페이지 여는 중…"; try { await post("/api/vr/quest"); } catch (e) { alert(e.message); } vrAdbT = 0; pollVR(); };
+$("vrc-disp").onchange = () => { if (VR && VR.bridge.running && confirm("화면 방식을 바꾸려면 다시 연결합니다. 지금 할까요?")) vrBridge("restart"); };
+function openVRSet() {
+  if (!VR) return;
+  const rows = Object.entries(VR.settings).map(([k, f]) => {
+    const inp = k === "hand_offset_m"
+      ? `<div class="xyz">${["앞", "바깥", "위"].map((n, i) => `<input class="in" type="number" step="0.01" min="${f.min}" max="${f.max}" id="vs-${k}-${i}" value="${f.value[i]}" title="${n}">`).join("")}</div>`
+      : `<input class="in" type="number" step="${f.unit === "mm" ? 1 : 0.01}" min="${f.min}" max="${f.max}" id="vs-${k}" value="${f.value}">`;
+    const def = Array.isArray(f.default) ? f.default.join(", ") : f.default;
+    return `<div class="fl${f.changed ? " changed" : ""}"><span class="lb">${f.label}${f.changed ? " (바꿈)" : ""}</span>${inp}
+      <span class="sub">${f.unit} · 범위 ${f.min} ~ ${f.max} · 기본 ${def}${k === "hand_offset_m" ? " · [앞 · 바깥 · 위]" : ""}</span></div>`;
+  }).join("");
+  $("vrm-body").innerHTML = rows; $("vrm").style.display = "flex";
+}
+function closeVRSet() { $("vrm").style.display = "none"; }
+$("vrc-set").onclick = openVRSet; $("vrm-close").onclick = closeVRSet;
+$("vrm").onclick = e => { if (e.target.id === "vrm") closeVRSet(); };
+$("vrm-save").onclick = async () => {
+  const ch = {};
+  for (const [k, f] of Object.entries(VR.settings)) {
+    const v = k === "hand_offset_m" ? [0, 1, 2].map(i => +$(`vs-${k}-${i}`).value) : +$(`vs-${k}`).value;
+    if (JSON.stringify(v) !== JSON.stringify(f.value)) ch[k] = v;
+  }
+  if (!Object.keys(ch).length) { closeVRSet(); return; }
+  try { await post("/api/vr/settings", { changes: ch }); await pollVR(); vrInit = false; renderVR(); openVRSet(); } catch (e) { alert(e.message); }
+};
+$("vrm-reset").onclick = async () => {
+  if (!confirm("VR 설정을 모두 기본값 (gripper.yaml) 으로 되돌립니다. 계속?")) return;
+  try { await post("/api/vr/settings", { reset: true }); await pollVR(); vrInit = false; renderVR(); openVRSet(); } catch (e) { alert(e.message); }
+};
+document.addEventListener("keydown", e => { if (e.key === "Escape" && $("vrm").style.display === "flex") closeVRSet(); });
+setInterval(pollVR, 1500); pollVR();
 
 async function poll() {
   try {
