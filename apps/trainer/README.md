@@ -102,3 +102,17 @@ ACT 구조·기본값은 LeRobot `modeling_act.py` 와 같게 `act_model.py` 에
 - 장치 고르기: `train_act.py --device auto` (기본: CUDA → Intel XPU → CPU) · `--device xpu` 로 강제. XPU 는 fp32 (amp 는 CUDA 만)
 - 로봇 PC GPU (lspci `Intel Device b082`, 2026-11-09) 가 torch.xpu 에서 잡히는지 · 속도는 **확인 전** — 설치 ⑥ 에서 행렬곱 TFLOPS 출력
 - 학습하는 동안 GPU · CPU 를 같이 쓰므로 로봇 서버 · 수집과 동시에 돌리지 말 것
+
+
+## LeRobot v3.0 로 내보내기
+
+우리 데이터셋 형식 (`h2-gripper-episodes-v1`) 은 LeRobot 형식이 아님. LeRobot (0.4.x, 데이터셋 v3.0) 에서 쓰려면 변환:
+
+```bash
+# lerobot 0.4.x 가 깔린 환경에서
+python tools/export_lerobot.py data/trainer/datasets/<이름> --out ~/lerobot_data/<이름> \
+    --repo-id circulus/<이름> --task "pick up the cube and put it in the bin"
+```
+
+- state → `observation.state`, action → `action`, 카메라 → `observation.images.<카메라>` (MP4), 성공 에피소드만 (`--all` 이면 전부)
+- 입력은 데이터셋 폴더 또는 수집 화면에서 받은 zip. 끝나면 LeRobotDataset 으로 다시 열어 개수를 확인함
