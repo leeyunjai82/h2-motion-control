@@ -148,11 +148,26 @@ def build(root, out, repo_id, task, eps, info, vcodec, robot_type, append_from=N
           "cameras": info["cameras"], "fit": info.get("fit", "stretch"), "state_names": info["state_names"],
           "robot_type": robot_type, "repo_id": repo_id, "episodes": rows,
           "updated": datetime.datetime.now().isoformat(timespec="seconds")}
-    write_h2(out, h2)
     chk = LeRobotDataset(repo_id, root=out)
     if chk.num_episodes != len(rows) or chk.num_frames != sum(r["frames"] for r in rows):
         sys.exit(f"❌ 개수가 다름 — 에피소드 {chk.num_episodes}/{len(rows)} · 프레임 {chk.num_frames}/{sum(r['frames'] for r in rows)}")
+    write_h2(out, h2)                                    # 확인을 통과한 뒤에만 (실패하면 다음에 다시 만듦)
     return h2
+
+
+def consistent(out, h2):
+    """v3 의 에피소드 · 프레임 수가 h2.json 과 같은지 (이어 붙이다 멈춘 데이터셋을 거름)."""
+    info = read_json(os.path.join(out, "meta", "info.json"))
+    rows = (h2 or {}).get("episodes", [])
+    return bool(info) and info.get("total_episodes") == len(rows) and info.get("total_frames") == sum(int(r["frames"]) for r in rows)
+
+
+def read_json(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
 def sync(ds_dir, vcodec="h264", robot_type="unitree_h2_dex1", repo_prefix="local"):
@@ -170,9 +185,10 @@ def sync(ds_dir, vcodec="h264", robot_type="unitree_h2_dex1", repo_prefix="local
     try:
         eps = raw_episodes(ds_dir)
         h2 = read_h2(out) if os.path.isdir(out) else None
-        have = [r["raw"] for r in (h2 or {}).get("episodes", [])]
-        want = [e for e, _ in eps]
-        if h2 and h2.get("task") == task and want[:len(have)] == have and os.path.isfile(os.path.join(out, "meta", "info.json")):
+        # 에피소드 이름 + 녹화 시각 (지운 뒤 같은 번호로 새로 녹화한 것도 다르게 봄)
+        have = [(r["raw"], r.get("created")) for r in (h2 or {}).get("episodes", [])]
+        want = [(e, m.get("created")) for e, m in eps]
+        if h2 and h2.get("task") == task and want[:len(have)] == have and consistent(out, h2):
             new = eps[len(have):]
             if not new:
                 say(stage="done", episodes=len(have), mode="same")

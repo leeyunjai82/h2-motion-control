@@ -1140,7 +1140,9 @@ def dataset_zip(name: str):
     src = os.path.join(paths.data_dir("datasets", legacy="gripper/data"), name, "lerobot")
     if not os.path.isfile(os.path.join(src, "meta", "info.json")):
         raise HTTPException(404, "LeRobot v3 없음 (성공 에피소드 0 또는 변환 전 — 수집 화면에서 확인)")
-    tmp = os.path.join(paths.DATA_DIR, f".{name}_lerobot.zip")
+    import tempfile
+    fd, tmp = tempfile.mkstemp(prefix=f".{name}_lerobot.", suffix=".zip", dir=paths.DATA_DIR)   # 받기마다 따로 (동시에 받아도 안 겹침)
+    os.close(fd)
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
         for r, _, fs in os.walk(src):
             for fn in sorted(fs):

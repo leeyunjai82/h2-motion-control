@@ -1013,7 +1013,7 @@
     "손목 Pitch": "Wrist Pitch",
     "손목 Yaw": "Wrist Yaw",
     "건너뜀": "SKIP",
-    "시연 수": "Demos", "관절": "Joint", "IK 좌표": "IK", "안전 모드 (관절)": "Safety mode (Joint)", "제어권 잡기": "Take control (hold)", "왼쪽 / 오른쪽 = 로봇 앞에 선 사람 기준": "Left / Right = as seen by the person facing the robot",
+    "시연 수": "Demos", "추론 시작": "Start inference", "관절": "Joint", "IK 좌표": "IK", "안전 모드 (관절)": "Safety mode (Joint)", "제어권 잡기": "Take control (hold)", "왼쪽 / 오른쪽 = 로봇 앞에 선 사람 기준": "Left / Right = as seen by the person facing the robot",
     "그리퍼 L": "Gripper L", "모방 학습": "Imitation learning", "모델 zip": "model zip",
     "팔 실측 없음 (rt/lowstate · arm_server)": "no measured arm state (rt/lowstate · arm_server)",
     "작업 범위 (policy_tcp_box) 설정 없음 — 집게 위치 범위 검사 안 함": "no work area (policy_tcp_box) set — gripper position is not checked",
@@ -1154,6 +1154,17 @@
     [/^실행 중인 것 정지 → (\S+) → (\S+)$/, 'Stop what is running → $1 → $2'],
     [/^(\S+) · (\S+) · (\d+)\/(\d+) · loss (\S+) · 남은 (\S+)$/, (m, a, b, c, d, e, f) => `${a} · ${b} · ${c}/${d} · loss ${e} · left ${f.replace('분', ' min')}`],
     [/^(\d+)분$/, '$1 min'],
+    [/^끝: (.*)$/s, (m, a) => { const t = tr(a); return /[가-힣]/.test(t) ? m : 'ended: ' + t; }],
+    [/^정책 출력에 NaN · inf \(또는 크기 이상\) — 멈춤/, 'policy output has NaN · inf (or wrong size) — stopped'],
+    [/^지령 ↔ 실측 (\d+)° — 걸렸거나 부딪힘( \(추론 기다리는 중\))?/, (m, a, b) => `command ↔ measured ${a}° — snagged or hit something${b ? ' (while waiting for inference)' : ''}`],
+    [/^추론 답을 (\d+) 초 못 받음/, 'no inference answer for $1 s'],
+    [/ · 추론 프로세스를 끔 \(다시 불러오기 필요\)$/, ' · inference process stopped (reload needed)'],
+    [/^추론 답이 없어 추론 프로세스를 끔 — 모델을 다시 불러오세요$/, 'no inference answer, so the inference process was stopped — load the model again'],
+    [/^추론 프로세스가 (\d+) 초 안에 답하지 않음 — 모델을 다시 불러오세요$/, 'the inference process did not answer within $1 s — load the model again'],
+    [/^정책 실행 중$/, 'policy running'],
+    [/^최대 시간 (\d+) 초$/, 'max time $1 s'],
+    [/^준비 자세 도착 — 한 회 끝( · 반복 (\d+) 회 끝 \(최대\))?$/, (m, a, b) => `reached the ready pose — run finished${a ? ` · repeat finished after ${b} runs (max)` : ''}`],
+    [/^정지( · 반복 멈춤 \(정지\))?$/, (m, a) => 'stopped' + (a ? ' · repeat stopped' : '')],
     [/(양손|왼손|오른손) (\d+)/g, (m, a, b) => `${SIDE_EN[a]} ${b}`],
     [/^이동\(cm\) x (\S+) · y (\S+) · z (\S+) · 벌림 (\S+)$/, 'move (cm) x $1 · y $2 · z $3 · spread $4'],
     [/^목표 L (.+) \/ R (.+)$/, 'target L $1 / R $2'],
@@ -1306,6 +1317,12 @@
   });
 
   window.G1I18N = { get lang() { return lang; }, setLang, tr, missing: MISSING };
+
+  // 안에 넣은 화면 (iframe) 이 뜰 때마다 지금 언어를 보냄 — 포트가 달라 localStorage 를 같이 못 씀 (화면 안의 화면까지)
+  document.addEventListener('load', e => {
+    const f = e.target;
+    if (f && f.tagName === 'IFRAME') { try { f.contentWindow.postMessage({ g1lang: lang }, '*'); } catch (err) {} }
+  }, true);
 
   function start() {
     mo.observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ATTRS });

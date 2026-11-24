@@ -12,6 +12,7 @@ trainer_server.py — LeRobot 학습 웹 (포트 50100). 미니 PC · 학습 PC 
 
 보안: LAN 전용. 업로드 zip 은 경로 검사 후 정해진 파일만 풂.
 """
+import fcntl
 import json
 import os
 import re
@@ -19,6 +20,7 @@ import shlex
 import shutil
 import signal
 import subprocess
+import tempfile
 import sys
 import threading
 import time
@@ -51,7 +53,7 @@ if not os.path.isdir(COLLECT_DIR):
     COLLECT_DIR = None
 MODEL_STORE = paths.data_dir("policies", legacy="gripper/models")
 LEROBOT_PY = os.environ.get("LEROBOT_PY") or lerobot_env.python()
-NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,64}$")
+NAME_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9_.\-]{1,64}$")          # "." · ".." 같은 점만 있는 이름은 안 됨
 V3_FILE_RE = re.compile(r"^(meta/[A-Za-z0-9_./\-]+\.(json|jsonl|parquet)|data/chunk-\d+/file-\d+\.parquet|"
                         r"videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4)$")
 OLD_FILE_RE = re.compile(r"^(info\.json|episodes/ep_\d{6}/(episode\.npz|meta\.json))$")
@@ -148,7 +150,7 @@ def ds_names():
 
 
 def _free_name(stem):
-    stem = re.sub(r"[^A-Za-z0-9_.\-]", "_", stem)[:56] or "dataset"
+    stem = re.sub(r"[^A-Za-z0-9_.\-]", "_", stem)[:56].strip(".") or "dataset"
     name, k = stem, 2
     while os.path.exists(os.path.join(DS_DIR, name)):
         name, k = f"{stem}_{k}", k + 1
@@ -183,8 +185,7 @@ def extract_dataset(zpath, filename):
         if need * (2 if old else 1) > free - 2e9:
             raise HTTPException(507, f"디스크 부족 (필요 {need / 1e9:.1f} GB, 남음 {free / 1e9:.1f} GB)")
         name = _free_name(root[:-len("_lerobot")] if root.endswith("_lerobot") else root)
-        tmp = os.path.join(UP_DIR, f".{name}.tmp")
-        shutil.rmtree(tmp, ignore_errors=True)
+        tmp = tempfile.mkdtemp(prefix=f".{name}.", dir=UP_DIR)          # 올리기마다 따로 (동시에 올려도 안 겹침)
         for i, rel in keep:
             dst = os.path.join(tmp, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -216,13 +217,29 @@ def extract_dataset(zpath, filename):
 # =====================================================================
 # 모델 (lerobot pretrained_model + h2_model.json)
 # =====================================================================
+def safetensors_ok(path):
+    """가중치 파일이 끝까지 써졌는지 (헤더의 마지막 offset = 파일 크기) — 저장 도중 멈춘 체크포인트를 거름."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            n = int.from_bytes(f.read(8), "little")
+            if n <= 0 or n > size:
+                return False
+            h = json.loads(f.read(n))
+        end = max((v["data_offsets"][1] for k, v in h.items() if k != "__metadata__"), default=0)
+        return size == 8 + n + end
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
 def last_checkpoint(out):
-    """out/checkpoints/<step>/pretrained_model 중 마지막 → (경로, step) 또는 (None, 0)."""
+    """out/checkpoints/<step>/pretrained_model 중 끝까지 저장된 마지막 → (경로, step) 또는 (None, 0)."""
     ck = os.path.join(out, "checkpoints")
     steps = sorted((int(n), n) for n in os.listdir(ck) if n.isdigit()) if os.path.isdir(ck) else []
     for st, n in reversed(steps):
         p = os.path.join(ck, n, "pretrained_model")
-        if os.path.isfile(os.path.join(p, "config.json")) and os.path.isfile(os.path.join(p, "model.safetensors")):
+        if (os.path.isfile(os.path.join(p, "config.json")) and _read(os.path.join(p, "config.json"))
+                and safetensors_ok(os.path.join(p, "model.safetensors"))):
             return p, st
     return None, 0
 
@@ -323,7 +340,7 @@ class Jobs:
         jid = time.strftime("j%m%d_%H%M%S")
         while jid in self.jobs:
             jid += "x"
-        tc["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", tc["name"] or f"{tc['policy']}_{dataset}_{time.strftime('%m%d_%H%M')}")[:60]
+        tc["name"] = re.sub(r"[^A-Za-z0-9_.\-]", "_", tc["name"] or "")[:60].strip(".") or f"{tc['policy']}_{dataset}_{time.strftime('%m%d_%H%M')}"
         j = {"id": jid, "dataset": dataset, "params": tc, "status": "queued", "created": time.time(),
              "started": None, "finished": None, "step": 0, "total": tc["steps"], "loss": None, "it_s": None, "eta_s": None,
              "ckpt_step": 0, "zip": None, "model_step": 0, "saved_model": None, "curve": [], "error": "", "device": None}
@@ -386,9 +403,22 @@ class Jobs:
             env["HF_HUB_OFFLINE"] = "1"                         # 데이터셋 · 모델 모두 로컬 — 인터넷 안 씀
         if TRAIN_THREADS:
             env.update(OMP_NUM_THREADS=TRAIN_THREADS, MKL_NUM_THREADS=TRAIN_THREADS)
+        # 이 PC 에서 수집한 데이터셋이면 학습하는 동안 공유 잠금 — 그동안 수집 쪽 v3 변환 (lerobot_sync, 배타 잠금) 은 학습이 끝날 때까지 기다림
+        lock = None
+        if COLLECT_DIR and not ds_root(j["dataset"]).startswith(DS_DIR + os.sep):
+            lock = open(os.path.join(COLLECT_DIR, j["dataset"], ".lerobot.lock"), "a")
+            fcntl.flock(lock, fcntl.LOCK_SH)
         # nice 15: 학습이 CPU 를 다 써도 SSH · 이 웹 · 다른 프로그램이 먼저 돌게
-        self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                                     start_new_session=True, cwd=_ROOT, env=env, preexec_fn=lambda: os.nice(15))
+        try:
+            self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                         start_new_session=True, cwd=_ROOT, env=env, preexec_fn=lambda: os.nice(15))
+            self._pump(j, logf)
+        finally:
+            if lock is not None:
+                fcntl.flock(lock, fcntl.LOCK_UN)
+                lock.close()
+
+    def _pump(self, j, logf):
         last_save, last_tq, tail = 0.0, 0.0, []
         for line in self.proc.stdout:                  # text 모드 → tqdm 의 \r 도 줄 바꿈으로 들어옴
             line = line.rstrip()

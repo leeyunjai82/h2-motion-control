@@ -85,31 +85,35 @@ class SyncWorker:
                 while not self.queue:
                     self.cv.wait()
                 name = self.queue.pop(0)          # 도는 동안 다시 요청되면 끝난 뒤 한 번 더 (그 사이 바뀐 것 반영)
-            py = python()
-            if not os.path.isfile(py):
-                self._set(name, state="no_lerobot", msg=missing_msg(py))
-            else:
-                self._set(name, state="running", msg="", done=0, total=0)
-                p = subprocess.Popen([py, "-u", "-m", "pitron.learning.lerobot_sync", os.path.join(self.data_dir, name)],
-                                     cwd=paths.REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-                                     env={**os.environ, "HF_HUB_OFFLINE": "1"}, preexec_fn=lambda: os.nice(10))
-                tail = []
-                for ln in p.stdout:
-                    ln = ln.rstrip()
-                    if ln.startswith("@@"):
-                        try:
-                            import json
-                            j = json.loads(ln[2:])
-                            if j.get("stage") == "episode":
-                                self._set(name, done=j["done"], total=j["total"])
-                        except ValueError:
-                            pass
-                    elif ln:
-                        tail = (tail + [ln])[-6:]
-                rc = p.wait()
-                if rc == 0:
-                    self._set(name, state="ok", msg="")
+            try:
+                py = python()
+                if not os.path.isfile(py):
+                    self._set(name, state="no_lerobot", msg=missing_msg(py))
                 else:
-                    msg = next((t for t in reversed(tail) if "❌" in t or "Error" in t), tail[-1] if tail else f"rc {rc}")
-                    self._set(name, state="error", msg=msg[-300:])
-                    self.log(f"[lerobot] {name} 변환 실패: {msg[-300:]}")
+                    self._set(name, state="running", msg="", done=0, total=0)
+                    p = subprocess.Popen([py, "-u", "-m", "pitron.learning.lerobot_sync", os.path.join(self.data_dir, name)],
+                                         cwd=paths.REPO_ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                                         env={**os.environ, "HF_HUB_OFFLINE": "1"}, preexec_fn=lambda: os.nice(10))
+                    tail = []
+                    for ln in p.stdout:
+                        ln = ln.rstrip()
+                        if ln.startswith("@@"):
+                            try:
+                                import json
+                                j = json.loads(ln[2:])
+                                if j.get("stage") == "episode":
+                                    self._set(name, done=j["done"], total=j["total"])
+                            except (ValueError, KeyError):
+                                pass
+                        elif ln:
+                            tail = (tail + [ln])[-6:]
+                    rc = p.wait()
+                    if rc == 0:
+                        self._set(name, state="ok", msg="")
+                    else:
+                        msg = next((t for t in reversed(tail) if "❌" in t or "Error" in t), tail[-1] if tail else f"rc {rc}")
+                        self._set(name, state="error", msg=msg[-300:])
+                        self.log(f"[lerobot] {name} 변환 실패: {msg[-300:]}")
+            except Exception as e:  # noqa: BLE001 — 한 번 실패해도 작업 스레드는 계속 (다음 요청이 '대기' 로 멈추지 않게)
+                self._set(name, state="error", msg=f"{type(e).__name__}: {e}"[-300:])
+                self.log(f"[lerobot] {name} 변환 오류: {e}")

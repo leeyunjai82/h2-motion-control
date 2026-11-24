@@ -22,6 +22,7 @@ policy.py — lerobot 정책 실행 (잡기 웹 pick_web 이 씀): 모델 폴더
 import json
 import math
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -41,7 +42,7 @@ from pitron.learning import camfit, lerobot_env  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = paths.data_dir("policies", legacy="gripper/models")   # 모델 저장소 (git 제외)
-NAME_RE = re.compile(r"^[A-Za-z0-9_.\-]{1,80}$")
+NAME_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9_.\-]{1,80}$")          # "." · ".." 같은 점만 있는 이름은 안 됨
 FILE_RE = re.compile(r"^[A-Za-z0-9_.\-]+\.(json|safetensors)$")
 FPS = 30.0
 STATE_DIM = 16
@@ -60,6 +61,7 @@ DEFAULTS = {
     "repeat_gap_s": 2.0,     # 반복 실행: 한 회가 정상으로 끝난 뒤 다음 회까지 쉬는 시간 [s]
     "repeat_max": 20,        # 반복 실행: 최대 회수 (안전)
 }
+LOAD_TIMEOUT_S = 600.0     # 모델 불러오기 (OpenVINO 변환 · GPU 컴파일 포함) 최대 [s]
 END_OK = "준비 자세 도착"   # 이 이유로 끝난 회만 다음 회로 이어감 (안전 필터 · 정지 · 오류 · 최대 시간은 멈춤)
 
 
@@ -119,6 +121,8 @@ def install_zip(zpath, filename="model.zip"):
         if not cfg.get("type"):
             raise ValueError("config.json 에 정책 type 없음")
         dst = os.path.join(MODEL_DIR, name)
+        if not NAME_RE.match(name) or os.path.dirname(os.path.realpath(dst)) != os.path.realpath(MODEL_DIR):
+            raise ValueError(f"모델 이름 이상: {name}")
         tmp = dst + ".tmp"
         shutil.rmtree(tmp, ignore_errors=True)
         os.makedirs(tmp)
@@ -152,12 +156,15 @@ class Infer:
         self.fit = fit or self.h2.get("fit") or "stretch"
         self.name, self.device, self.ptype = name, device, ptype
         self.lk = threading.Lock()
+        self.dead = None                              # 응답 시간을 넘겨 끈 이유 (그 뒤로는 다시 불러와야 함)
         self.proc = subprocess.Popen([py, "-u", "-m", "pitron.learning.lerobot_infer", "--model", d, "--task", self.task] + args,
                                      cwd=_ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                      env={**os.environ, "HF_HUB_OFFLINE": "1"})
         self.err_tail = []
+        self.q = queue.Queue()
         threading.Thread(target=self._stderr, daemon=True).start()
-        info = self._read()
+        threading.Thread(target=self._stdout, daemon=True).start()
+        info = self._read(LOAD_TIMEOUT_S)
         if not info.get("ok"):
             self.close()
             raise RuntimeError(info.get("err") or "추론 프로세스 시작 실패")
@@ -175,32 +182,59 @@ class Infer:
             if ln:
                 self.err_tail = (self.err_tail + [ln])[-20:]
 
-    def _read(self):
-        while True:
-            ln = self.proc.stdout.readline()
-            if not ln:
-                tail = next((t for t in reversed(self.err_tail) if "Error" in t), self.err_tail[-1] if self.err_tail else "")
-                return {"ok": False, "err": f"추론 프로세스 끝남 {tail}"[-400:]}
+    def _stdout(self):
+        """응답 줄 (@@json) 을 큐로 — 기다리는 쪽이 시간 제한을 둘 수 있게."""
+        for ln in self.proc.stdout:
             ln = ln.decode(errors="replace")
             if ln.startswith("@@"):
-                return json.loads(ln[2:])
+                try:
+                    self.q.put(json.loads(ln[2:]))
+                except ValueError:
+                    pass
+        tail = next((t for t in reversed(self.err_tail) if "Error" in t), self.err_tail[-1] if self.err_tail else "")
+        self.q.put({"ok": False, "err": f"추론 프로세스 끝남 {tail}"[-400:], "_eof": True})
 
-    def reset(self):
-        with self.lk:
-            self.proc.stdin.write(b'{"op":"reset"}\n')
-            self.proc.stdin.flush()
-            return self._read()
+    def _read(self, timeout):
+        try:
+            return self.q.get(timeout=timeout)
+        except queue.Empty:
+            self.kill(f"추론 프로세스가 {timeout:.0f} 초 안에 답하지 않음 — 모델을 다시 불러오세요")
+            return {"ok": False, "err": self.dead}
 
-    def act(self, state, rgb_list):
-        """state (16,) · 모델 카메라 순서의 RGB uint8 → (action (16,), ms)"""
-        with self.lk:
-            self.proc.stdin.write((json.dumps({"op": "act", "state": [float(x) for x in state]}) + "\n").encode())
-            for im in rgb_list:
-                self.proc.stdin.write(np.ascontiguousarray(im, np.uint8).tobytes())
+    def kill(self, why):
+        """응답이 엇갈리지 않게 프로세스를 끔 (늦게 온 답이 다음 요청의 답으로 읽히지 않게)."""
+        if self.dead is None:
+            self.dead = why
+        try:
+            self.proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def alive(self):
+        return self.dead is None and self.proc.poll() is None
+
+    def _call(self, head, payload=b"", timeout=10.0):
+        if not self.lk.acquire(timeout=timeout):
+            raise RuntimeError("추론 프로세스가 다른 요청을 처리 중 (응답 없음)")
+        try:
+            if not self.alive():
+                raise RuntimeError(self.dead or "추론 프로세스가 끝남 — 모델을 다시 불러오세요")
+            self.proc.stdin.write((json.dumps(head) + "\n").encode() + payload)
             self.proc.stdin.flush()
-            r = self._read()
+            r = self._read(timeout)
+        finally:
+            self.lk.release()
         if not r.get("ok"):
             raise RuntimeError(r.get("err") or "추론 실패")
+        return r
+
+    def reset(self):
+        self._call({"op": "reset"})
+
+    def act(self, state, rgb_list, timeout=60.0):
+        """state (16,) · 모델 카메라 순서의 RGB uint8 → (action (16,), ms)"""
+        payload = b"".join(np.ascontiguousarray(im, np.uint8).tobytes() for im in rgb_list)
+        r = self._call({"op": "act", "state": [float(x) for x in state]}, payload, timeout)
         return np.asarray(r["action"], dtype=float), r.get("ms")
 
     def prep(self, name, bgr):
@@ -214,8 +248,12 @@ class Infer:
 
     def close(self):
         try:
-            self.proc.stdin.write(b'{"op":"quit"}\n')
-            self.proc.stdin.flush()
+            if self.alive() and self.lk.acquire(timeout=1.0):
+                try:
+                    self.proc.stdin.write(b'{"op":"quit"}\n')
+                    self.proc.stdin.flush()
+                finally:
+                    self.lk.release()
             self.proc.wait(3)
         except Exception:  # noqa: BLE001
             self.proc.kill()
@@ -234,6 +272,8 @@ class PolicyRunner:
         self.cfg = dict(DEFAULTS)
         self.th = None
         self.stop_evt = threading.Event()
+        self.run_lk = threading.Lock()                # start · stop 을 한 번에 하나씩 (반복 대기 중 [시작] 과 겹치지 않게)
+        self.user_stop = False
         self.state = {"running": False, "step": 0, "infer_ms": None, "why_end": "", "phase": ""}
         box = lerobot_env.local_cfg().get("policy_tcp_box") or {}
         self.tcp_box = {s: (np.asarray(box[s]["min"], float), np.asarray(box[s]["max"], float))
@@ -271,8 +311,8 @@ class PolicyRunner:
         r, p, bad = self.r, self.policy, []
         if p is None:
             return ["모델을 불러오지 않음"]
-        if p.proc.poll() is not None:
-            return ["추론 프로세스가 끝남 — 모델을 다시 불러오세요"]
+        if not p.alive():
+            return [p.dead or "추론 프로세스가 끝남 — 모델을 다시 불러오세요"]
         if r.busy() or self.running():
             bad.append("다른 동작 중")
         if r.rec.active or r.rec.pending is not None:
@@ -334,24 +374,31 @@ class PolicyRunner:
     def start(self, repeat=False, run_no=1):
         """repeat: 한 회가 '준비 자세 도착' 으로 끝나면 repeat_gap_s 쉬고 다음 회를 자동으로 (시작 조건을 매번 다시 검사).
         안전 필터 · [정지] · 오류 · 최대 시간으로 끝나면 반복도 멈춤. 최대 repeat_max 회."""
-        bad = self.check()
-        if bad:
-            raise RuntimeError("; ".join(bad))
-        if run_no == 1:
-            self.user_stop = False
-        self.repeat = bool(repeat)
-        self.stop_evt.clear()
-        self.state = {"running": True, "step": 0, "infer_ms": None, "why_end": "", "phase": "정책", "wait_s": 0.0,
-                      "run_no": run_no, "repeat": self.repeat}
-        self.th = threading.Thread(target=self._run, daemon=True)
-        self.th.start()
+        with self.run_lk:
+            if self.running():
+                raise RuntimeError("정책 실행 중")
+            if run_no > 1 and self.user_stop:       # 반복 대기 중에 [정지] — 다음 회 안 함
+                return False
+            bad = self.check()
+            if bad:
+                raise RuntimeError("; ".join(bad))
+            if run_no == 1:
+                self.user_stop = False
+            self.repeat = bool(repeat)
+            self.stop_evt.clear()
+            self.state = {"running": True, "step": 0, "infer_ms": None, "why_end": "", "phase": "정책", "wait_s": 0.0,
+                          "run_no": run_no, "repeat": self.repeat}
+            self.th = threading.Thread(target=self._run, daemon=True)
+            self.th.start()
+            return True
 
     def stop(self):
-        self.user_stop = True            # 반복 중이면 다음 회도 안 함
-        self.repeat = False
-        self.stop_evt.set()
-        if self.state.get("waiting_next"):
-            self.state.update(waiting_next=False, phase="", why_end=f"{self.state.get('why_end', '')} · 반복 멈춤 (정지)")
+        with self.run_lk:
+            self.user_stop = True            # 반복 중이면 다음 회도 안 함
+            self.repeat = False
+            self.stop_evt.set()
+            if self.state.get("waiting_next"):
+                self.state.update(waiting_next=False, phase="", why_end=f"{self.state.get('why_end', '')} · 반복 멈춤 (정지)")
 
     def _next_run(self, run_no):
         r = self.r
@@ -363,8 +410,8 @@ class PolicyRunner:
         if self.user_stop:
             return
         try:
-            self.start(repeat=True, run_no=run_no)
-            r.say(f"정책 반복 — {run_no} 회째 시작")
+            if self.start(repeat=True, run_no=run_no):
+                r.say(f"정책 반복 — {run_no} 회째 시작")
         except RuntimeError as e:
             self.state.update(why_end=f"{self.state.get('why_end', '')} · 반복 멈춤: {e}")
             r.say(f"정책 반복 멈춤 — 시작 조건: {e}")
@@ -399,6 +446,7 @@ class PolicyRunner:
         r, pc, p, cfg = self.r, self.pc, self.policy, self.cfg
         why = "끝"
         tok = None
+        th = None
         try:
             p.reset()
             b = pc.call("/stream/begin", {"max_vel": float(cfg["server_max_vel"])})
@@ -428,6 +476,8 @@ class PolicyRunner:
                         raise PolicyStop(box["err"])
                     a, th = box["a"], None
                     self.state["wait_s"] = 0.0
+                    if a.shape != (STATE_DIM,) or not np.all(np.isfinite(a)):
+                        raise PolicyStop("정책 출력에 NaN · inf (또는 크기 이상) — 멈춤")
                 else:
                     w = time.time() - t_wait
                     self.state["wait_s"] = round(w, 1)
@@ -435,6 +485,9 @@ class PolicyRunner:
                         raise PolicyStop(f"추론 답을 {w:.0f} 초 못 받음")
                 if a is None:                                   # 계산 중 — 마지막 목표 그대로 다시 보냄 (제자리)
                     rr = pc.call("/stream/cmd", {"token": tok, "deg": np.degrees(target).tolist()}, timeout=1.0)
+                    lag = float(np.max(np.abs(np.asarray(rr["target_deg"]) - np.asarray(rr["meas_deg"]))))
+                    if lag > cfg["track_abort_deg"]:            # 기다리는 동안에도 걸림 · 부딪힘 검사
+                        raise PolicyStop(f"지령 ↔ 실측 {lag:.0f}° — 걸렸거나 부딪힘 (추론 기다리는 중)")
                     time.sleep(max(0.0, nxt - time.time()))
                     continue
                 # 안전 필터
@@ -488,6 +541,11 @@ class PolicyRunner:
                 except Exception:  # noqa: BLE001
                     pass
             self.stop_evt.set()
+            if th is not None and th.is_alive():          # 답을 기다리던 추론 — 3 초 더 기다려 보고 안 오면 끔 (다음 회가 막히지 않게)
+                th.join(3.0)
+                if th.is_alive():
+                    p.kill("추론 답이 없어 추론 프로세스를 끔 — 모델을 다시 불러오세요")
+                    why += " · 추론 프로세스를 끔 (다시 불러오기 필요)"
             run_no = int(self.state.get("run_no", 1))
             self.state.update(running=False, why_end=why, phase="", wait_s=0.0)
             r.say(f"정책 끝 — {why} (팔은 그 자리, 그리퍼는 그 상태)")
