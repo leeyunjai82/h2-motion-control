@@ -433,7 +433,7 @@ iframe{width:100%;height:520px;border:1px solid var(--line);border-radius:8px;ba
  <div class="card"><h3>3D</h3><iframe id="dash"></iframe></div>
 </div></div>
 <script>
-const host=location.hostname;document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${(window.G1I18N&&G1I18N.lang)||'ko'}`;
+const host=location.hostname;(function _ld(){const u=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${(window.G1I18N&&G1I18N.lang)||'ko'}`;fetch(u,{mode:'no-cors',cache:'no-store'}).then(()=>{document.getElementById('dash').src=u;}).catch(()=>setTimeout(_ld,2000));})();   // 대시보드가 뜬 뒤에
 const REALCAM=__REALCAM__;
 document.getElementById('cam').src=REALCAM?`http://${host}:__PORT_DETECT_BOX__/video_feed`:'/video_feed';
 if(REALCAM)document.getElementById('boxcard').style.display='none';

@@ -1119,6 +1119,66 @@ def infer_status():
     return {"msg": INFER["msg"], "loading": INFER["want"] is not None}
 
 
+# ==========================================
+# LeRobot v3.0 내보내기 (tools/export_lerobot.py — lerobot 가상환경의 python 으로, 사용자 권한) → data/lerobot/<이름>
+# ==========================================
+EXPORT = {"proc": None, "dataset": "", "lines": deque(maxlen=200), "out": "", "rc": None}
+
+
+def lerobot_python():
+    home = USER_PW.pw_dir if USER_PW else os.path.expanduser("~")
+    return str(local_cfg().get("lerobot_python") or os.path.join(home, "miniconda3", "envs", "lerobot", "bin", "python"))
+
+
+def _export_pump(p):
+    for ln in p.stdout:
+        ln = ln.rstrip()
+        if ln and not ln.startswith(("Svt[", "[mp4 @")):
+            EXPORT["lines"].append(ln)
+    EXPORT["rc"] = p.wait()
+
+
+@app.post("/export/lerobot")
+def export_lerobot(body: dict):
+    ds, task = str(body.get("dataset") or ""), str(body.get("task") or "").strip()
+    if EXPORT["proc"] is not None and EXPORT["proc"].poll() is None:
+        raise HTTPException(409, f"내보내는 중: {EXPORT['dataset']}")
+    if not re.match(r"^[A-Za-z0-9_\-]{1,40}$", ds) or not task:
+        raise HTTPException(400, "데이터셋과 작업 설명 (영어 문장) 을 넣으세요")
+    src = os.path.join(paths.data_dir("datasets", legacy="gripper/data"), ds)
+    if not os.path.isfile(os.path.join(src, "info.json")):
+        raise HTTPException(404, f"데이터셋 없음: {ds}")
+    py = lerobot_python()
+    if not os.path.isfile(py):
+        raise HTTPException(409, f"lerobot 가상환경 없음: {py} — 한 번 설치: conda create -n lerobot python=3.10 → "
+                                 "pip install 'torch<2.11' 'torchvision<0.26' --index-url https://download.pytorch.org/whl/cpu → "
+                                 "pip install lerobot==0.4.4 (다른 위치면 config/local.yaml lerobot_python)")
+    base = os.path.join(paths.DATA_DIR, "lerobot")
+    os.makedirs(base, exist_ok=True)
+    _own(paths.DATA_DIR)
+    _own(base)
+    out, k = os.path.join(base, ds), 2
+    while os.path.exists(out):
+        out, k = os.path.join(base, f"{ds}_{k}"), k + 1
+    repo = f"{local_cfg().get('lerobot_repo_prefix') or 'local'}/{os.path.basename(out)}"
+    drop = USER_PW is not None
+    p = subprocess.Popen([py, "-u", os.path.join(ROOT, "tools", "export_lerobot.py"), src, "--out", out, "--repo-id", repo, "--task", task],
+                         cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
+                         preexec_fn=_as_user if drop else None,
+                         env={**(_user_env() if drop else os.environ), "HF_HUB_OFFLINE": "1"})
+    EXPORT.update(proc=p, dataset=ds, out=out, rc=None)
+    EXPORT["lines"].clear()
+    threading.Thread(target=_export_pump, args=(p,), daemon=True).start()
+    return {"ok": True, "out": out}
+
+
+@app.get("/export/status")
+def export_status():
+    p = EXPORT["proc"]
+    return {"running": p is not None and p.poll() is None, "dataset": EXPORT["dataset"], "out": EXPORT["out"], "rc": EXPORT["rc"],
+            "last": list(EXPORT["lines"])[-3:]}
+
+
 @app.post("/train/install/{jid}")
 def train_install(jid: str):
     """학습이 끝난 model zip → data/policies/<이름> (추론 화면 모델 목록에 나옴)."""
@@ -1272,6 +1332,8 @@ pre{margin:0;min-height:120px;max-height:40vh;overflow:auto;background:#0a0d12;b
 .lst{display:flex;flex-direction:column;gap:3px;max-height:170px;overflow:auto;font-size:12px}
 .lst div{display:flex;justify-content:space-between;gap:8px;padding:5px 8px;border-radius:6px;background:#0c1117;border:1px solid var(--line)}
 .lst div span:last-child{color:var(--dim);white-space:nowrap}.lst .em{color:var(--dim);justify-content:center}
+.lst .ds{cursor:pointer}.lst .ds:hover{border-color:var(--accent)}.lst .ds.sel{border-color:var(--accent);background:var(--tint)}
+.exp{display:flex;gap:6px}.exp input{flex:1;min-width:0;font:inherit;font-size:12px;background:#0c1117;border:1px solid var(--line);color:var(--ink);padding:6px 8px;border-radius:7px}
 .fc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-height:330px;position:relative}
 .fc.now{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 22px rgba(0,183,235,.18)}
 .fc.now::after{content:"지금 할 일";position:absolute;top:12px;right:14px;font-size:11px;color:#04121f;background:var(--accent);border-radius:999px;padding:2px 9px;font-weight:700}
@@ -1321,6 +1383,9 @@ button.big{padding:16px 10px;font-size:15px}
         <div class="fc" id="fc-collect"><div class="ft">데이터 수집</div>
           <div class="fx">저장: data/datasets/&lt;이름&gt;</div>
           <div class="lst" id="col-list"></div>
+          <div class="exp"><input id="exp-task" placeholder="LeRobot 작업 설명 (영어) — 예: pick up the cube and put it in the bin">
+            <button class="ok2 sm" id="exp-b" onclick="exportLerobot()">LeRobot v3 로 내보내기</button></div>
+          <div class="fx" id="exp-st"></div>
           <div id="col-b"></div>
           <div class="fh">수집 화면에서 데이터셋 이름 → [수집 켬] → Quest 로 시연 → 에피소드마다 저장. 같은 이름이면 이어서 쌓임</div></div>
         <div class="fc" id="fc-train"><div class="ft">학습</div>
@@ -1488,7 +1553,11 @@ function renderHome(){if(!ST)return;
   const j=ST.job,nr=needRobot(),dsets=SUM?SUM.datasets:[],ms=SUM?SUM.models:[];
   const robotTip=nr?' — 로봇 준비 필요 (FSM '+FSM.run+')':'';
   // 수집
-  $('col-list').innerHTML=dsets.length?dsets.map(d=>`<div><span>${esc(d.name)}</span><span>${d.ok}/${d.total} · ${esc((d.last||'').slice(5,16).replace('T',' '))}</span></div>`).join(''):'<div class="em">아직 없음</div>';
+  if(!SELDS&&dsets[0])SELDS=dsets[0].name;
+  $('col-list').innerHTML=dsets.length?dsets.map(d=>`<div class="ds ${d.name===SELDS?'sel':''}" onclick="SELDS='${esc(d.name)}';renderHome()"><span>${esc(d.name)}</span><span>${d.ok}/${d.total} · ${esc((d.last||'').slice(5,16).replace('T',' '))}</span></div>`).join(''):'<div class="em">아직 없음</div>';
+  const ex=EXP;$('exp-b').disabled=!SELDS||(ex&&ex.running);
+  $('exp-st').textContent=ex&&ex.dataset?(ex.running?`내보내는 중: ${ex.dataset} — ${(ex.last||[]).slice(-1)[0]||''}`:
+    ex.rc===0?`✓ LeRobot v3: ${ex.out}`:ex.rc!==null?`❌ 실패 (rc ${ex.rc}): ${(ex.last||[]).slice(-1)[0]||''}`:''):(SELDS?`선택: ${SELDS} — 목록에서 다른 데이터셋을 누르면 바뀜`:'');
   $('col-b').innerHTML=isRun(['collect','pick_sim'])?btn('ok2','수집 화면 열기','',"go('collect')")+btn('st','끝내기','',"appStop()"):
     btn('go','VR 수집 시작','실제 로봇 · Quest'+robotTip,"appStart('collect')",nr)+btn('ok2','가상 연습','로봇 없이',"appStart('pick_sim')");
   // 학습
@@ -1507,7 +1576,13 @@ function renderHome(){if(!ST)return;
   $('inf-b').innerHTML=isRun(['infer','pick_sim'])?btn('ok2','추론 화면 열기','',"go('infer')")+btn('st','끝내기','',"appStop()"):
     btn('go','추론 시작','실제 로봇'+robotTip,"inferStart(true)",!ms.length||nr)+btn('ok2','가상으로 실행','로봇 없이',"inferStart(false)",!ms.length);
   for(const [k,ids] of [['collect',['collect','pick_sim']],['train',['train_local']],['infer',['infer','pick_sim']]])$('fc-'+k).classList.toggle('run',isRun(ids)||(k==='train'&&!!jr));}
-let INF={msg:'',loading:false};
+let INF={msg:'',loading:false},SELDS='',EXP=null;
+async function exportLerobot(){const task=$('exp-task').value.trim();if(!SELDS)return;
+  if(!task){alert('LeRobot 작업 설명 (영어 문장) 을 넣으세요 — 예: pick up the cube and put it in the bin');$('exp-task').focus();return;}
+  if(!await warn('LeRobot v3 로 내보내기',`${esc(SELDS)} → data/lerobot/${esc(SELDS)}`,'· 원본은 그대로, 새 폴더에 만듦 (성공 에피소드만)\n· 카메라 영상을 MP4 로 인코딩 — CPU 를 많이 씀 (수집 · 추론 중이면 끝난 뒤에)\n· 작업 설명: '+esc(task),'내보내기'))return;
+  try{await (async()=>{const r=await fetch('/export/lerobot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:SELDS,task})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||r.status);})();
+    toast('내보내기 시작');}catch(e){alert(e.message);}pollExport();}
+async function pollExport(){try{EXP=await(await fetch('/export/status')).json();renderHome();}catch(e){}}
 async function inferStart(real){const md=$('inf-md').value,dev=$('inf-dev').value;if(!md)return;
   if(!await warn('추론 시작',`${esc(md)} (${dev})`+(real?' — 실제 로봇이 움직입니다':' — 로봇 없이'),real?'· 거치대 · FSM '+FSM.run+' 확인\n· 주변을 비우고 E-STOP 을 손에\n· 그리퍼 서비스를 켜고 카메라 숙임을 3 초 잽니다':'· 가짜 로봇 · 가짜 카메라','시작'))return;
   const body=JSON.stringify({model:md,device:dev,real});
@@ -1527,7 +1602,7 @@ async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value
 async function pollTrain(){try{TR=await(await fetch('/train/status')).json();renderHome();}catch(e){}}
 async function pollSummary(){try{SUM=await(await fetch('/summary')).json();renderHome();}catch(e){}}
 fetch('/menu').then(r=>r.json()).then(m=>{MENU=m;buildMenu();go(location.hash.slice(1)||'home');poll();pollSummary();});
-setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();setInterval(pollInfer,2000);
+setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();setInterval(pollInfer,2000);setInterval(pollExport,2000);
 </script></body></html>"""
 
 

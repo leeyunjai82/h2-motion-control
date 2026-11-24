@@ -570,7 +570,9 @@ document.getElementById('link-box').href=`http://${host}:__PORT_DETECT_BOX__/`;
 // robot-only 3D 뷰 (50003)
 // 언어는 포트가 달라 localStorage 공유가 안 되므로 ?lang= 로 넘기고, 전환 시엔 i18n.js 가 postMessage
 const LANG=()=>(window.G1I18N&&G1I18N.lang)||'ko';
-document.getElementById('robot-frame').src=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${LANG()}`;
+// 3D 대시보드가 뜬 뒤에 넣음 (시뮬은 이 서버가 대시보드보다 먼저 뜸 — 바로 넣으면 실패한 채 안 바뀜)
+(function loadRobotView(){const u=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${LANG()}`;
+  fetch(u,{mode:'no-cors',cache:'no-store'}).then(()=>{document.getElementById('robot-frame').src=u;}).catch(()=>setTimeout(loadRobotView,2000));})();
 window.addEventListener('g1lang',e=>{
   document.getElementById('link-dash').href=`http://${host}:__PORT_DASHBOARD__/dashboard?lang=${e.detail}`;
   document.getElementById('link-robotonly').href=`http://${host}:__PORT_DASHBOARD__/robot-only?lang=${e.detail}`;});

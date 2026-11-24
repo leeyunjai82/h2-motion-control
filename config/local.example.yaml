@@ -16,3 +16,7 @@ trainer_url:
 brand:
   name:
   sub:
+
+# LeRobot v3 내보내기 (홈 · 데이터 수집 카드): lerobot 0.4.x 가상환경 python (비우면 ~/miniconda3/envs/lerobot/bin/python) · repo-id 앞부분
+lerobot_python:
+lerobot_repo_prefix:
