@@ -1083,6 +1083,42 @@ def train_status():
     return out
 
 
+INFER = {"want": None, "msg": ""}
+
+
+def _load_when_up():
+    import urllib.request
+    w, t0 = INFER["want"], time.time()
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    while time.time() - t0 < 180 and INFER["want"] is w:
+        try:
+            req = urllib.request.Request(ports.url("pick_web", "/api/model/load"), data=json.dumps({"name": w["model"], "device": w["device"]}).encode(),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            op.open(req, timeout=120).read()
+            INFER.update(want=None, msg=f"모델 불러옴: {w['model']} ({w['device']}) — 추론 화면에서 [정책 시작]")
+            return
+        except Exception:  # noqa: BLE001 — 잡기 웹이 아직 안 뜸
+            time.sleep(2)
+    if INFER["want"] is w:
+        INFER.update(want=None, msg="모델을 자동으로 못 불러옴 — 추론 화면에서 직접 고르세요")
+
+
+@app.post("/infer/start")
+def infer_start(body: dict, replace: bool = False):
+    model, dev, real = str(body.get("model") or ""), str(body.get("device") or "GPU"), bool(body.get("real"))
+    if not model:
+        raise HTTPException(400, "모델을 고르세요")
+    start_mode("infer" if real else "pick_sim", replace)
+    INFER.update(want={"model": model, "device": dev}, msg=f"추론 준비 중 — 모델 {model}")
+    threading.Thread(target=_load_when_up, daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/infer/status")
+def infer_status():
+    return {"msg": INFER["msg"], "loading": INFER["want"] is not None}
+
+
 @app.post("/train/install/{jid}")
 def train_install(jid: str):
     """학습이 끝난 model zip → data/policies/<이름> (추론 화면 모델 목록에 나옴)."""
@@ -1232,7 +1268,10 @@ pre{margin:0;min-height:120px;max-height:40vh;overflow:auto;background:#0a0d12;b
 .tbl{width:100%;border-collapse:collapse;font-size:12px}.tbl th{font-weight:400;color:var(--dim);font-size:10.5px;text-align:left;padding:0 6px 5px;border-bottom:1px solid var(--line)}
 .tbl td{padding:6px;border-bottom:1px solid var(--line);white-space:nowrap}
 /* 홈 순서 카드 */
-.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.flow{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.lst{display:flex;flex-direction:column;gap:3px;max-height:170px;overflow:auto;font-size:12px}
+.lst div{display:flex;justify-content:space-between;gap:8px;padding:5px 8px;border-radius:6px;background:#0c1117;border:1px solid var(--line)}
+.lst div span:last-child{color:var(--dim);white-space:nowrap}.lst .em{color:var(--dim);justify-content:center}
 .fc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-height:330px;position:relative}
 .fc.now{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 22px rgba(0,183,235,.18)}
 .fc.now::after{content:"지금 할 일";position:absolute;top:12px;right:14px;font-size:11px;color:#04121f;background:var(--accent);border-radius:999px;padding:2px 9px;font-weight:700}
@@ -1275,34 +1314,33 @@ button.big{padding:16px 10px;font-size:15px}
 <div class="main">
   <nav class="side" id="side"></nav>
   <section class="content" id="content">
-    <!-- 홈: 순서대로 버튼 하나씩 -->
+    <!-- 홈: 수집 · 학습 · 추론 은 서로 독립 — 저장소 (데이터셋 · 모델) 로만 이어짐 -->
     <div class="view" id="v-home">
-      <div class="vh"><h2>시작하기</h2><span class="d">왼쪽부터 순서대로 — 불이 켜진 카드의 버튼을 누르면 됩니다</span></div>
+      <div class="vh"><h2>모방학습</h2><span class="d">수집 → 데이터셋 저장소 · 학습 → 모델 저장소 · 추론 — 각자 따로 시작</span></div>
       <div class="flow">
-        <div class="fc" id="fc-robot"><div class="fn">①</div><div class="ft">로봇 준비</div>
-          <div class="fs" id="robot-seq"></div><div class="fx" id="robot-x"></div>
-          <button class="go big" id="robot-next" onclick="robotNext()">-</button>
-          <div class="fh">로봇 없이 (가상) 만 쓸 거면 건너뛰세요 · 끝낼 때는 위쪽 [종료]</div></div>
-        <div class="fc" id="fc-collect"><div class="fn">②</div><div class="ft">데이터 수집</div>
-          <div class="fv" id="col-v">-</div><div class="fx" id="col-x"></div>
+        <div class="fc" id="fc-collect"><div class="ft">데이터 수집</div>
+          <div class="fx">저장: data/datasets/&lt;이름&gt;</div>
+          <div class="lst" id="col-list"></div>
           <div id="col-b"></div>
-          <div class="fh">수집 화면에서 데이터셋 이름 → [수집 켬] → Quest 로 시연 → 에피소드마다 저장</div></div>
-        <div class="fc" id="fc-train"><div class="fn">③</div><div class="ft">학습</div>
-          <label class="fl">데이터셋<select id="tr-ds"></select></label>
+          <div class="fh">수집 화면에서 데이터셋 이름 → [수집 켬] → Quest 로 시연 → 에피소드마다 저장. 같은 이름이면 이어서 쌓임</div></div>
+        <div class="fc" id="fc-train"><div class="ft">학습</div>
+          <label class="fl">데이터셋 (저장소에서)<select id="tr-ds"></select></label>
           <label class="fl">학습 step<input id="tr-steps" type="number" value="40000" min="1000" step="1000"></label>
           <div id="tr-prog"></div><div id="tr-b"></div>
-          <div class="fh">이 PC 의 GPU 로 학습 (로봇 기능은 꺼짐) · 5090 은 <a href="#train" onclick="go('train');return false">③ 학습</a> 메뉴 안내</div></div>
-        <div class="fc" id="fc-infer"><div class="fn">④</div><div class="ft">추론</div>
-          <div class="fv" id="inf-v">-</div><div class="fx" id="inf-x"></div>
-          <div id="inf-b"></div>
-          <div class="fh">추론 화면에서 모델을 고르고 [정책 시작] · 반복 실행 가능</div></div>
+          <div class="lst" id="tr-list"></div>
+          <div class="fh">이 PC 의 GPU 로 학습 (로봇 기능은 꺼짐). 끝나면 모델 저장소에 자동 저장 · 5090 은 <a href="#train" onclick="go('train');return false">학습 메뉴</a> 안내</div></div>
+        <div class="fc" id="fc-infer"><div class="ft">추론</div>
+          <label class="fl">모델 (저장소에서)<select id="inf-md"></select></label>
+          <label class="fl">추론 장치<select id="inf-dev"><option>GPU</option><option>CPU</option><option>NPU</option></select></label>
+          <div class="fx" id="inf-x"></div><div id="inf-b"></div>
+          <div class="fh">고른 모델을 불러온 채로 추론 화면이 뜸 → [정책 시작] (반복 가능)</div></div>
       </div>
       <div class="grid" style="margin-top:14px">
         <div class="card"><div class="h"><span>실행 중</span><span id="job-mode"></span></div>
           <div class="b"><div class="state" id="rb-s">정지됨</div><pre id="rb-log" style="max-height:24vh"></pre></div></div>
         <div class="card"><div class="h"><span>로봇</span><a href="#robot" onclick="go('robot');return false">자세 화면 →</a></div>
           <div class="b"><div class="fsmnow unk" id="fsmnow-h"><span class="k">FSM</span><span class="v" id="fsm-v-h">확인 중</span><span class="n" id="fsm-n-h"></span></div>
-          <div class="note">일어서기 <b>@@STAND_SEQ@@</b> · 끝낼 때 [종료] (실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@)</div></div></div>
+          <div class="note">실기 수집 · 추론은 FSM @@RUN@@ 에서 (일어서기 <b>@@STAND_SEQ@@</b>) · 가상은 로봇 없이 · 끝낼 때 [종료] (→ @@LOCK@@ → @@DAMP@@)</div></div></div>
       </div>
     </div>
     <!-- 로봇 -->
@@ -1375,7 +1413,7 @@ function startPanel(it,sp,loading){
   if(!it.modes.length)h+=`<div class="note">이 화면은 실행이 필요 없음</div>`;
   else h+=`<div class="row">`+it.modes.map(m=>`<button class="${m.real?'go':'ok2'}" ${loading||(ST&&ST.seq.busy)||!fsmOk(m)?'disabled':''} onclick="appStart('${m.id}')">${esc(m.label)}`+
     `<small>${m.real?'실제 로봇 · FSM '+FSM.run+(fsmOk(m)?'':' 필요 (로봇 메뉴)'):'로봇 없이'} · ${esc(m.app)}</small></button>`).join('')+`</div>`;
-  if(it.remote)h+=`<div class="note" style="line-height:1.8">5090 에서 학습: ② 데이터셋 화면의 <b>[Dataset zip]</b> 받기 → 5090 학습 웹에 올려 학습 → 받은 <b>model zip</b> 을 ④ 모델 에서 올리기`+
+  if(it.remote)h+=`<div class="note" style="line-height:1.8">5090 에서 학습: 수집 화면의 <b>[Dataset zip]</b> 받기 → 5090 학습 웹에 올려 학습 → 받은 <b>model zip</b> 을 추론 화면 모델 목록에 올리기`+
     (MENU.trainer_url?` · <a href="${esc(MENU.trainer_url)}" target="_blank">5090 학습 웹 열기 ↗</a>`:` · (5090 주소는 config/local.yaml trainer_url)`)+`</div>`;
   if(j&&(j.prep||loading||(j.label&&!j.running)))h+=`<pre>${esc((j.log||[]).slice(-40).join('\n'))}</pre>`;
   h+=`</div></div>`;if(sp.dataset.h!==h){sp.innerHTML=h;sp.dataset.h=h;}}
@@ -1443,47 +1481,40 @@ function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';cle
 const f2=v=>v==null?'-':(+v).toFixed(2)+'°';
 const isRun=ids=>ST&&ST.job.running&&ids.includes(ST.job.mode);
 function btn(cls,label,sub,on,dis){return `<button class="${cls} big" ${dis?'disabled':''} onclick="${on}" style="width:100%;margin-bottom:6px">${label}${sub?`<small>${sub}</small>`:''}</button>`;}
-function robotNext(){const f=ST&&ST.fsm;if(!f)return;const ref=f.cur!==null?f.cur:f.last_sent,nx=ref!==null?FSM.next[ref]:FSM.damp;if(nx!==undefined)fsm(nx);}
-function renderHome(){if(!ST)return;const f=ST.fsm,j=ST.job,ready=f.cur===FSM.run;
-  // ① 로봇
-  const order=[FSM.damp,FSM.lock,FSM.run],ci=order.indexOf(f.cur);
-  $('robot-seq').innerHTML='<div class="seq">'+order.map((t,i)=>`<span class="${i<ci?'done':i===ci?'cur':''}">${t} ${esc(FSM.names[t]||'')}</span>`).join('→')+'</div>';
-  $('robot-x').textContent=f.cur===null?'로봇 연결 확인 불가 — 가상만 쓸 거면 그대로 다음 단계로':(ready?'준비 완료 — 실기 수집 · 추론 가능':`지금 FSM ${f.cur} ${f.cur_name}`);
-  const rb=$('robot-next'),ref=f.cur!==null?f.cur:f.last_sent,nx=ref!==null?FSM.next[ref]:FSM.damp;
-  if(ready){rb.textContent='✓ 준비 완료 ('+FSM.run+')';rb.disabled=true;}
-  else if(f.busy!==null){rb.textContent=`FSM ${f.busy} — ${Math.ceil(f.remain)}초 후 전송`;rb.disabled=true;}
-  else{rb.innerHTML=nx!==undefined?`다음: ${esc(FSM.names[nx])} (${nx})`:'Damp (1) 부터';rb.disabled=f.cur===null||(nx!==undefined&&!f.allowed[nx]);}
-  // ② 수집
-  const dsets=SUM?SUM.datasets:[],d0=dsets[0];
-  $('col-v').textContent=d0?`${d0.ok} 에피소드`:'아직 없음';$('col-x').textContent=d0?`최근 데이터셋 ${d0.name} (전체 ${dsets.length} 개)`:'데이터셋을 처음 만듭니다';
-  const colRun=isRun(['collect','pick_sim']);
-  $('col-b').innerHTML=colRun?btn('ok2','수집 화면 열기','지금 수집 중',"go('collect')")+btn('st','수집 끝내기','',"appStop()"):
-    btn('go','VR 수집 시작','실제 로봇 · Quest',"appStart('collect')",!(ready||f.cur===null))+btn('ok2','가상 연습','로봇 없이',"appStart('pick_sim')");
-  // ③ 학습
+function needRobot(){return ST&&ST.fsm.cur!==null&&ST.fsm.cur!==FSM.run;}
+function renderHome(){if(!ST)return;
+  const j=ST.job,nr=needRobot(),dsets=SUM?SUM.datasets:[],ms=SUM?SUM.models:[];
+  const robotTip=nr?' — 로봇 준비 필요 (FSM '+FSM.run+')':'';
+  // 수집
+  $('col-list').innerHTML=dsets.length?dsets.map(d=>`<div><span>${esc(d.name)}</span><span>${d.ok}/${d.total} · ${esc((d.last||'').slice(5,16).replace('T',' '))}</span></div>`).join(''):'<div class="em">아직 없음</div>';
+  $('col-b').innerHTML=isRun(['collect','pick_sim'])?btn('ok2','수집 화면 열기','',"go('collect')")+btn('st','끝내기','',"appStop()"):
+    btn('go','VR 수집 시작','실제 로봇 · Quest'+robotTip,"appStart('collect')",nr)+btn('ok2','가상 연습','로봇 없이',"appStart('pick_sim')");
+  // 학습
   const sel=$('tr-ds'),cur=sel.value,ok=dsets.filter(d=>d.ok>0);
-  const opts=ok.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${d.ok} 에피소드</option>`).join('')||'<option value="">수집한 데이터셋 없음</option>';
+  const opts=ok.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${d.ok} 에피소드</option>`).join('')||'<option value="">데이터셋 없음</option>';
   if(sel.dataset.h!==opts){sel.innerHTML=opts;sel.dataset.h=opts;if(cur)sel.value=cur;}
-  const jr=TR&&TR.jobs.find(x=>x.status==='running'||x.status==='queued'),jl=TR&&TR.jobs[0];
-  let prog='';
-  if(jr){const pc=Math.round(100*(jr.step||0)/(jr.total||1));
-    prog=`<div class="fx">${esc(jr.dataset)} · ${jr.step||0}/${jr.total} step · loss ${jr.loss==null?'-':(+jr.loss).toFixed(3)} · val ${f2(jr.val_err_deg)} · 남은 ${jr.eta_s?Math.round(jr.eta_s/60)+'분':'-'}</div><div class="bar"><b style="width:${pc}%"></b></div>`;}
-  else if(jl&&jl.status==='done')prog=`<div class="fx">끝난 학습: ${esc(jl.dataset)} · val ${f2(jl.val_err_deg)}</div>`;
-  else if(TR&&TR.msg)prog=`<div class="fx">${esc(TR.msg)}</div>`;
-  $('tr-prog').innerHTML=prog;
-  $('tr-b').innerHTML=jr?btn('ok2','학습 화면 열기',`${Math.round(100*(jr.step||0)/(jr.total||1))}% 진행 중`,"go('train')"):
-    (TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로 바로',"trainStart()",!ok.length))+
-    (jl&&jl.status==='done'&&jl.zip?btn('ok2','추론에 설치',esc(jl.id)+' 의 모델',`trainInstall('${esc(jl.id)}')`):'');
-  // ④ 추론
-  const ms=SUM?SUM.models:[],m0=ms[0];
-  $('inf-v').textContent=ms.length?`${ms.length} 모델`:'모델 없음';$('inf-x').textContent=m0?`최근 ${m0.name} · val ${f2(m0.val_err_deg)}`:'③ 학습 후 [추론에 설치]';
-  const infRun=isRun(['infer','pick_sim'])&&ST.job.mode==='infer'||isRun(['infer']);
-  $('inf-b').innerHTML=isRun(['infer'])?btn('ok2','추론 화면 열기','',"go('infer')")+btn('st','추론 끝내기','',"appStop()"):
-    btn('go','추론 시작','실제 로봇',"appStart('infer')",!ms.length||!(ready||f.cur===null))+btn('ok2','가상으로 실행','로봇 없이',"appStart('pick_sim')",!ms.length);
-  // 지금 할 일
-  let now=null;
-  if(colRun)now='run-collect';else if(jr)now='run-train';else if(isRun(['infer']))now='run-infer';
-  else if(f.cur!==null&&!ready)now='robot';else if(!ok.length)now='collect';else if(!ms.length)now='train';else now='infer';
-  for(const k of ['robot','collect','train','infer']){const e=$('fc-'+k);e.classList.toggle('now',now===k);e.classList.toggle('run',now==='run-'+k);}}
+  const jr=TR&&TR.jobs.find(x=>x.status==='running'||x.status==='queued');
+  $('tr-prog').innerHTML=jr?`<div class="fx">${esc(jr.dataset)} · ${jr.step||0}/${jr.total} · loss ${jr.loss==null?'-':(+jr.loss).toFixed(3)} · val ${f2(jr.val_err_deg)} · 남은 ${jr.eta_s?Math.round(jr.eta_s/60)+'분':'-'}</div><div class="bar"><b style="width:${Math.round(100*(jr.step||0)/(jr.total||1))}%"></b></div>`:
+    (TR&&TR.msg?`<div class="fx">${esc(TR.msg)}</div>`:'');
+  $('tr-b').innerHTML=jr?btn('ok2','학습 화면 열기','',"go('train')"):TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로',"trainStart()",!ok.length);
+  $('tr-list').innerHTML=TR&&TR.up?(TR.jobs.length?TR.jobs.map(x=>`<div><span>${esc(x.dataset)} → ${esc(x.saved_model||x.status)}</span><span>${x.status==='running'?Math.round(100*(x.step||0)/(x.total||1))+'%':'val '+f2(x.val_err_deg)}</span></div>`).join(''):'<div class="em">학습 작업 없음</div>'):'';
+  // 추론
+  const ms2=$('inf-md'),mc=ms2.value,mo=ms.map(m=>`<option value="${esc(m.name)}">${esc(m.name)} · val ${f2(m.val_err_deg)}</option>`).join('')||'<option value="">모델 없음</option>';
+  if(ms2.dataset.h!==mo){ms2.innerHTML=mo;ms2.dataset.h=mo;if(mc)ms2.value=mc;}
+  $('inf-x').textContent=INF.msg||(ms.length?`모델 ${ms.length} 개 · 저장: data/policies/<이름>`:'학습하면 여기에 생김');
+  $('inf-b').innerHTML=isRun(['infer','pick_sim'])?btn('ok2','추론 화면 열기','',"go('infer')")+btn('st','끝내기','',"appStop()"):
+    btn('go','추론 시작','실제 로봇'+robotTip,"inferStart(true)",!ms.length||nr)+btn('ok2','가상으로 실행','로봇 없이',"inferStart(false)",!ms.length);
+  for(const [k,ids] of [['collect',['collect','pick_sim']],['train',['train_local']],['infer',['infer','pick_sim']]])$('fc-'+k).classList.toggle('run',isRun(ids)||(k==='train'&&!!jr));}
+let INF={msg:'',loading:false};
+async function inferStart(real){const md=$('inf-md').value,dev=$('inf-dev').value;if(!md)return;
+  if(!await warn('추론 시작',`${esc(md)} (${dev})`+(real?' — 실제 로봇이 움직입니다':' — 로봇 없이'),real?'· 거치대 · FSM '+FSM.run+' 확인\n· 주변을 비우고 E-STOP 을 손에\n· 그리퍼 서비스를 켜고 카메라 숙임을 3 초 잽니다':'· 가짜 로봇 · 가짜 카메라','시작'))return;
+  const body=JSON.stringify({model:md,device:dev,real});
+  let r=await fetch('/infer/start',{method:'POST',headers:{'Content-Type':'application/json'},body}),d=await r.json().catch(()=>({}));
+  if(r.status===409&&d.detail&&d.detail.conflicts){const cs=d.detail.conflicts;
+    if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 추론을 시작할까요?`,cs.map(c=>`· ${esc(c.label)} — ${esc(c.what.join(', '))}`+c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n'),'끄고 시작'))return;
+    r=await fetch('/infer/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body});d=await r.json().catch(()=>({}));}
+  if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));pollInfer();}
+async function pollInfer(){try{INF=await(await fetch('/infer/status')).json();renderHome();}catch(e){}}
 async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value||40000;if(!ds)return;
   if(!await warn('학습 시작',`${esc(ds)} · ${steps} step`,'· 이 PC 의 GPU 로 학습 (최대 클럭 제한)\n· 로봇 기능은 꺼집니다 (PC 멈춤 방지) — 떠 있으면 확인 후 정상 종료\n· 몇 시간 걸림 — 진행은 이 카드에','학습 시작'))return;
   let r=await fetch('/train/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps})}),d=await r.json().catch(()=>({}));
@@ -1491,11 +1522,10 @@ async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value
     if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 학습을 시작할까요?`,cs.map(c=>`· ${esc(c.label)} — ${esc(c.what.join(', '))}`+c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n'),'끄고 시작'))return;
     r=await fetch('/train/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps})});d=await r.json().catch(()=>({}));}
   if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));else toast('학습 시작 — 학습 서버가 뜨면 작업이 들어갑니다');pollTrain();}
-async function trainInstall(id){try{const d=await post('/train/install/'+id);toast('설치됨: '+d.name+' — ④ 추론에서 고르세요');pollSummary();}catch(e){alert(e.message);}}
 async function pollTrain(){try{TR=await(await fetch('/train/status')).json();renderHome();}catch(e){}}
 async function pollSummary(){try{SUM=await(await fetch('/summary')).json();renderHome();}catch(e){}}
 fetch('/menu').then(r=>r.json()).then(m=>{MENU=m;buildMenu();go(location.hash.slice(1)||'home');poll();pollSummary();});
-setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();
+setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();setInterval(pollInfer,2000);
 </script></body></html>"""
 
 

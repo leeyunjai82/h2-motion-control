@@ -70,6 +70,26 @@ def log(msg):
 # =====================================================================
 # 데이터셋
 # =====================================================================
+def save_model(j):
+    """같은 PC (수집 데이터셋이 있는 로봇 PC) 면 학습한 모델을 모델 저장소 data/policies/<이름> 에 바로 저장 — 추론에서 고르기만 하면 됨.
+    5090 처럼 아니면 저장 안 함 (model zip 을 받아 추론 PC 에 올림)."""
+    if COLLECT_DIR is None:
+        return
+    src = os.path.join(JOB_DIR, j["id"], "model")
+    try:
+        with open(os.path.join(src, "meta.json"), encoding="utf-8") as f:
+            name = json.load(f)["name"]
+        dst = os.path.join(paths.data_dir("policies", legacy="gripper/models"), name)
+        os.makedirs(dst, exist_ok=True)
+        for fn in ("policy.xml", "policy.bin", "meta.json"):
+            shutil.copy2(os.path.join(src, fn), os.path.join(dst, fn))
+        j["saved_model"] = name
+        log(f"모델 저장소에 저장: {dst}")
+    except Exception as e:  # noqa: BLE001
+        j["saved_model"] = None
+        log(f"모델 저장소 저장 실패: {e}")
+
+
 def ds_path(name):
     """업로드한 데이터셋 → 없으면 이 PC 에서 수집한 데이터셋."""
     p = os.path.join(DS_DIR, name)
@@ -271,6 +291,7 @@ class Jobs:
             j["status"] = "canceled"
         elif rc == 0 and j.get("zip"):
             j["status"] = "done"
+            save_model(j)
         else:
             j["status"] = "failed"
             j["error"] = next((ln for ln in reversed(tail) if ln.strip() and not ln.startswith("  ")), f"exit {rc}")
