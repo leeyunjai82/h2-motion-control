@@ -1014,6 +1014,106 @@ def summary():
     return out
 
 
+# ==========================================
+# 홈에서 바로: 학습 시작 · 진행 · 추론에 설치 (학습 서버 :50100 API 를 대신 부름 — 학습 서버가 없으면 켬)
+# ==========================================
+TRAIN = {"want": None, "msg": ""}      # 학습 서버를 켜는 중에 넣을 작업 {dataset, steps}
+
+
+def _tr(path, body=None, timeout=5):
+    import urllib.request
+    req = urllib.request.Request(ports.url("trainer", path), data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"}, method="POST" if body is not None else "GET")
+    op = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    with op.open(req, timeout=timeout) as r:
+        return r.read()
+
+
+def _trainer_up():
+    try:
+        _tr("/api/info", timeout=1.5)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _queue_when_up():
+    t0 = time.time()
+    while time.time() - t0 < 120 and TRAIN["want"]:
+        if _trainer_up():
+            w = TRAIN["want"]
+            try:
+                _tr("/api/jobs", {"dataset": w["dataset"], "params": {"steps": w["steps"]}})
+                TRAIN.update(want=None, msg=f"학습 시작: {w['dataset']} · {w['steps']} step")
+            except Exception as e:  # noqa: BLE001
+                TRAIN.update(want=None, msg=f"학습 시작 실패: {e}")
+            return
+        time.sleep(1.5)
+    if TRAIN["want"]:
+        TRAIN.update(want=None, msg="학습 서버가 2 분 안에 안 뜸 — 로그 확인")
+
+
+@app.post("/train/start")
+def train_start(body: dict, replace: bool = False):
+    ds, steps = str(body.get("dataset") or ""), int(body.get("steps") or 40000)
+    if not ds:
+        raise HTTPException(400, "데이터셋을 고르세요")
+    if _trainer_up():
+        try:
+            _tr("/api/jobs", {"dataset": ds, "params": {"steps": steps}})
+        except Exception as e:  # noqa: BLE001
+            raise HTTPException(409, f"학습 시작 실패: {e}")
+        TRAIN["msg"] = f"학습 시작: {ds} · {steps} step"
+        return {"ok": True}
+    start_mode("train_local", replace)          # 떠 있는 것이 있으면 409 conflicts (화면이 확인 후 replace)
+    TRAIN.update(want={"dataset": ds, "steps": steps}, msg="학습 서버 켜는 중 …")
+    threading.Thread(target=_queue_when_up, daemon=True).start()
+    return {"ok": True}
+
+
+@app.get("/train/status")
+def train_status():
+    out = {"up": False, "jobs": [], "msg": TRAIN["msg"], "starting": bool(TRAIN["want"])}
+    if _trainer_up():
+        out["up"] = True
+        try:
+            out["jobs"] = json.loads(_tr("/api/jobs"))[:5]
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+@app.post("/train/install/{jid}")
+def train_install(jid: str):
+    """학습이 끝난 model zip → data/policies/<이름> (추론 화면 모델 목록에 나옴)."""
+    import io
+    import zipfile
+    if not re.match(r"^[A-Za-z0-9_.\-]{1,64}$", jid):
+        raise HTTPException(400, "작업 이름")
+    try:
+        raw = _tr(f"/api/jobs/{jid}/model.zip", timeout=60)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(409, f"model zip 을 못 받음: {e}")
+    from pitron.learning import formats
+    with zipfile.ZipFile(io.BytesIO(raw)) as z:
+        roots = {n.split("/", 1)[0] for n in z.namelist() if not n.endswith("/")}
+        if len(roots) != 1:
+            raise HTTPException(409, "model zip 구조 이상")
+        root = roots.pop()
+        meta = json.loads(z.read(f"{root}/meta.json"))
+        if meta.get("format") != formats.MODEL_FORMAT:
+            raise HTTPException(409, f"그리퍼 모델 아님 ({meta.get('format')})")
+        dst = os.path.join(paths.data_dir("policies", legacy="gripper/models"), root)
+        os.makedirs(dst, exist_ok=True)
+        for fn in formats.MODEL_FILES:
+            with open(os.path.join(dst, fn), "wb") as f:
+                f.write(z.read(f"{root}/{fn}"))
+            _own(os.path.join(dst, fn))
+        _own(dst)
+        _own(os.path.dirname(dst))
+    return {"ok": True, "name": root}
+
+
 @app.post("/app/{mid}/start")
 def app_start(mid: str, replace: bool = False):
     start_mode(mid, replace)
@@ -1077,8 +1177,12 @@ a{color:var(--accent2)}
 .chip b{color:var(--ink)}.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
 .chip.ok{color:var(--ok);border-color:#1f5a43}.chip.std{color:var(--accent);border-color:#0b5a70}.chip.low{color:var(--amber);border-color:#6a4a1f}
 .chip.err{color:var(--warn);border-color:#5a2b2b}.chip.run{color:var(--amber);border-color:#6a4a1f}
-.top .r{margin-left:auto;display:flex;gap:8px;align-items:center}
-.estop{font-size:10.5px;color:var(--dim);margin-right:6px}
+.top{min-width:0;overflow:hidden}
+.top .r{margin-left:auto;display:flex;gap:8px;align-items:center;flex:none}
+#chip-job{min-width:0;max-width:34vw;overflow:hidden;text-overflow:ellipsis}#chip-job b{overflow:hidden;text-overflow:ellipsis}
+.brand small{white-space:nowrap}
+.estop{font-size:10.5px;color:var(--dim);margin-right:6px;white-space:nowrap}
+@media(max-width:1500px){.estop{display:none}.brand small{display:none}}
 /* 본문 */
 .main{flex:1;min-height:0;display:flex}
 .side{width:230px;flex:none;border-right:1px solid var(--line);padding:12px 10px;overflow-y:auto;background:#0c1015}
@@ -1087,9 +1191,9 @@ a{color:var(--accent2)}
 .side .it:hover{background:var(--panel2)}.side .it.on{background:var(--tint);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
 .side .it .dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:transparent}.side .it .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
 .content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
-.view{display:none;flex:1;min-height:0;flex-direction:column;overflow:auto;padding:16px}.view.on{display:flex}
+.view{display:none;flex:1;min-height:0;min-width:0;flex-direction:column;overflow-y:auto;overflow-x:hidden;padding:16px}.view.on{display:flex}
 .vh{display:flex;align-items:baseline;gap:12px;margin-bottom:12px;flex-wrap:wrap}.vh h2{margin:0;font-size:18px}.vh .d{color:var(--dim);font-size:12px}
-.vh .tabs{display:flex;gap:4px;margin-left:auto}
+.vh .tabs{display:flex;gap:4px;margin-left:auto;flex-wrap:wrap}.vh h2{white-space:nowrap}
 .tab{font:inherit;font-size:12px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);cursor:pointer}
 .tab.on{color:#04121f;background:var(--accent);border-color:var(--accent);font-weight:700}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
@@ -1127,6 +1231,24 @@ pre{margin:0;min-height:120px;max-height:40vh;overflow:auto;background:#0a0d12;b
 .stp.run{border-color:#1f5a43;box-shadow:inset 0 3px 0 var(--ok)}
 .tbl{width:100%;border-collapse:collapse;font-size:12px}.tbl th{font-weight:400;color:var(--dim);font-size:10.5px;text-align:left;padding:0 6px 5px;border-bottom:1px solid var(--line)}
 .tbl td{padding:6px;border-bottom:1px solid var(--line);white-space:nowrap}
+/* 홈 순서 카드 */
+.flow{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.fc{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:16px;display:flex;flex-direction:column;gap:10px;min-height:330px;position:relative}
+.fc.now{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent),0 0 22px rgba(0,183,235,.18)}
+.fc.now::after{content:"지금 할 일";position:absolute;top:12px;right:14px;font-size:11px;color:#04121f;background:var(--accent);border-radius:999px;padding:2px 9px;font-weight:700}
+.fc.run{border-color:#1f5a43;box-shadow:0 0 0 1px var(--ok)}
+.fc.run::after{content:"실행 중";position:absolute;top:12px;right:14px;font-size:11px;color:#04121f;background:var(--ok);border-radius:999px;padding:2px 9px;font-weight:700}
+.fn{font-size:28px;font-weight:700;color:var(--accent);line-height:1}.ft{font-size:18px;font-weight:700}
+.fv{font-size:26px;font-weight:700;color:#fff}.fx{font-size:12px;color:var(--dim);min-height:18px}
+.fh{margin-top:auto;font-size:11px;color:var(--dim);line-height:1.6}
+.fl{display:flex;flex-direction:column;gap:4px;font-size:11px;color:var(--dim)}
+.fl select,.fl input{font:inherit;font-size:13px;background:#0c1117;border:1px solid var(--line);color:var(--ink);padding:8px;border-radius:7px}
+button.big{padding:16px 10px;font-size:15px}
+.seq{display:flex;gap:4px;align-items:center;font-size:12px;flex-wrap:wrap}.seq span{white-space:nowrap;padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--dim)}
+.seq span.done{color:var(--ok);border-color:#1f5a43}.seq span.cur{color:#04121f;background:var(--accent);border-color:var(--accent);font-weight:700}
+.bar{height:8px;border-radius:4px;background:#0c1117;border:1px solid var(--line);overflow:hidden}.bar b{display:block;height:100%;background:var(--accent)}
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--panel2);border:1px solid var(--accent);color:var(--accent);padding:9px 16px;border-radius:8px;display:none;z-index:99}
+@media(max-width:1300px){.flow{grid-template-columns:repeat(2,1fr)}}
 /* 기능 화면 */
 .frame{flex:1;min-height:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#05080c;display:none}
 .frame.on{display:block}.frame iframe{width:100%;height:100%;border:0;display:block}
@@ -1153,21 +1275,34 @@ pre{margin:0;min-height:120px;max-height:40vh;overflow:auto;background:#0a0d12;b
 <div class="main">
   <nav class="side" id="side"></nav>
   <section class="content" id="content">
-    <!-- 홈 -->
+    <!-- 홈: 순서대로 버튼 하나씩 -->
     <div class="view" id="v-home">
-      <div class="vh"><h2>홈</h2><span class="d" id="home-d">로봇 준비 → 데이터 수집 → 학습 → 추론</span></div>
-      <div class="steps" id="steps"></div>
-      <div class="grid" style="margin-top:12px">
-        <div class="card"><div class="h"><span>로봇</span><a href="#robot" onclick="go('robot');return false">자세 →</a></div>
+      <div class="vh"><h2>시작하기</h2><span class="d">왼쪽부터 순서대로 — 불이 켜진 카드의 버튼을 누르면 됩니다</span></div>
+      <div class="flow">
+        <div class="fc" id="fc-robot"><div class="fn">①</div><div class="ft">로봇 준비</div>
+          <div class="fs" id="robot-seq"></div><div class="fx" id="robot-x"></div>
+          <button class="go big" id="robot-next" onclick="robotNext()">-</button>
+          <div class="fh">로봇 없이 (가상) 만 쓸 거면 건너뛰세요 · 끝낼 때는 위쪽 [종료]</div></div>
+        <div class="fc" id="fc-collect"><div class="fn">②</div><div class="ft">데이터 수집</div>
+          <div class="fv" id="col-v">-</div><div class="fx" id="col-x"></div>
+          <div id="col-b"></div>
+          <div class="fh">수집 화면에서 데이터셋 이름 → [수집 켬] → Quest 로 시연 → 에피소드마다 저장</div></div>
+        <div class="fc" id="fc-train"><div class="fn">③</div><div class="ft">학습</div>
+          <label class="fl">데이터셋<select id="tr-ds"></select></label>
+          <label class="fl">학습 step<input id="tr-steps" type="number" value="40000" min="1000" step="1000"></label>
+          <div id="tr-prog"></div><div id="tr-b"></div>
+          <div class="fh">이 PC 의 GPU 로 학습 (로봇 기능은 꺼짐) · 5090 은 <a href="#train" onclick="go('train');return false">③ 학습</a> 메뉴 안내</div></div>
+        <div class="fc" id="fc-infer"><div class="fn">④</div><div class="ft">추론</div>
+          <div class="fv" id="inf-v">-</div><div class="fx" id="inf-x"></div>
+          <div id="inf-b"></div>
+          <div class="fh">추론 화면에서 모델을 고르고 [정책 시작] · 반복 실행 가능</div></div>
+      </div>
+      <div class="grid" style="margin-top:14px">
+        <div class="card"><div class="h"><span>실행 중</span><span id="job-mode"></span></div>
+          <div class="b"><div class="state" id="rb-s">정지됨</div><pre id="rb-log" style="max-height:24vh"></pre></div></div>
+        <div class="card"><div class="h"><span>로봇</span><a href="#robot" onclick="go('robot');return false">자세 화면 →</a></div>
           <div class="b"><div class="fsmnow unk" id="fsmnow-h"><span class="k">FSM</span><span class="v" id="fsm-v-h">확인 중</span><span class="n" id="fsm-n-h"></span></div>
           <div class="note">일어서기 <b>@@STAND_SEQ@@</b> · 끝낼 때 [종료] (실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@)</div></div></div>
-        <div class="card"><div class="h"><span>실행 중</span><span id="job-mode"></span></div>
-          <div class="b"><div class="state" id="rb-s">정지됨</div><pre id="rb-log"></pre></div></div>
-      </div>
-      <div class="grid" style="margin-top:12px">
-        <div class="card"><div class="h"><span>데이터셋</span><span>data/datasets</span></div><div class="b"><table class="tbl" id="t-ds"></table></div></div>
-        <div class="card"><div class="h"><span>모델</span><span>data/policies</span></div><div class="b"><table class="tbl" id="t-md"></table></div></div>
-        <div class="card"><div class="h"><span>학습 작업 (이 PC)</span><span>data/trainer</span></div><div class="b"><table class="tbl" id="t-jb"></table></div></div>
       </div>
     </div>
     <!-- 로봇 -->
@@ -1186,6 +1321,7 @@ pre{margin:0;min-height:120px;max-height:40vh;overflow:auto;background:#0a0d12;b
     <!-- 기능 화면 (메뉴 항목마다 하나, JS 가 만듦) -->
   </section>
 </div>
+<div class="toast" id="toast"></div>
 <div class="modal" id="modal"><div class="mbox"><div class="mt" id="m-t">⚠️</div><div class="mm" id="m-m"></div>
   <div class="mb"><button id="m-no">취소</button><button class="run" id="m-yes">실행</button></div></div></div>
 <script>
@@ -1212,8 +1348,7 @@ function buildMenu(){
         <div class="startp" id="sp-${it.id}"></div><div class="frame" id="fr-${it.id}"></div>`;
       $('content').appendChild(v);}}
   $('side').innerHTML=h;
-  const st=[['collect','① 데이터 수집'],['dataset','② 데이터셋'],['train','③ 학습'],['model','④ 모델'],['infer','⑤ 추론']];
-  $('steps').innerHTML=st.map(([id,t])=>`<div class="stp" id="stp-${id}" onclick="go('${id}')"><span class="t">${t}</span><span class="v" id="sv-${id}">-</span><span class="s" id="ss-${id}"></span></div>`).join('');}
+}
 function go(v){VIEW=v;location.hash=v==='home'?'':v;
   document.querySelectorAll('.side .it').forEach(e=>e.classList.toggle('on',e.dataset.v===v));
   document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));render();}
@@ -1300,23 +1435,67 @@ async function poll(){try{const d=await(await fetch('/status')).json();ST=d;cons
   if(pend)setState('fsm-s','run',`FSM ${f.busy} — ${Math.ceil(f.remain)}초 후 전송`);else if(f.busy!==null)setState('fsm-s','run',`FSM ${f.busy} 전송 중…`);
   else if(f.result)setState('fsm-s',f.result[0]?'on':'err',f.result[1]);else setState('fsm-s','','대기');
   fill($('fsm-log'),f.log);
-  for(const id of ['collect','dataset','train','model','infer']){const e=$('stp-'+id);if(e&&ITEMS[id])e.classList.toggle('run',j.running&&ITEMS[id].modes.some(m=>m.id===j.mode));}
-  render();
+  renderHome();render();
 }catch(e){$('chip-fsm').className='chip err';$('chip-fsm').innerHTML='FSM <b>런처 연결 끊김</b>';}}
-async function pollSummary(){try{const s=await(await fetch('/summary')).json(),d0=s.datasets[0],m0=s.models[0],j0=s.jobs[0];
-  const f1=v=>v==null?'-':(+v).toFixed(2)+'°';
-  $('sv-collect').textContent=d0?d0.ok:'-';$('ss-collect').textContent=d0?`최근 ${d0.name} · 성공 에피소드`:'데이터셋 없음';
-  $('sv-dataset').textContent=s.datasets.length;$('ss-dataset').textContent='데이터셋 · 에피소드 '+s.datasets.reduce((a,d)=>a+d.ok,0)+' 개';
-  $('sv-train').textContent=j0?(j0.status==='running'?Math.round(100*(j0.step||0)/(j0.total||1))+'%':j0.status):'-';
-  $('ss-train').textContent=j0?`${j0.dataset} · val ${f1(j0.val_err_deg)}`:'이 PC 학습 작업 없음';
-  $('sv-model').textContent=s.models.length;$('ss-model').textContent=m0?`최근 ${m0.name} · val ${f1(m0.val_err_deg)}`:'모델 없음';
-  $('sv-infer').textContent=m0?'준비':'-';$('ss-infer').textContent=m0?'모델을 골라 실행':'모델을 먼저 (④)';
-  $('t-ds').innerHTML='<tr><th>이름</th><th>성공/전체</th><th>최근</th></tr>'+s.datasets.map(d=>`<tr><td>${esc(d.name)}</td><td>${d.ok}/${d.total}</td><td>${esc((d.last||'').replace('T',' ').slice(0,16))}</td></tr>`).join('');
-  $('t-md').innerHTML='<tr><th>이름</th><th>데이터셋</th><th>step</th><th>val</th></tr>'+s.models.map(m=>`<tr><td>${esc(m.name)}</td><td>${esc(m.dataset)}</td><td>${m.steps??'-'}</td><td>${f1(m.val_err_deg)}</td></tr>`).join('');
-  $('t-jb').innerHTML='<tr><th>작업</th><th>데이터셋</th><th>상태</th><th>val</th></tr>'+s.jobs.map(j=>`<tr><td>${esc(j.id)}</td><td>${esc(j.dataset)}</td><td>${esc(j.status)} ${j.status==='running'?Math.round(100*(j.step||0)/(j.total||1))+'%':''}</td><td>${f1(j.val_err_deg)}</td></tr>`).join('');
-}catch(e){}}
+// ---------- 홈 순서 카드 ----------
+let SUM=null,TR=null;
+function toast(t){const e=$('toast');e.textContent=t;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3500);}
+const f2=v=>v==null?'-':(+v).toFixed(2)+'°';
+const isRun=ids=>ST&&ST.job.running&&ids.includes(ST.job.mode);
+function btn(cls,label,sub,on,dis){return `<button class="${cls} big" ${dis?'disabled':''} onclick="${on}" style="width:100%;margin-bottom:6px">${label}${sub?`<small>${sub}</small>`:''}</button>`;}
+function robotNext(){const f=ST&&ST.fsm;if(!f)return;const ref=f.cur!==null?f.cur:f.last_sent,nx=ref!==null?FSM.next[ref]:FSM.damp;if(nx!==undefined)fsm(nx);}
+function renderHome(){if(!ST)return;const f=ST.fsm,j=ST.job,ready=f.cur===FSM.run;
+  // ① 로봇
+  const order=[FSM.damp,FSM.lock,FSM.run],ci=order.indexOf(f.cur);
+  $('robot-seq').innerHTML='<div class="seq">'+order.map((t,i)=>`<span class="${i<ci?'done':i===ci?'cur':''}">${t} ${esc(FSM.names[t]||'')}</span>`).join('→')+'</div>';
+  $('robot-x').textContent=f.cur===null?'로봇 연결 확인 불가 — 가상만 쓸 거면 그대로 다음 단계로':(ready?'준비 완료 — 실기 수집 · 추론 가능':`지금 FSM ${f.cur} ${f.cur_name}`);
+  const rb=$('robot-next'),ref=f.cur!==null?f.cur:f.last_sent,nx=ref!==null?FSM.next[ref]:FSM.damp;
+  if(ready){rb.textContent='✓ 준비 완료 ('+FSM.run+')';rb.disabled=true;}
+  else if(f.busy!==null){rb.textContent=`FSM ${f.busy} — ${Math.ceil(f.remain)}초 후 전송`;rb.disabled=true;}
+  else{rb.innerHTML=nx!==undefined?`다음: ${esc(FSM.names[nx])} (${nx})`:'Damp (1) 부터';rb.disabled=f.cur===null||(nx!==undefined&&!f.allowed[nx]);}
+  // ② 수집
+  const dsets=SUM?SUM.datasets:[],d0=dsets[0];
+  $('col-v').textContent=d0?`${d0.ok} 에피소드`:'아직 없음';$('col-x').textContent=d0?`최근 데이터셋 ${d0.name} (전체 ${dsets.length} 개)`:'데이터셋을 처음 만듭니다';
+  const colRun=isRun(['collect','pick_sim']);
+  $('col-b').innerHTML=colRun?btn('ok2','수집 화면 열기','지금 수집 중',"go('collect')")+btn('st','수집 끝내기','',"appStop()"):
+    btn('go','VR 수집 시작','실제 로봇 · Quest',"appStart('collect')",!(ready||f.cur===null))+btn('ok2','가상 연습','로봇 없이',"appStart('pick_sim')");
+  // ③ 학습
+  const sel=$('tr-ds'),cur=sel.value,ok=dsets.filter(d=>d.ok>0);
+  const opts=ok.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${d.ok} 에피소드</option>`).join('')||'<option value="">수집한 데이터셋 없음</option>';
+  if(sel.dataset.h!==opts){sel.innerHTML=opts;sel.dataset.h=opts;if(cur)sel.value=cur;}
+  const jr=TR&&TR.jobs.find(x=>x.status==='running'||x.status==='queued'),jl=TR&&TR.jobs[0];
+  let prog='';
+  if(jr){const pc=Math.round(100*(jr.step||0)/(jr.total||1));
+    prog=`<div class="fx">${esc(jr.dataset)} · ${jr.step||0}/${jr.total} step · loss ${jr.loss==null?'-':(+jr.loss).toFixed(3)} · val ${f2(jr.val_err_deg)} · 남은 ${jr.eta_s?Math.round(jr.eta_s/60)+'분':'-'}</div><div class="bar"><b style="width:${pc}%"></b></div>`;}
+  else if(jl&&jl.status==='done')prog=`<div class="fx">끝난 학습: ${esc(jl.dataset)} · val ${f2(jl.val_err_deg)}</div>`;
+  else if(TR&&TR.msg)prog=`<div class="fx">${esc(TR.msg)}</div>`;
+  $('tr-prog').innerHTML=prog;
+  $('tr-b').innerHTML=jr?btn('ok2','학습 화면 열기',`${Math.round(100*(jr.step||0)/(jr.total||1))}% 진행 중`,"go('train')"):
+    (TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로 바로',"trainStart()",!ok.length))+
+    (jl&&jl.status==='done'&&jl.zip?btn('ok2','추론에 설치',esc(jl.id)+' 의 모델',`trainInstall('${esc(jl.id)}')`):'');
+  // ④ 추론
+  const ms=SUM?SUM.models:[],m0=ms[0];
+  $('inf-v').textContent=ms.length?`${ms.length} 모델`:'모델 없음';$('inf-x').textContent=m0?`최근 ${m0.name} · val ${f2(m0.val_err_deg)}`:'③ 학습 후 [추론에 설치]';
+  const infRun=isRun(['infer','pick_sim'])&&ST.job.mode==='infer'||isRun(['infer']);
+  $('inf-b').innerHTML=isRun(['infer'])?btn('ok2','추론 화면 열기','',"go('infer')")+btn('st','추론 끝내기','',"appStop()"):
+    btn('go','추론 시작','실제 로봇',"appStart('infer')",!ms.length||!(ready||f.cur===null))+btn('ok2','가상으로 실행','로봇 없이',"appStart('pick_sim')",!ms.length);
+  // 지금 할 일
+  let now=null;
+  if(colRun)now='run-collect';else if(jr)now='run-train';else if(isRun(['infer']))now='run-infer';
+  else if(f.cur!==null&&!ready)now='robot';else if(!ok.length)now='collect';else if(!ms.length)now='train';else now='infer';
+  for(const k of ['robot','collect','train','infer']){const e=$('fc-'+k);e.classList.toggle('now',now===k);e.classList.toggle('run',now==='run-'+k);}}
+async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value||40000;if(!ds)return;
+  if(!await warn('학습 시작',`${esc(ds)} · ${steps} step`,'· 이 PC 의 GPU 로 학습 (최대 클럭 제한)\n· 로봇 기능은 꺼집니다 (PC 멈춤 방지) — 떠 있으면 확인 후 정상 종료\n· 몇 시간 걸림 — 진행은 이 카드에','학습 시작'))return;
+  let r=await fetch('/train/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps})}),d=await r.json().catch(()=>({}));
+  if(r.status===409&&d.detail&&d.detail.conflicts){const cs=d.detail.conflicts;
+    if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 학습을 시작할까요?`,cs.map(c=>`· ${esc(c.label)} — ${esc(c.what.join(', '))}`+c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n'),'끄고 시작'))return;
+    r=await fetch('/train/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps})});d=await r.json().catch(()=>({}));}
+  if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));else toast('학습 시작 — 학습 서버가 뜨면 작업이 들어갑니다');pollTrain();}
+async function trainInstall(id){try{const d=await post('/train/install/'+id);toast('설치됨: '+d.name+' — ④ 추론에서 고르세요');pollSummary();}catch(e){alert(e.message);}}
+async function pollTrain(){try{TR=await(await fetch('/train/status')).json();renderHome();}catch(e){}}
+async function pollSummary(){try{SUM=await(await fetch('/summary')).json();renderHome();}catch(e){}}
 fetch('/menu').then(r=>r.json()).then(m=>{MENU=m;buildMenu();go(location.hash.slice(1)||'home');poll();pollSummary();});
-setInterval(poll,700);setInterval(pollSummary,5000);
+setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();
 </script></body></html>"""
 
 

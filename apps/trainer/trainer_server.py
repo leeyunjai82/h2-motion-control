@@ -42,6 +42,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 PORT = int(os.environ.get("TRAINER_PORT", ports.PORTS["trainer"]))
 DATA = os.environ.get("TRAINER_DATA") or paths.data_dir("trainer", legacy="trainer/data")   # data/trainer (git 제외)
 DS_DIR = os.path.join(DATA, "datasets")
+# 같은 PC 에서 수집한 데이터셋 (data/datasets) 도 업로드 없이 바로 학습 — 이름이 같으면 업로드한 것 우선. 5090 처럼 없으면 무시
+COLLECT_DIR = os.environ.get("TRAINER_COLLECT") or paths.data_dir("datasets", legacy="gripper/data")
+if not os.path.isdir(COLLECT_DIR) or os.path.realpath(COLLECT_DIR) == os.path.realpath(DS_DIR):
+    COLLECT_DIR = None
 JOB_DIR = os.path.join(DATA, "jobs")
 UP_DIR = os.path.join(DATA, "uploads")
 for d in (DS_DIR, JOB_DIR, UP_DIR):
@@ -66,8 +70,16 @@ def log(msg):
 # =====================================================================
 # 데이터셋
 # =====================================================================
-def ds_summary(name):
+def ds_path(name):
+    """업로드한 데이터셋 → 없으면 이 PC 에서 수집한 데이터셋."""
     p = os.path.join(DS_DIR, name)
+    if os.path.isdir(p) or COLLECT_DIR is None:
+        return p
+    return os.path.join(COLLECT_DIR, name)
+
+
+def ds_summary(name):
+    p = ds_path(name)
     info = {}
     try:
         with open(os.path.join(p, "info.json"), encoding="utf-8") as f:
@@ -95,7 +107,8 @@ def ds_summary(name):
         size += os.path.getsize(npz) if os.path.exists(npz) else 0
     return {"name": name, "episodes": eps, "ok": ok, "frames": frames, "minutes": round(dur / 60, 1),
             "size_mb": round(size / 1e6, 1), "image": img, "robot": info.get("robot"), "format": info.get("format"),
-            "created": info.get("created"), "uploaded": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(p)))}
+            "created": info.get("created"), "source": "업로드" if p.startswith(DS_DIR + os.sep) else "수집",
+            "uploaded": time.strftime("%Y-%m-%d %H:%M", time.localtime(os.path.getmtime(p)))}
 
 
 def extract_dataset(zpath, filename):
@@ -176,7 +189,7 @@ class Jobs:
         os.replace(tmp, os.path.join(d, "job.json"))
 
     def add(self, dataset, params):
-        if not NAME_RE.match(dataset or "") or not os.path.isdir(os.path.join(DS_DIR, dataset)):
+        if not NAME_RE.match(dataset or "") or not os.path.isdir(ds_path(dataset)):
             raise HTTPException(404, f"데이터셋 없음: {dataset}")
         tc = dict(DEFAULT_TRAIN)
         for k, v in (params or {}).items():
@@ -223,7 +236,7 @@ class Jobs:
         cfgp = os.path.join(d, "config.json")
         with open(cfgp, "w", encoding="utf-8") as f:
             json.dump(j["params"], f, ensure_ascii=False, indent=1)
-        cmd = [sys.executable, "-u", os.path.join(HERE, "train_act.py"), "--dataset", os.path.join(DS_DIR, j["dataset"]),
+        cmd = [sys.executable, "-u", os.path.join(HERE, "train_act.py"), "--dataset", ds_path(j["dataset"]),
                "--out", d, "--config", cfgp]
         logf = open(os.path.join(d, "train.log"), "a", encoding="utf-8")
         logf.write(f"$ {' '.join(cmd)}\n")
@@ -375,7 +388,10 @@ def api_info():
 
 @app.get("/api/datasets")
 def api_datasets():
-    return [ds_summary(n) for n in sorted(os.listdir(DS_DIR)) if NAME_RE.match(n) and os.path.isdir(os.path.join(DS_DIR, n))]
+    names = {n for n in os.listdir(DS_DIR) if NAME_RE.match(n) and os.path.isdir(os.path.join(DS_DIR, n))}
+    if COLLECT_DIR:
+        names |= {n for n in os.listdir(COLLECT_DIR) if NAME_RE.match(n) and os.path.isfile(os.path.join(COLLECT_DIR, n, "info.json"))}
+    return [ds_summary(n) for n in sorted(names)]
 
 
 @app.put("/api/datasets/upload")
@@ -403,6 +419,8 @@ def api_ds_delete(name: str):
         raise HTTPException(409, "이 데이터셋으로 학습 대기/중인 작업이 있음")
     p = os.path.join(DS_DIR, name)
     if not os.path.isdir(p):
+        if COLLECT_DIR and os.path.isdir(os.path.join(COLLECT_DIR, name)):
+            raise HTTPException(409, "이 PC 에서 수집한 데이터셋 — 지우기는 수집 화면에서")
         raise HTTPException(404, "없음")
     shutil.rmtree(p)
     return {"ok": True}
