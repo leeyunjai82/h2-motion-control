@@ -39,7 +39,8 @@ def fill(text):
 HOME_LINK = ('<a id="pitron-home" href="#" title="홈 (런처) — FSM · 기능 전환 · 종료" '
              'onclick="location.href=location.protocol+\'//\'+location.hostname+\':__PORT_LAUNCHER__/\';return false" '
              'style="position:fixed;left:10px;bottom:10px;z-index:9999;font:600 12px ui-monospace,Menlo,monospace;'
-             'padding:6px 12px;border-radius:999px;background:#0e1116e6;border:1px solid #0b5a70;color:#00b7eb;text-decoration:none">⌂ 홈</a>')
+             'padding:6px 12px;border-radius:999px;background:#0e1116e6;border:1px solid #0b5a70;color:#00b7eb;text-decoration:none">⌂ 홈</a>'
+             '<script>if(window.top!==window){var _h=document.getElementById("pitron-home");if(_h)_h.remove();}</script>')   # 홈 안 (iframe) 에서는 숨김
 
 
 def with_home(html):

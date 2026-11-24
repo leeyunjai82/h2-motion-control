@@ -946,6 +946,74 @@ def apps_list():
     return out
 
 
+def _brand():
+    b = local_cfg().get("brand") or {}
+    return {"name": str(b.get("name") or "pitron"), "sub": str(b.get("sub") or "Physical AI · 모방학습")}
+
+
+@app.get("/menu")
+def menu():
+    import yaml
+    with open(os.path.join(ROOT, "apps", "launcher", "menu.yaml"), encoding="utf-8") as f:
+        m = yaml.safe_load(f) or {}
+    for sec in m.get("sections") or []:
+        for it in sec.get("items") or []:
+            it["modes"] = [{"id": i, "label": MODES[i]["label"], "real": MODES[i]["real"], "app": MODES[i]["app_title"]}
+                           for i in it.get("modes") or [] if i in MODES]
+            for t in it.get("tabs") or []:
+                n, path = t["page"].split(":", 1)
+                t.update(port=ports.PORTS[n], path=path)
+    url = str(local_cfg().get("trainer_url") or "").strip()
+    return {"brand": _brand(), "sections": m.get("sections") or [], "trainer_url": url}
+
+
+def _read_json(p):
+    try:
+        with open(p, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+@app.get("/summary")
+def summary():
+    """대시보드: 데이터셋 · 모델 · 학습 작업 (파일만 읽음)."""
+    ds_dir = paths.data_dir("datasets", legacy="gripper/data")
+    pol_dir = paths.data_dir("policies", legacy="gripper/models")
+    tr_dir = paths.data_dir("trainer", legacy="trainer/data")
+    out = {"datasets": [], "models": [], "jobs": []}
+    if os.path.isdir(ds_dir):
+        for n in sorted(os.listdir(ds_dir)):
+            ep = os.path.join(ds_dir, n, "episodes")
+            if not os.path.isdir(ep):
+                continue
+            ok = tot = 0
+            last = ""
+            for e in os.listdir(ep):
+                m = _read_json(os.path.join(ep, e, "meta.json"))
+                if m is None:
+                    continue
+                tot += 1
+                ok += bool(m.get("ok"))
+                last = max(last, str(m.get("created") or ""))
+            out["datasets"].append({"name": n, "ok": ok, "total": tot, "last": last})
+    if os.path.isdir(pol_dir):
+        for n in sorted(os.listdir(pol_dir)):
+            m = _read_json(os.path.join(pol_dir, n, "meta.json"))
+            if m:
+                out["models"].append({"name": n, "dataset": m.get("dataset"), "steps": m.get("steps"),
+                                      "val_err_deg": m.get("val_err_deg"), "created": m.get("exported") or m.get("created")})
+    jd = os.path.join(tr_dir, "jobs")
+    if os.path.isdir(jd):
+        for n in sorted(os.listdir(jd), reverse=True)[:8]:
+            j = _read_json(os.path.join(jd, n, "job.json"))
+            if j:
+                out["jobs"].append({k: j.get(k) for k in ("id", "dataset", "status", "step", "total", "val_err_deg", "created")})
+    out["datasets"].sort(key=lambda d: d["last"], reverse=True)
+    out["models"].sort(key=lambda d: str(d["created"] or ""), reverse=True)
+    return out
+
+
 @app.post("/app/{mid}/start")
 def app_start(mid: str, replace: bool = False):
     start_mode(mid, replace)
@@ -994,233 +1062,261 @@ HTML = r"""<!DOCTYPE html>
 <title>@@TITLE@@</title>
 <style>
 :root{--bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--line:#2a3340;--ink:#c9d4e0;--dim:#6b7785;
-  --accent:#00b7eb;--accent2:#7fd8f5;--ok:#3ddc97;--warn:#ff6b6b;--amber:#ffb454}   /* 메인 = 회사 메인 컬러 (제어 웹과 같음), 상태 OK 는 --ok */
+  --accent:#00b7eb;--accent2:#7fd8f5;--deep:#08465a;--tint:rgba(0,183,235,.14);--ok:#3ddc97;--warn:#ff6b6b;--amber:#ffb454;--r:10px}
 *{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.45 ui-monospace,Menlo,monospace;
-  display:flex;flex-direction:column;min-height:640px}
-.top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
-.top b{color:var(--accent)} .top .r{margin-left:auto;color:var(--dim);font-size:11px}
-.wrap{flex:1;min-height:0;display:grid;grid-template-columns:1fr 1fr;gap:14px;padding:14px}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden;display:flex;flex-direction:column;min-height:0}
-.h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);padding:9px 13px;
-  border-bottom:1px solid var(--line);background:var(--panel2);display:flex;justify-content:space-between}
-.h code{text-transform:none}
-.b{padding:13px;display:flex;flex-direction:column;gap:10px;flex:1;min-height:0}
-.row{display:flex;gap:8px}.row>*{flex:1}
-button{font:inherit;font-size:14px;font-weight:700;padding:16px 8px;border-radius:8px;cursor:pointer;
-  background:var(--panel2);border:1px solid var(--line);color:var(--ink)}
-button small{display:block;font-size:10px;font-weight:400;color:var(--dim);margin-top:3px}
-button:disabled{opacity:.3;cursor:not-allowed}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font:13px/1.45 'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
+  display:flex;flex-direction:column;overflow:hidden;background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%)}
+a{color:var(--accent2)}
+/* 위쪽 막대 */
+.top{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--line);
+  background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45);flex:none}
+.brand{font-weight:700;font-size:16px;color:var(--accent);letter-spacing:.5px;cursor:pointer}.brand small{color:var(--dim);font-weight:400;font-size:11px;margin-left:8px}
+.chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;padding:4px 11px;border-radius:999px;border:1px solid var(--line);
+  background:var(--panel2);color:var(--dim);white-space:nowrap;cursor:pointer}
+.chip b{color:var(--ink)}.chip::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+.chip.ok{color:var(--ok);border-color:#1f5a43}.chip.std{color:var(--accent);border-color:#0b5a70}.chip.low{color:var(--amber);border-color:#6a4a1f}
+.chip.err{color:var(--warn);border-color:#5a2b2b}.chip.run{color:var(--amber);border-color:#6a4a1f}
+.top .r{margin-left:auto;display:flex;gap:8px;align-items:center}
+.estop{font-size:10.5px;color:var(--dim);margin-right:6px}
+/* 본문 */
+.main{flex:1;min-height:0;display:flex}
+.side{width:230px;flex:none;border-right:1px solid var(--line);padding:12px 10px;overflow-y:auto;background:#0c1015}
+.side .sec{font-size:10px;letter-spacing:1.5px;color:var(--dim);text-transform:uppercase;margin:14px 8px 6px}
+.side .it{display:flex;align-items:center;gap:8px;padding:9px 10px;border-radius:8px;cursor:pointer;color:var(--ink);font-size:13px}
+.side .it:hover{background:var(--panel2)}.side .it.on{background:var(--tint);color:var(--accent);box-shadow:inset 3px 0 0 var(--accent)}
+.side .it .dot{margin-left:auto;width:7px;height:7px;border-radius:50%;background:transparent}.side .it .dot.on{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.content{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.view{display:none;flex:1;min-height:0;flex-direction:column;overflow:auto;padding:16px}.view.on{display:flex}
+.vh{display:flex;align-items:baseline;gap:12px;margin-bottom:12px;flex-wrap:wrap}.vh h2{margin:0;font-size:18px}.vh .d{color:var(--dim);font-size:12px}
+.vh .tabs{display:flex;gap:4px;margin-left:auto}
+.tab{font:inherit;font-size:12px;padding:5px 12px;border-radius:999px;border:1px solid var(--line);background:var(--panel2);color:var(--dim);cursor:pointer}
+.tab.on{color:#04121f;background:var(--accent);border-color:var(--accent);font-weight:700}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column}
+.card .h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);padding:9px 13px;
+  border-bottom:1px solid var(--line);background:var(--panel2);display:flex;justify-content:space-between;gap:8px}
+.card .b{padding:13px;display:flex;flex-direction:column;gap:10px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+button{font:inherit;font-size:13px;font-weight:700;padding:12px 10px;border-radius:8px;cursor:pointer;background:var(--panel2);border:1px solid var(--line);color:var(--ink)}
+button small{display:block;font-size:10.5px;font-weight:400;color:var(--dim);margin-top:3px}
+button:disabled{opacity:.35;cursor:not-allowed}
+.go{border-color:#0b5a70;color:var(--accent)}.go:hover:not(:disabled){background:#082c38}
+.st{border-color:#5a2b2b;color:var(--warn)}.st:hover:not(:disabled){background:#2e1515}
+.ok2{border-color:#1f5a43;color:var(--ok)}.ok2:hover:not(:disabled){background:#0f2a22}
+.sm{padding:6px 12px;font-size:12px}
 button .no{display:block;font-size:20px;margin-bottom:2px}
 button.pend{box-shadow:0 0 0 2px var(--amber) inset;opacity:1!important}
 button.next:not(:disabled){box-shadow:0 0 0 2px var(--accent) inset;animation:nx 1.6s infinite}
 @keyframes nx{50%{box-shadow:0 0 0 2px transparent inset}}
-.go{border-color:#0b5a70;color:var(--accent)} .go:hover:not(:disabled){background:#082c38}
-.st{border-color:#5a2b2b;color:var(--warn)} .st:hover:not(:disabled){background:#2e1515}
-.ok{border-color:#0b5a70;color:var(--accent2)} .ok:hover:not(:disabled){background:#082c38}
-.fsmnow{display:flex;align-items:baseline;gap:12px;padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:#0a0d12}
-.fsmnow .k{font-size:11px;color:var(--dim);white-space:nowrap}
-.fsmnow .v{white-space:nowrap}
-.fsmnow .bal:empty{display:none}
-.fsmnow .v{font-size:22px;font-weight:700}
-.fsmnow .n{font-size:13px;color:var(--dim)}
-.fsmnow .bal{margin-left:auto;font-size:11px;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
-.fsmnow .bal.on{color:var(--ok);border-color:#1f5a43}.fsmnow .bal.off{color:var(--amber);border-color:#6a4a1f}
-.fsmnow.bal .v{color:var(--ok)} .fsmnow.std .v{color:var(--accent)} .fsmnow.low .v{color:var(--amber)}
-.fsmnow.unk .v{color:var(--warn);font-size:14px}
+.row{display:flex;gap:8px;flex-wrap:wrap}.row>*{flex:1}
 .state{display:flex;align-items:center;gap:10px;padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel2)}
 .state::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--dim);flex:none}
 .state.run{border-color:#6a4a1f;color:var(--amber)}.state.run::before{background:var(--amber);animation:bl 1s infinite}
 .state.on{border-color:#1f5a43;color:var(--ok)}.state.on::before{background:var(--ok)}
 .state.err{border-color:#5a2b2b;color:var(--warn)}.state.err::before{background:var(--warn)}
 @keyframes bl{50%{opacity:.25}}
-pre{margin:0;flex:1;min-height:120px;overflow:auto;background:#0a0d12;border:1px solid var(--line);
-  border-radius:8px;padding:10px;font-size:11.5px;white-space:pre-wrap;word-break:break-all}
-.note{font-size:11px;color:var(--dim)}
-.links a{color:var(--accent2);margin-right:12px}
-.col{display:flex;flex-direction:column;gap:14px;min-height:0}
-.card.grow{flex:1}
-.app{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#0a0d12;display:flex;flex-direction:column;gap:8px}
-.app .t{display:flex;align-items:baseline;gap:10px}.app .t b{font-size:15px;color:var(--ink)}.app .t span{font-size:11px;color:var(--dim)}
-.app .t a{margin-left:auto}
-.app .steps{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center}
-.app .sn{font-size:12px;color:var(--accent2);white-space:nowrap}
-.app .row button{padding:10px 8px;font-size:13px}
-button.cur{box-shadow:0 0 0 2px var(--ok) inset;color:var(--ok)}
-a.open{color:var(--accent2);font-size:12px;text-decoration:none;white-space:nowrap}
-a.open.off{color:var(--dim);pointer-events:none}
-.shut{margin-top:2px}
-/* 큰 화면: 버튼 키움 */
-@media(min-height:900px){button{padding:22px 8px;font-size:15px}button .no{font-size:24px}}
-@media(max-width:900px){body{height:auto}.wrap{grid-template-columns:1fr}pre{min-height:240px}}
-.modal{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:9}
-.modal.show{display:flex}
-.mbox{width:min(460px,92vw);background:var(--panel);border:2px solid var(--warn);border-radius:12px;overflow:hidden}
+pre{margin:0;min-height:120px;max-height:40vh;overflow:auto;background:#0a0d12;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11.5px;white-space:pre-wrap;word-break:break-all}
+.note{font-size:11.5px;color:var(--dim)}
+.fsmnow{display:flex;align-items:baseline;gap:12px;padding:12px 14px;border-radius:8px;border:1px solid var(--line);background:#0a0d12}
+.fsmnow .k{font-size:11px;color:var(--dim)}.fsmnow .v{font-size:22px;font-weight:700}.fsmnow .n{font-size:13px;color:var(--dim)}
+.fsmnow.bal .v{color:var(--ok)}.fsmnow.std .v{color:var(--accent)}.fsmnow.low .v{color:var(--amber)}.fsmnow.unk .v{color:var(--warn);font-size:14px}
+/* 대시보드 */
+.steps{display:grid;grid-template-columns:repeat(5,1fr);gap:10px}
+.stp{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;cursor:pointer;min-height:118px;display:flex;flex-direction:column;gap:4px}
+.stp:hover{border-color:var(--accent)}.stp .t{font-size:14px;font-weight:700}.stp .v{font-size:24px;font-weight:700;color:#fff}.stp .s{font-size:11px;color:var(--dim)}
+.stp.run{border-color:#1f5a43;box-shadow:inset 0 3px 0 var(--ok)}
+.tbl{width:100%;border-collapse:collapse;font-size:12px}.tbl th{font-weight:400;color:var(--dim);font-size:10.5px;text-align:left;padding:0 6px 5px;border-bottom:1px solid var(--line)}
+.tbl td{padding:6px;border-bottom:1px solid var(--line);white-space:nowrap}
+/* 기능 화면 */
+.frame{flex:1;min-height:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#05080c;display:none}
+.frame.on{display:block}.frame iframe{width:100%;height:100%;border:0;display:block}
+.startp{display:none;flex-direction:column;gap:12px;max-width:900px}.startp.on{display:flex}
+.modal{position:fixed;inset:0;background:#000b;display:none;align-items:center;justify-content:center;z-index:9}.modal.show{display:flex}
+.mbox{width:min(520px,92vw);background:var(--panel);border:2px solid var(--warn);border-radius:12px;overflow:hidden}
 .mbox .mt{background:#2e1515;color:var(--warn);font-size:16px;font-weight:700;padding:12px 16px}
-.mbox .mm{padding:16px;font-size:13.5px;line-height:1.7;white-space:pre-line}
-.mbox .mm .big{display:block;color:var(--warn);font-weight:700;font-size:15px;margin-bottom:8px}
-.mbox .mb{display:flex;gap:8px;padding:0 16px 16px}.mbox .mb button{flex:1;padding:12px}
-.mbox .run{background:#5a1f1f;border-color:var(--warn);color:#fff}
+.mbox .mm{padding:16px;font-size:13px;line-height:1.7;white-space:pre-line}.mbox .mm .big{display:block;color:var(--warn);font-weight:700;font-size:14.5px;margin-bottom:8px}
+.mbox .mb{display:flex;gap:8px;padding:0 16px 16px}.mbox .mb button{flex:1}.mbox .run{background:#5a1f1f;border-color:var(--warn);color:#fff}
+@media(max-width:1100px){.steps{grid-template-columns:repeat(2,1fr)}.side{width:180px}}
 </style></head><body>
 <script src="/i18n.js"></script>
-<div class="top"><b>pitron<span style="color:var(--ink)">·launcher</span></b><span class="r">:80 · 웹 버튼은 비상정지가 아닙니다 — E-STOP/리모컨을 손에 두세요</span><span id="lang-slot" style="margin-left:12px"></span></div>
-<div class="wrap">
-  <div class="card">
-    <div class="h"><span>자세 (FSM)</span><span></span></div>
-    <div class="b">
-      <div class="fsmnow unk" id="fsmnow"><span class="k">현재 FSM</span><span class="v" id="fsm-v">확인 중</span><span class="n" id="fsm-n"></span><span class="bal" id="fsm-b"></span></div>
-      <div class="note">일어서기: <b>@@STAND_SEQ@@</b> 순서로, 로봇이 자리 잡은 걸 보고 다음 단계를 누르세요</div>
-@@FSM_BUTTONS@@
-      <button class="st shut" id="b-shut" onclick="shutdownAll()">종료<small>실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@ (시작의 역순)</small></button>
-      <div class="row" style="align-items:stretch">
-        <div class="state" id="fsm-s" style="flex:3">대기</div>
-        <button class="st" id="b-cancel" onclick="fsmCancel()" style="flex:1;padding:8px;display:none">취소</button>
-      </div>
-      <pre id="fsm-log"></pre>
-    </div>
-  </div>
-  <div class="col">
-    <div class="card">
-      <div class="h"><span>기능</span><span>한 번에 하나만 · 실기는 FSM @@RUN@@ 에서</span></div>
-      <div class="b" id="apps">불러오는 중…</div>
-    </div>
-    <div class="card grow">
-      <div class="h"><span>실행 중</span><span id="job-mode"></span></div>
-      <div class="b">
-        <div class="row" style="align-items:stretch">
-          <div class="state" id="rb-s" style="flex:3">정지됨</div>
-          <button class="st" id="b-stop" onclick="appStop()" style="flex:1;padding:8px">정지<small>Ctrl+C 와 같음</small></button>
-        </div>
-        <pre id="rb-log"></pre>
-      </div>
-    </div>
+<div class="top">
+  <span class="brand" id="brand" onclick="go('home')">pitron<small id="brand-sub"></small></span>
+  <span class="chip" id="chip-fsm" onclick="go('robot')" title="로봇 자세 (FSM)">FSM <b>-</b></span>
+  <span class="chip" id="chip-job" onclick="go('home')">실행 <b>없음</b></span>
+  <div class="r">
+    <span class="estop">웹 버튼은 비상정지가 아님 — E-STOP · 리모컨을 손에</span>
+    <button class="st sm" id="b-stop" onclick="appStop()">정지</button>
+    <button class="st sm" id="b-shut" onclick="shutdownAll()" title="실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@">종료</button>
+    <span id="lang-slot"></span>
   </div>
 </div>
-<div class="modal" id="modal"><div class="mbox">
-  <div class="mt" id="m-t">⚠️ 경고</div><div class="mm" id="m-m"></div>
-  <div class="mb"><button id="m-no">취소</button><button class="run" id="m-yes">실행</button></div>
-</div></div>
+<div class="main">
+  <nav class="side" id="side"></nav>
+  <section class="content" id="content">
+    <!-- 홈 -->
+    <div class="view" id="v-home">
+      <div class="vh"><h2>홈</h2><span class="d" id="home-d">로봇 준비 → 데이터 수집 → 학습 → 추론</span></div>
+      <div class="steps" id="steps"></div>
+      <div class="grid" style="margin-top:12px">
+        <div class="card"><div class="h"><span>로봇</span><a href="#robot" onclick="go('robot');return false">자세 →</a></div>
+          <div class="b"><div class="fsmnow unk" id="fsmnow-h"><span class="k">FSM</span><span class="v" id="fsm-v-h">확인 중</span><span class="n" id="fsm-n-h"></span></div>
+          <div class="note">일어서기 <b>@@STAND_SEQ@@</b> · 끝낼 때 [종료] (실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@)</div></div></div>
+        <div class="card"><div class="h"><span>실행 중</span><span id="job-mode"></span></div>
+          <div class="b"><div class="state" id="rb-s">정지됨</div><pre id="rb-log"></pre></div></div>
+      </div>
+      <div class="grid" style="margin-top:12px">
+        <div class="card"><div class="h"><span>데이터셋</span><span>data/datasets</span></div><div class="b"><table class="tbl" id="t-ds"></table></div></div>
+        <div class="card"><div class="h"><span>모델</span><span>data/policies</span></div><div class="b"><table class="tbl" id="t-md"></table></div></div>
+        <div class="card"><div class="h"><span>학습 작업 (이 PC)</span><span>data/trainer</span></div><div class="b"><table class="tbl" id="t-jb"></table></div></div>
+      </div>
+    </div>
+    <!-- 로봇 -->
+    <div class="view" id="v-robot">
+      <div class="vh"><h2>로봇 (자세)</h2><span class="d">로봇을 보면서 한 단계씩 — 시작 @@STAND_SEQ@@, 끝낼 때 [종료]</span></div>
+      <div class="card" style="max-width:900px"><div class="b">
+        <div class="fsmnow unk" id="fsmnow"><span class="k">현재 FSM</span><span class="v" id="fsm-v">확인 중</span><span class="n" id="fsm-n"></span></div>
+@@FSM_BUTTONS@@
+        <button class="st" onclick="shutdownAll()">종료<small>실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@ (시작의 역순, 각 단계 카운트다운 · 취소 가능)</small></button>
+        <div class="row" style="align-items:stretch"><div class="state" id="fsm-s" style="flex:3">대기</div>
+          <button class="st sm" id="b-cancel" onclick="fsmCancel()" style="flex:1;display:none">취소</button></div>
+        <pre id="fsm-log"></pre>
+        <div class="note">실기 기능은 FSM @@RUN@@ 에서만 시작</div>
+      </div></div>
+    </div>
+    <!-- 기능 화면 (메뉴 항목마다 하나, JS 가 만듦) -->
+  </section>
+</div>
+<div class="modal" id="modal"><div class="mbox"><div class="mt" id="m-t">⚠️</div><div class="mm" id="m-m"></div>
+  <div class="mb"><button id="m-no">취소</button><button class="run" id="m-yes">실행</button></div></div></div>
 <script>
-// FSM 번호·이름 — apps/launcher/run_launcher.py 가 robot.yaml fsm 으로 채움
 const FSM=@@FSM_JS@@;
-const host=location.hostname;
-// 경고 모달 — Promise<bool>
-function warn(title,big,body){return new Promise(res=>{
-  const m=document.getElementById('modal');
-  document.getElementById('m-t').textContent='⚠️ '+title;
-  document.getElementById('m-m').innerHTML=(big?`<span class="big">${big}</span>`:'')+body;
-  const done=v=>{m.classList.remove('show');document.removeEventListener('keydown',esc);res(v);};
-  const esc=e=>{if(e.key==='Escape')done(false);};
-  document.getElementById('m-no').onclick=()=>done(false);
-  document.getElementById('m-yes').onclick=()=>done(true);
-  document.addEventListener('keydown',esc);
-  m.classList.add('show');document.getElementById('m-no').focus();});}
-// ---- 기능 카드 (apps/*/app.yaml) ----
-let APPS=[];
-const STEP={collect:'① 수집',train:'② 학습',infer:'③ 추론'};
-const openUrl=o=>`http://${host}:${o.port}${o.path}`;
+const host=location.hostname,$=id=>document.getElementById(id);
 const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-function modeBtn(m){return `<button class="${m.real?'go':'ok'}" id="m-${m.id}" data-todo="${m.todo?1:0}" onclick="appStart('${m.id}')"`+
-  `${m.todo?` title="${esc(m.todo)}"`:''}>${esc(m.label)}<small>${m.todo?'준비 중 — '+esc(m.todo):m.real?'실제 로봇 · FSM '+FSM.run:'로봇 없이'}</small></button>`;}
-const openA=m=>m.open?`<a class="open off" data-open="${m.id}" href="${openUrl(m.open)}" target="_blank">열기 →</a>`:'';
-function renderApps(){
-  const home=APPS.filter(a=>a.group!=='imitation'),im=APPS.filter(a=>a.group==='imitation');
-  let h=home.map(a=>`<div class="app"><div class="t"><b>${esc(a.title)}</b><span>${esc(a.desc)}</span>${openA(a.modes[0])}</div>`+
-    `<div class="row">${a.modes.map(modeBtn).join('')}</div></div>`).join('');
-  if(im.length){
-    const ms=im.flatMap(a=>a.modes),ls=im.flatMap(a=>a.links||[]);
-    h+=`<div class="app"><div class="t"><b>모방학습</b><span>VR 원격 조작 수집 → ACT 학습 → 정책 실행</span></div><div class="steps">`+
-      Object.entries(STEP).map(([k,n])=>{const sm=ms.filter(m=>m.step===k),sl=ls.filter(l=>l.step===k);
-        return `<div class="sn">${n}</div><div class="row">${sm.map(modeBtn).join('')}`+
-          `${sl.map(l=>`<button class="ok" onclick="window.open('${esc(l.url)}','_blank')">${esc(l.label)}<small>링크</small></button>`).join('')}`+
-          `<div style="flex:none;display:flex;flex-direction:column;justify-content:center;gap:4px">${sm.map(openA).join('')}</div></div>`;}).join('')+`</div></div>`;}
-  document.getElementById('apps').innerHTML=h;}
-fetch('/apps').then(r=>r.json()).then(d=>{APPS=d;renderApps();poll();}).catch(e=>{document.getElementById('apps').textContent='기능 목록 못 읽음: '+e;});
-let CUR=null;
-// Damp 만 경고 후 실행, lock / run 은 바로 실행
-async function confirmFsm(t){
-  const standing=FSM.standing.includes(CUR);
-  if(t===FSM.damp)return warn(`${FSM.names[t]} (FSM ${t})`,
-    standing?'지금 서 있습니다 — 힘이 빠져 넘어집니다!':
-    CUR===null?'현재 상태 확인 불가 — 서 있다면 힘이 빠져 넘어집니다!':'모터 힘이 빠집니다',
-    '· 로봇을 사람이 받치고 있거나 스탠드에 묶여 있습니까?\n· 주변에 사람/장애물이 없습니까?');
-  return true;}
-async function post(u){const r=await fetch(u,{method:'POST'});const d=await r.json().catch(()=>({}));
-  if(!r.ok)throw new Error(d.detail||r.status);return d;}
-async function fsm(t){if(!await confirmFsm(t))return;
-  try{await post('/fsm/'+t);}catch(e){alert(e.message);}poll();}
-async function fsmCancel(){try{await post('/fsm_cancel');}catch(e){}poll();}
-async function appStart(id){const m=APPS.flatMap(a=>a.modes).find(x=>x.id===id);if(!m)return;
-  const msg=m.real?`${m.label} — 실제 로봇이 움직입니다.\n\n· 거치대 · FSM ${FSM.run} 확인\n· 주변을 비우고 E-STOP 을 손에`+
-    (m.gripper?`\n· 그리퍼 서비스를 켜고 카메라 숙임을 3 초 잽니다 — 그동안 로봇을 건드리지 마세요`:''):`${m.label} — 로봇 없이 (가상)`;
-  if(!confirm(msg))return;
+const pageUrl=t=>`http://${host}:${t.port}${t.path}`;
+let MENU=null,ITEMS={},CUR=null,ST=null,VIEW='home',TAB={};
+function warn(title,big,body,yes){return new Promise(res=>{const m=$('modal');$('m-t').textContent='⚠️ '+title;
+  $('m-m').innerHTML=(big?`<span class="big">${big}</span>`:'')+body;$('m-yes').textContent=yes||'실행';
+  const done=v=>{m.classList.remove('show');document.removeEventListener('keydown',ek);res(v);};const ek=e=>{if(e.key==='Escape')done(false);};
+  $('m-no').onclick=()=>done(false);$('m-yes').onclick=()=>done(true);document.addEventListener('keydown',ek);m.classList.add('show');$('m-no').focus();});}
+async function post(u){const r=await fetch(u,{method:'POST'});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));return d;}
+
+// ---------- 메뉴 · 화면 ----------
+function buildMenu(){
+  $('brand').firstChild.textContent=MENU.brand.name;$('brand-sub').textContent=MENU.brand.sub;document.title=MENU.brand.name;
+  let h=`<div class="it on" data-v="home" onclick="go('home')">▣ 홈</div>`;
+  for(const s of MENU.sections){h+=`<div class="sec">${esc(s.title)}</div>`;
+    for(const it of s.items){ITEMS[it.id]=it;h+=`<div class="it" data-v="${it.id}" onclick="go('${it.id}')">${esc(it.title)}<span class="dot" id="dot-${it.id}"></span></div>`;
+      if(it.id==='robot')continue;
+      const v=document.createElement('div');v.className='view';v.id='v-'+it.id;
+      v.innerHTML=`<div class="vh"><h2>${esc(it.title)}</h2><span class="d">${esc(it.desc||'')}</span><div class="tabs" id="tabs-${it.id}"></div></div>
+        <div class="startp" id="sp-${it.id}"></div><div class="frame" id="fr-${it.id}"></div>`;
+      $('content').appendChild(v);}}
+  $('side').innerHTML=h;
+  const st=[['collect','① 데이터 수집'],['dataset','② 데이터셋'],['train','③ 학습'],['model','④ 모델'],['infer','⑤ 추론']];
+  $('steps').innerHTML=st.map(([id,t])=>`<div class="stp" id="stp-${id}" onclick="go('${id}')"><span class="t">${t}</span><span class="v" id="sv-${id}">-</span><span class="s" id="ss-${id}"></span></div>`).join('');}
+function go(v){VIEW=v;location.hash=v==='home'?'':v;
+  document.querySelectorAll('.side .it').forEach(e=>e.classList.toggle('on',e.dataset.v===v));
+  document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));render();}
+function running(){return ST&&ST.job.running?ST.job.mode:null;}
+function renderItem(it){
+  const run=running(),prep=ST&&ST.job.prep,mine=it.modes.some(m=>m.id===run),tabs=it.tabs||[];
+  const ti=Math.min(TAB[it.id]||0,Math.max(0,tabs.length-1));
+  $('tabs-'+it.id).innerHTML=(tabs.length>1?tabs.map((t,i)=>`<button class="tab ${i===ti?'on':''}" onclick="TAB['${it.id}']=${i};render(true)">${esc(t.title)}</button>`).join(''):'')+
+    (mine&&!prep&&tabs.length?`<button class="tab" onclick="window.open('${pageUrl(tabs[ti])}','_blank')">새 창 ↗</button>`:'');
+  const fr=$('fr-'+it.id),sp=$('sp-'+it.id);
+  if(mine&&!prep&&tabs.length){
+    const url=pageUrl(tabs[ti]);
+    if(fr.dataset.url!==url||!fr.querySelector('iframe')){
+      if(fr.dataset.probe===url)return;fr.dataset.probe=url;                 // 화면이 뜰 때까지 확인 후 넣음
+      fetch(url,{mode:'no-cors',cache:'no-store'}).then(()=>{fr.innerHTML=`<iframe src="${url}"></iframe>`;fr.dataset.url=url;fr.classList.add('on');sp.classList.remove('on');})
+        .catch(()=>{}).finally(()=>{fr.dataset.probe='';});
+      startPanel(it,sp,true);return;}
+    fr.classList.add('on');sp.classList.remove('on');return;}
+  fr.classList.remove('on');fr.innerHTML='';fr.dataset.url='';startPanel(it,sp,false);}
+function startPanel(it,sp,loading){
+  sp.classList.add('on');const run=running(),j=ST?ST.job:null,other=run&&!it.modes.some(m=>m.id===run);
+  const fsmOk=m=>!m.real||!ST||ST.fsm.cur===null||ST.fsm.cur===FSM.run;
+  let h=`<div class="card"><div class="h"><span>${loading?'시작 중':'시작'}</span><span>${other?'지금 실행 중: '+esc(j.label)+' — 시작하면 정지하고 전환':''}</span></div><div class="b">`;
+  if(!it.modes.length)h+=`<div class="note">이 화면은 실행이 필요 없음</div>`;
+  else h+=`<div class="row">`+it.modes.map(m=>`<button class="${m.real?'go':'ok2'}" ${loading||(ST&&ST.seq.busy)||!fsmOk(m)?'disabled':''} onclick="appStart('${m.id}')">${esc(m.label)}`+
+    `<small>${m.real?'실제 로봇 · FSM '+FSM.run+(fsmOk(m)?'':' 필요 (로봇 메뉴)'):'로봇 없이'} · ${esc(m.app)}</small></button>`).join('')+`</div>`;
+  if(it.remote)h+=`<div class="note" style="line-height:1.8">5090 에서 학습: ② 데이터셋 화면의 <b>[Dataset zip]</b> 받기 → 5090 학습 웹에 올려 학습 → 받은 <b>model zip</b> 을 ④ 모델 에서 올리기`+
+    (MENU.trainer_url?` · <a href="${esc(MENU.trainer_url)}" target="_blank">5090 학습 웹 열기 ↗</a>`:` · (5090 주소는 config/local.yaml trainer_url)`)+`</div>`;
+  if(j&&(j.prep||loading||(j.label&&!j.running)))h+=`<pre>${esc((j.log||[]).slice(-40).join('\n'))}</pre>`;
+  h+=`</div></div>`;if(sp.dataset.h!==h){sp.innerHTML=h;sp.dataset.h=h;}}
+function render(force){if(!MENU||!ST)return;if(ITEMS[VIEW]&&VIEW!=='robot')renderItem(ITEMS[VIEW]);}
+
+// ---------- 시작 · 정지 · 종료 ----------
+async function appStart(id){const all=Object.values(ITEMS).flatMap(i=>i.modes),m=all.find(x=>x.id===id);if(!m)return;
+  const ok=await warn(m.label,m.real?'실제 로봇이 움직입니다':'로봇 없이 (가상)',m.real?'· 거치대 · FSM '+FSM.run+' 확인\n· 주변을 비우고 E-STOP 을 손에\n· 그리퍼는 서비스를 켜고 카메라 숙임을 3 초 잽니다 — 로봇을 건드리지 마세요':'· 가짜 로봇 (DDS 도메인 1) — 실기와 섞이지 않음','시작');
+  if(!ok)return;
   let r=await fetch('/app/'+id+'/start',{method:'POST'}),d=await r.json().catch(()=>({}));
-  if(r.status===409&&d.detail&&d.detail.conflicts){
-    const cs=d.detail.conflicts;
-    const body=cs.map(c=>`· ${esc(c.label)}${c.own?' (홈에서 실행)':' (터미널 · 남은 프로그램)'} — ${esc(c.what.join(', '))}`+
-      c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n')+'\n\nCtrl+C 와 같은 방식으로 정상 종료한 뒤 시작합니다 (45 초 안에 안 꺼지면 강제).';
-    if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 '${esc(m.label)}' 을 시작할까요?`,body))return;
+  if(r.status===409&&d.detail&&d.detail.conflicts){const cs=d.detail.conflicts;
+    const body=cs.map(c=>`· ${esc(c.label)}${c.own?' (지금 실행 중)':' (터미널 · 남은 프로그램)'} — ${esc(c.what.join(', '))}`+c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n')+
+      '\n\nCtrl+C 와 같은 방식으로 정상 종료한 뒤 시작합니다 (45 초 안에 안 꺼지면 강제).';
+    if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 '${esc(m.label)}' 을 시작할까요?`,body,'끄고 시작'))return;
     r=await fetch('/app/'+id+'/start?replace=true',{method:'POST'});d=await r.json().catch(()=>({}));}
-  if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));
-  poll();}
-async function appStop(){if(!confirm('실행 중인 것을 정지합니다 (팔 기본 자세 · 제어권 반납 후 종료).'))return;
+  if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));poll();}
+async function appStop(){if(!await warn('정지','실행 중인 것을 정지합니다','팔은 기본 자세로 돌아간 뒤 제어권을 반납합니다 (실기).','정지'))return;
   try{await post('/app/stop');}catch(e){alert(e.message);}poll();}
 async function shutdownAll(){
-  if(!await warn('종료','실행 중인 것을 정지한 뒤 '+FSM.lock+' → '+FSM.damp+' (Damp) 로 갑니다',
-    '· 로봇이 거치대에 걸려 있습니까? Damp 하면 힘이 빠집니다\n· 각 단계는 '+5+'초 카운트다운 — 취소하면 그 자리에서 멈춤\n· 로봇 미연결(가상만 썼으면) FSM 명령은 보내지 않음'))return;
+  if(!await warn('종료','실행 중인 것을 정지한 뒤 '+FSM.lock+' → '+FSM.damp+' (Damp)',
+    '· 로봇이 거치대에 걸려 있습니까? Damp 하면 힘이 빠집니다\n· 각 단계는 카운트다운 — 취소하면 그 자리에서 멈춤\n· 로봇이 연결 안 됐으면 FSM 명령은 보내지 않음','종료'))return;
   try{await post('/shutdown');}catch(e){alert(e.message);}poll();}
-function fill(pre,lines){const atBottom=pre.scrollTop+pre.clientHeight>=pre.scrollHeight-20;
-  pre.textContent=lines.join('\n');if(atBottom)pre.scrollTop=pre.scrollHeight;}
-function setState(id,cls,txt){const el=document.getElementById(id);el.className='state'+(cls?' '+cls:'');el.textContent=txt;}
-async function poll(){try{const d=await(await fetch('/status')).json();
-  const f=d.fsm,r=d.robot;
-  // 현재 FSM
-  const nw=document.getElementById('fsmnow');
-  if(f.cur===null){nw.className='fsmnow unk';document.getElementById('fsm-v').textContent='확인 불가';
-    document.getElementById('fsm-n').textContent=(f.cur_err||'')+' — 순서 제한 없음'+
-      (f.last_sent!==null?` · 마지막 전송 ${f.last_sent}`:'');}
-  else{nw.className='fsmnow '+(f.cur_bal?'bal':FSM.standing.includes(f.cur)?'std':'low');
-    document.getElementById('fsm-v').textContent=f.cur;
-    document.getElementById('fsm-n').textContent=f.cur_name;}
-  const fb=document.getElementById('fsm-b');
-  if(f.cur===null){fb.textContent='';fb.className='bal';}
-  else{fb.textContent=f.cur_bal?'밸런스 제어':'밸런스 없음';fb.className='bal '+(f.cur_bal?'on':'off');}
-  const ref=f.cur!==null?f.cur:f.last_sent;          // 조회 불가면 마지막 전송 기준
-  // 버튼: 갈 수 있는 단계만 활성(조회 불가면 제한 없음), 다음 단계 강조 (damp → lock → run)
-  CUR=f.cur;
-  const next=ref!==null?FSM.next[ref]:undefined;
-  FSM.steps.forEach(t=>{const b=document.getElementById('b-'+t);
-    // 대기 중엔 다른 버튼 잠금 — 단 Damp 는 대기 중 교체 가능
-    const pend=f.busy!==null&&f.remain>0;
-    b.disabled=(f.busy!==null&&!(t===FSM.damp&&pend&&f.busy!==FSM.damp))||!f.allowed[t];
-    b.classList.toggle('next',t===next&&f.busy===null);
-    b.classList.toggle('pend',t===f.busy);});
-  const cb=document.getElementById('b-cancel');
-  cb.style.display=(f.busy!==null&&f.remain>0)?'':'none';
-  if(f.busy!==null&&f.remain>0)setState('fsm-s','run',`FSM ${f.busy} — ${Math.ceil(f.remain)}초 후 전송`);
-  else if(f.busy!==null)setState('fsm-s','run',`FSM ${f.busy} 전송 중…`);
-  else if(f.result)setState('fsm-s',f.result[0]?'on':'err',f.result[1]);
-  else setState('fsm-s','','대기');
-  fill(document.getElementById('fsm-log'),f.log);
-  // 실행 중 · 기능 버튼
-  const j=d.job,sq=d.seq;
-  document.querySelectorAll('#apps button[id^="m-"]').forEach(b=>{const id=b.id.slice(2),m=APPS.flatMap(a=>a.modes).find(x=>x.id===id);
-    b.disabled=j.running||sq.busy||b.dataset.todo==='1'||(m&&m.real&&(f.busy!==null||(f.cur!==null&&f.cur!==FSM.run)));
-    b.classList.toggle('cur',j.running&&j.mode===id);});
-  document.querySelectorAll('#apps a.open').forEach(a=>a.classList.toggle('off',!(j.running&&j.mode===a.dataset.open)));
-  document.getElementById('b-stop').disabled=!j.running||sq.busy;
-  document.getElementById('b-shut').disabled=sq.busy;
-  document.getElementById('job-mode').textContent=j.label||'';
+async function fsm(t){const standing=FSM.standing.includes(ST&&ST.fsm.cur);
+  if(t===FSM.damp&&!await warn(`${FSM.names[t]} (FSM ${t})`,standing?'지금 서 있습니다 — 힘이 빠져 넘어집니다!':'모터 힘이 빠집니다',
+    '· 로봇을 사람이 받치고 있거나 거치대에 묶여 있습니까?\n· 주변에 사람/장애물이 없습니까?'))return;
+  try{await post('/fsm/'+t);}catch(e){alert(e.message);}poll();}
+async function fsmCancel(){try{await post('/fsm_cancel');}catch(e){}poll();}
+
+// ---------- 상태 ----------
+function setState(id,cls,txt){const el=$(id);el.className='state'+(cls?' '+cls:'');el.textContent=txt;}
+function fill(pre,lines){const b=pre.scrollTop+pre.clientHeight>=pre.scrollHeight-20;pre.textContent=lines.join('\n');if(b)pre.scrollTop=pre.scrollHeight;}
+function fsmBox(f,box,v,n){
+  if(f.cur===null){$(box).className='fsmnow unk';$(v).textContent='확인 불가';$(n).textContent=f.cur_err||'';}
+  else{$(box).className='fsmnow '+(f.cur_bal?'bal':FSM.standing.includes(f.cur)?'std':'low');$(v).textContent=f.cur;$(n).textContent=f.cur_name+(f.cur_bal?' · 밸런스':'');}}
+async function poll(){try{const d=await(await fetch('/status')).json();ST=d;const f=d.fsm,j=d.job,sq=d.seq;
+  // 위쪽 막대
+  const cf=$('chip-fsm');cf.className='chip '+(f.cur===null?'err':f.cur_bal?'ok':FSM.standing.includes(f.cur)?'std':'low');
+  cf.innerHTML=`FSM <b>${f.cur===null?'확인 불가':f.cur+' '+esc(f.cur_name)}</b>`+(f.busy!==null?` → ${f.busy} (${Math.ceil(f.remain)}s)`:'');
+  const cj=$('chip-job');cj.className='chip '+(j.prep?'run':j.running?'ok':'');cj.innerHTML=`실행 <b>${j.running?esc(j.label):'없음'}</b>`;
+  $('b-stop').disabled=!j.running||sq.busy;$('b-shut').disabled=sq.busy;
+  // 메뉴 점
+  for(const id in ITEMS){const d2=$('dot-'+id);if(d2)d2.className='dot'+(j.running&&ITEMS[id].modes.some(m=>m.id===j.mode)?' on':'');}
+  // 홈 · 로봇
+  fsmBox(f,'fsmnow-h','fsm-v-h','fsm-n-h');fsmBox(f,'fsmnow','fsm-v','fsm-n');
+  $('job-mode').textContent=j.label||'';
   if(sq.busy)setState('rb-s','run','종료: '+sq.msg);
-  else if(j.prep)setState('rb-s','run',`${j.label} — 떠 있던 것 정지 · 시작 준비 중`);
+  else if(j.prep)setState('rb-s','run',`${j.label} — 시작 준비 중`);
   else if(j.running)setState('rb-s','on',`${j.label} — 실행 중 (${Math.floor(j.elapsed/60)}분 ${Math.floor(j.elapsed%60)}초)`);
   else if(sq.msg&&sq.ok!==null)setState('rb-s',sq.ok?'':'err','종료: '+sq.msg);
   else if(j.label)setState('rb-s',j.rc===0?'':'err',`${j.label} — 정지됨 (rc=${j.rc})`);
   else setState('rb-s','','정지됨');
-  fill(document.getElementById('rb-log'),j.log);
-}catch(e){setState('fsm-s','err','launcher 연결 끊김');}}
-poll();setInterval(poll,500);
+  fill($('rb-log'),j.log);
+  const ref=f.cur!==null?f.cur:f.last_sent,next=ref!==null?FSM.next[ref]:undefined,pend=f.busy!==null&&f.remain>0;
+  FSM.steps.forEach(t=>{const b=$('b-'+t);if(!b)return;b.disabled=(f.busy!==null&&!(t===FSM.damp&&pend&&f.busy!==FSM.damp))||!f.allowed[t];
+    b.classList.toggle('next',t===next&&f.busy===null);b.classList.toggle('pend',t===f.busy);});
+  $('b-cancel').style.display=pend?'':'none';
+  if(pend)setState('fsm-s','run',`FSM ${f.busy} — ${Math.ceil(f.remain)}초 후 전송`);else if(f.busy!==null)setState('fsm-s','run',`FSM ${f.busy} 전송 중…`);
+  else if(f.result)setState('fsm-s',f.result[0]?'on':'err',f.result[1]);else setState('fsm-s','','대기');
+  fill($('fsm-log'),f.log);
+  for(const id of ['collect','dataset','train','model','infer']){const e=$('stp-'+id);if(e&&ITEMS[id])e.classList.toggle('run',j.running&&ITEMS[id].modes.some(m=>m.id===j.mode));}
+  render();
+}catch(e){$('chip-fsm').className='chip err';$('chip-fsm').innerHTML='FSM <b>런처 연결 끊김</b>';}}
+async function pollSummary(){try{const s=await(await fetch('/summary')).json(),d0=s.datasets[0],m0=s.models[0],j0=s.jobs[0];
+  const f1=v=>v==null?'-':(+v).toFixed(2)+'°';
+  $('sv-collect').textContent=d0?d0.ok:'-';$('ss-collect').textContent=d0?`최근 ${d0.name} · 성공 에피소드`:'데이터셋 없음';
+  $('sv-dataset').textContent=s.datasets.length;$('ss-dataset').textContent='데이터셋 · 에피소드 '+s.datasets.reduce((a,d)=>a+d.ok,0)+' 개';
+  $('sv-train').textContent=j0?(j0.status==='running'?Math.round(100*(j0.step||0)/(j0.total||1))+'%':j0.status):'-';
+  $('ss-train').textContent=j0?`${j0.dataset} · val ${f1(j0.val_err_deg)}`:'이 PC 학습 작업 없음';
+  $('sv-model').textContent=s.models.length;$('ss-model').textContent=m0?`최근 ${m0.name} · val ${f1(m0.val_err_deg)}`:'모델 없음';
+  $('sv-infer').textContent=m0?'준비':'-';$('ss-infer').textContent=m0?'모델을 골라 실행':'모델을 먼저 (④)';
+  $('t-ds').innerHTML='<tr><th>이름</th><th>성공/전체</th><th>최근</th></tr>'+s.datasets.map(d=>`<tr><td>${esc(d.name)}</td><td>${d.ok}/${d.total}</td><td>${esc((d.last||'').replace('T',' ').slice(0,16))}</td></tr>`).join('');
+  $('t-md').innerHTML='<tr><th>이름</th><th>데이터셋</th><th>step</th><th>val</th></tr>'+s.models.map(m=>`<tr><td>${esc(m.name)}</td><td>${esc(m.dataset)}</td><td>${m.steps??'-'}</td><td>${f1(m.val_err_deg)}</td></tr>`).join('');
+  $('t-jb').innerHTML='<tr><th>작업</th><th>데이터셋</th><th>상태</th><th>val</th></tr>'+s.jobs.map(j=>`<tr><td>${esc(j.id)}</td><td>${esc(j.dataset)}</td><td>${esc(j.status)} ${j.status==='running'?Math.round(100*(j.step||0)/(j.total||1))+'%':''}</td><td>${f1(j.val_err_deg)}</td></tr>`).join('');
+}catch(e){}}
+fetch('/menu').then(r=>r.json()).then(m=>{MENU=m;buildMenu();go(location.hash.slice(1)||'home');poll();pollSummary();});
+setInterval(poll,700);setInterval(pollSummary,5000);
 </script></body></html>"""
 
 
@@ -1262,8 +1358,8 @@ def _render_html(h):
         ("@@FSM_JS@@", json.dumps(js, ensure_ascii=False).replace("</", "<\\/"), 1),
     ]
     for old, new, n in reps:
-        if h.count(old) != n:
-            raise SystemExit(f"[launcher] HTML 자리표시 '{old}' 개수 {h.count(old)} ≠ {n}")
+        if h.count(old) < 1:
+            raise SystemExit(f"[launcher] HTML 자리표시 '{old}' 없음")
         h = h.replace(old, new)
     if "@@" in h:
         raise SystemExit("[launcher] HTML 에 채우지 않은 자리표시가 남음")

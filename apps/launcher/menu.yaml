@@ -1,0 +1,49 @@
+# 홈 앱 메뉴 — 각 항목: 필요한 실행 모드 (apps/*/app.yaml 의 modes id, 이 중 하나가 떠 있으면 화면을 보여 줌) · 보여 줄 화면 (포트이름:경로)
+#   modes 가 비면 런처 화면 (native). tabs = 한 항목 안에서 여러 화면. 이름 · 로고는 config/local.yaml brand
+sections:
+  - title: 모방학습
+    items:
+      - id: collect
+        title: ① 데이터 수집
+        desc: VR 원격 조작으로 시연 에피소드를 모음 (가상 = 로봇 없이 연습)
+        modes: [collect, pick_sim]
+        tabs: [{title: 수집, page: "pick_web:/collect"}]
+      - id: dataset
+        title: ② 데이터셋
+        desc: 에피소드 보기 · 지우기 · 데이터셋 zip 받기 (5090 학습용)
+        modes: [collect, infer, pick_sim]
+        tabs: [{title: 데이터셋, page: "pick_web:/collect"}]
+      - id: train
+        title: ③ 학습
+        desc: 이 PC 에서 ACT 학습 (로봇 기능은 끈 상태에서) · 5090 은 데이터셋 zip 을 올려서
+        modes: [train_local]
+        tabs: [{title: 학습 웹, page: "trainer:/"}]
+        remote: true
+      - id: model
+        title: ④ 모델
+        desc: 학습한 model zip 올리기 · 고르기
+        modes: [infer, collect, pick_sim]
+        tabs: [{title: 모델, page: "pick_web:/collect"}]
+      - id: infer
+        title: ⑤ 추론
+        desc: 학습한 정책으로 로봇 실행 · 반복 (가상 = 로봇 없이)
+        modes: [infer, pick_sim]
+        tabs: [{title: 추론, page: "pick_web:/collect"}]
+  - title: 도구
+    items:
+      - id: editor
+        title: 시뮬레이터 (모션 에디터)
+        desc: 관절 · IK 로 팔 모션 만들기 · 모터 번호 확인
+        modes: [editor_virtual, editor_real]
+        tabs: [{title: 에디터, page: "editor:/"}, {title: 모터 번호 확인, page: "editor:/check"}, {title: 3D, page: "dashboard:/dashboard"}]
+      - id: box
+        title: 박스 핸드오버
+        desc: 박스를 양손으로 잡아 건네기 · 내려놓기
+        modes: [box_sim, box_real]
+        tabs: [{title: 제어, page: "robot_server:/"}, {title: 박스 인식, page: "detect_box:/"}, {title: 3D, page: "dashboard:/dashboard"}]
+  - title: 시스템
+    items:
+      - id: robot
+        title: 로봇 (자세)
+        desc: Damp → FixStand → 703 · 종료
+        modes: []

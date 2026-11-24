@@ -11,3 +11,8 @@ dex1_bin:
 
 # 홈 (런처) 의 '5090 학습 웹' 링크. 비우면 링크를 숨김
 trainer_url:
+
+# 홈 화면 이름 · 부제목 (비우면 pitron · Physical AI · 모방학습)
+brand:
+  name:
+  sub:
