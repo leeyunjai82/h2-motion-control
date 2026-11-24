@@ -1,0 +1,15 @@
+# 홈 (apps/launcher) 카드 — 시작 명령은 저장소 기준. real: true = 실제 로봇 (FSM 703 에서만 시작, 종료 때 Damp 대상)
+title: 박스 핸드오버
+order: 10
+group: home
+desc: 박스를 양손으로 잡아 건네기 · 내려놓기
+modes:
+  - id: box_real
+    label: 실기 시작
+    cmd: [start_robot.sh]
+    real: true
+    open: robot_server:/
+  - id: box_sim
+    label: 시뮬 시작
+    cmd: [start_grab_sim.sh]
+    open: robot_server:/

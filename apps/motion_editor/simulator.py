@@ -400,7 +400,7 @@ async def read_root():
         html, n = _re.subn(r"const JOINT_LIMITS = \{[^}]*\};", lambda _m: js, html, count=1)
         if n != 1:
             print("[simulator] ⚠️ simulator.html 에서 JOINT_LIMITS 를 못 찾음 — 슬라이더 한계는 html 값")
-    return HTMLResponse(html)
+    return HTMLResponse(ports.with_home(html))
 
 
 if __name__ == "__main__":

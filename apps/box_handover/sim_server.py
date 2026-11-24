@@ -372,7 +372,7 @@ def sim_home():
 
 @app.get("/", response_class=HTMLResponse)
 def index():
-    return ports.fill(HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__REALCAM__", "1" if REAL_CAM else "0")
+    return ports.with_home(HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__REALCAM__", "1" if REAL_CAM else "0")
             .replace("__CAMTITLE__", "실물 D435i — detect_box :__PORT_DETECT_BOX__ (YOLO)" if REAL_CAM
                      else "가상 D435i 화면 (detect_box 대체 /video_feed)"))
 

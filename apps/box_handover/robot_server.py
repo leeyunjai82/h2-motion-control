@@ -1357,7 +1357,7 @@ def _ui_inject():
 @app.get("/", include_in_schema=False)
 async def index():
     html = open(WEB_HTML_PATH, encoding="utf-8").read()
-    return HTMLResponse(ports.fill(html.replace("</head>", _ui_inject() + "</head>", 1)), headers=NO_CACHE)
+    return HTMLResponse(ports.with_home(html.replace("</head>", _ui_inject() + "</head>", 1)), headers=NO_CACHE)
 
 
 if __name__ == "__main__":

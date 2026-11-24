@@ -211,7 +211,7 @@ def check_ik_state():
 @router.get("/check", response_class=HTMLResponse)
 def check_page():
     mode = "가상 (ROBOT_SIM, DDS 도메인 1)" if robot_env.SIM else "실기 (DDS 도메인 0)"
-    return ports.fill(HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__MODE__", mode)
+    return ports.with_home(HTML.replace("__ROBOT__", robot_env.ROBOT.upper()).replace("__MODE__", mode)
             .replace("__REAL__", "0" if robot_env.SIM else "1")
             .replace("__STEP__", str(STEP_DEG)).replace("__MAX__", str(MAX_OFFSET_DEG)))
 

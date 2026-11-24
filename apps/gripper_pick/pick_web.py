@@ -892,13 +892,13 @@ def make_app(r: Runner):
     @app.get("/collect", response_class=HTMLResponse)
     def collect_page():
         with open(os.path.join(HERE, "collect.html"), encoding="utf-8") as f:
-            return f.read()
+            return ports.with_home(f.read())
 
     @app.get("/", response_class=HTMLResponse)
     def index():
-        return PAGE.replace("__TWIN__", str(TABLE_WIN)).replace("__W__", str(W)).replace("__H__", str(H)).replace(
+        return ports.with_home(PAGE.replace("__TWIN__", str(TABLE_WIN)).replace("__W__", str(W)).replace("__H__", str(H)).replace(
             "__RPY__", json.dumps(P["rpy_deg"])).replace("__SIM__", "true" if r.sim and not getattr(r, "cam_only", False) else "false").replace(
-            "__CAMONLY__", "true" if getattr(r, "cam_only", False) else "false")
+            "__CAMONLY__", "true" if getattr(r, "cam_only", False) else "false"))
 
     @app.get("/video")
     def video():

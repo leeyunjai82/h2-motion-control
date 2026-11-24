@@ -1,0 +1,15 @@
+title: ACT 학습
+order: 40
+group: imitation
+desc: 데이터셋 → ACT 학습 → OpenVINO 모델 zip
+modes:
+  - id: train_local
+    step: train
+    label: 미니 PC 에서 학습
+    cmd: [apps/trainer/start_trainer_xpu.sh]
+    xpu_cap: true              # 런처가 GPU 최대 클럭 제한 · 복원 (sudo 대신 런처 root)
+    open: trainer:/
+links:
+  - step: train
+    label: 5090 학습 웹
+    url_from: trainer_url      # config/local.yaml trainer_url (예 http://192.168.0.20:50100/)

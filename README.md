@@ -34,7 +34,7 @@ head_track     :50013   머리 카메라 인식 — 왼눈 얼굴+나이·성별
 robot_server   :50000   잡기 시퀀스 + 제어 웹 UI (CPU·GPU·NPU 사용률, System 카드 = 로봇 FSM·서버 상태)
 dashboard      :50003   3D URDF 뷰어 / 관절 상태 (rt/lowstate 읽기 전용)
 simulator      :8000    모션 에디터 (Joint + IK), arm_server 경유
-launcher       :80      FSM 버튼 + start_robot.sh 실행 웹
+launcher       :80      홈 — FSM 버튼 · 기능 시작/정지 (박스 · 에디터 · 모방학습) · 종료(정지 → FixStand → Damp)
 pick_web       :50030   그리퍼 잡기 · 데이터 수집 · ACT 정책 실행 (start_gripper.sh, apps/gripper_pick/)
 trainer        :50100   학습 PC(RTX 5090) — 데이터셋 업로드 → ACT 학습 → OpenVINO model zip (apps/trainer/)
 act_viewer     :8800    전시 PC(Windows) — 데이터셋 · 모델 보기 (apps/act_viewer/start_viewer.bat)
@@ -65,6 +65,20 @@ cd ~/project/h2-motion-control
 # (선택) 웹 런처 — FSM 버튼 + start_robot.sh 실행 (포트 80, sudo)
 ./launcher.sh
 ```
+
+## 홈 (웹 런처, :80)
+
+```bash
+./launcher.sh          # 미니 PC (sudo) → 브라우저 http://<미니 PC>/
+```
+
+1. **자세**: Damp → FixStand(4) → PhaseWalk(703) 를 로봇을 보면서 한 단계씩
+2. **기능**: 박스 핸드오버 (실기 · 시뮬), 모션 에디터 (실기 · 가상), 모방학습 (① VR 수집 · 가상 ② 미니 PC 학습 · 5090 학습 웹 링크 ③ 추론)
+   - 한 번에 하나만 켜짐. 실기는 FSM 703 에서만. 각 기능 화면 왼쪽 아래 **⌂ 홈** 으로 돌아옴
+   - 미니 PC 학습은 런처가 GPU 최대 클럭을 1200 MHz 로 제한하고 끝나면 되돌림
+   - VR 수집 · 추론 (실기 그리퍼) 은 그리퍼 서비스 권한 처리 전이라 지금은 터미널 (`./start_collect.sh`, `./start_gripper.sh`)
+3. **종료**: 실행 중인 것 정지 → FixStand → Damp (각 단계 5 초 카운트다운 · 취소 가능). 강제로 꺼졌으면 자동 Damp 하지 않음
+- 새 기능 = `apps/<이름>/app.yaml` 하나 (제목 · 시작 명령 · 열 화면 · 실기 여부). 5090 주소는 `config/local.yaml` `trainer_url`
 
 ## 잡기 시퀀스 (robot_server)
 
@@ -175,7 +189,7 @@ h2-motion-control/
 │   ├── trainer/            #   ACT 학습 웹 (:50100, 학습 PC) — train_act · 설치 · 실행 스크립트
 │   ├── act_viewer/         #   ACT 데이터셋 · 모델 보기 (:8800, Windows 전시 PC)
 │   ├── motion_editor/      #   모션 에디터 (:8000) — simulator · joint_check
-│   └── launcher/           #   웹 런처 (:80) — run_launcher
+│   └── launcher/           #   홈 (:80) — run_launcher. 각 앱의 app.yaml 을 읽어 기능 카드로 그림
 ├── config/                 # ports.env (포트 한 곳), local.example.yaml → local.yaml (PC별: DDS 네트워크 카드, git 제외)
 ├── models/                 # AI 모델 — 박스 seg, OMZ 얼굴·사람·나이성별·행동(0006), polar11s · yolo11s
 ├── web/                    # 공용 웹 — robot3d.js (URDF · STL 읽기), i18n.js, vendor/three.min.js

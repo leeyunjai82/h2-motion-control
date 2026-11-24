@@ -5,6 +5,7 @@ ports.py — 포트 (config/ports.env 한 곳에서 읽음, 표준 라이브러�
   PORTS["arm_server"]              # 50022
   url("detect_box", "/pose")       # http://localhost:50010/pose
   fill(html)                       # 화면 글자 안의 __PORT_ARM_SERVER__ 같은 자리를 숫자로
+  with_home(html)                  # fill + 왼쪽 아래 "⌂ 홈" (런처) 링크
 """
 import os
 import re
@@ -33,3 +34,14 @@ def url(name, path="", host="localhost"):
 
 def fill(text):
     return re.sub(r"__PORT_([A-Z0-9_]+)__", lambda m: str(PORTS[m.group(1).lower()]), text)
+
+
+HOME_LINK = ('<a id="pitron-home" href="#" title="홈 (런처) — FSM · 기능 전환 · 종료" '
+             'onclick="location.href=location.protocol+\'//\'+location.hostname+\':__PORT_LAUNCHER__/\';return false" '
+             'style="position:fixed;left:10px;bottom:10px;z-index:9999;font:600 12px ui-monospace,Menlo,monospace;'
+             'padding:6px 12px;border-radius:999px;background:#0e1116e6;border:1px solid #0b5a70;color:#00b7eb;text-decoration:none">⌂ 홈</a>')
+
+
+def with_home(html):
+    i = html.rfind("</body>")
+    return fill(html[:i] + HOME_LINK + html[i:] if i >= 0 else html + HOME_LINK)

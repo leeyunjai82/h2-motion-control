@@ -1,0 +1,24 @@
+title: 그리퍼 잡기 · 수집 · 추론
+order: 30
+group: imitation
+desc: Dex1-1 그리퍼 — VR 원격 조작 수집 · 정책 실행
+modes:
+  - id: collect
+    step: collect
+    label: VR 수집 시작
+    cmd: [start_collect.sh]
+    real: true
+    open: pick_web:/collect
+    todo: 그리퍼 서비스 권한 처리 후 (지금은 터미널 ./start_collect.sh)
+  - id: pick_sim
+    step: collect
+    label: 가상 (그리퍼 시뮬)
+    cmd: [start_gripper.sh, --sim]
+    open: pick_web:/collect
+  - id: infer
+    step: infer
+    label: 추론 시작
+    cmd: [start_gripper.sh]
+    real: true
+    open: pick_web:/collect
+    todo: 그리퍼 서비스 권한 처리 후 (지금은 터미널 ./start_gripper.sh)

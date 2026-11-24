@@ -16,6 +16,10 @@ XPU_MAX_MHZ="${XPU_MAX_MHZ:-1200}"
 
 FREQ=$(ls /sys/class/drm/card*/device/tile0/gt0/freq0/max_freq 2>/dev/null | head -1)
 OLD=""
+if [ "${XPU_CAP_BY_LAUNCHER:-}" = "1" ]; then
+  echo "[trainer] GPU 최대 클럭 제한은 런처가 함 (지금 $(cat "$FREQ" 2>/dev/null) MHz)"
+  FREQ=""
+fi
 if [ -n "$FREQ" ]; then
   OLD=$(cat "$FREQ")
   MINF=$(cat "$(dirname "$FREQ")/min_freq")

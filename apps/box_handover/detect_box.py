@@ -656,7 +656,7 @@ async def set_overlay(seg: bool = None):
 @app.get("/", response_class=HTMLResponse)
 async def index():
     a = auto_mode
-    return ports.fill(HTML_PAGE.replace("__AX_MIN__", f"{a['x_min']:.2f}").replace("__AX_MAX__", f"{a['x_max']:.2f}")
+    return ports.with_home(HTML_PAGE.replace("__AX_MIN__", f"{a['x_min']:.2f}").replace("__AX_MAX__", f"{a['x_max']:.2f}")
             .replace("__AY_MIN__", f"{a['y_min']:.2f}").replace("__AY_MAX__", f"{a['y_max']:.2f}")
             .replace("__AZ_MIN__", f"{a['z_min']:.2f}").replace("__AZ_MAX__", f"{a['z_max']:.2f}")
             .replace("__DWELL__", f"{a['dwell_sec']:.1f}"))

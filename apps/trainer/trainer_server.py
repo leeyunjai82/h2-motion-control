@@ -322,7 +322,7 @@ app = FastAPI(title="ACT trainer")
 @app.get("/", response_class=HTMLResponse)
 def index():
     with open(os.path.join(HERE, "trainer_web.html"), encoding="utf-8") as f:
-        return f.read()
+        return ports.with_home(f.read())
 
 
 def _ver(pkg):

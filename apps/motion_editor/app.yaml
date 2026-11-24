@@ -1,0 +1,14 @@
+title: 모션 에디터
+order: 20
+group: home
+desc: 관절 · IK 로 팔 모션 만들기 · 저장
+modes:
+  - id: editor_real
+    label: 실기 시작
+    cmd: [start_editor.sh, real]
+    real: true
+    open: editor:/
+  - id: editor_virtual
+    label: 가상 시작
+    cmd: [start_editor.sh, virtual]
+    open: editor:/

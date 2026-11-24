@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-apps/launcher/run_launcher.py — H2 자세(FSM) 제어 + start_robot.sh 실행 웹 (포트 80)
+apps/launcher/run_launcher.py — 홈: H2 자세(FSM) + 기능 (박스 · 에디터 · 모방학습) 시작 · 정지 · 종료 (포트 80)
 
   ./launcher.sh             (start_fsm.sh 와 같이 sudo 로 tv 환경 python 실행)
   → http://<robot-ip>/   (포트 80 — root 실행 필요, launcher.sh 의 sudo)
@@ -22,8 +22,11 @@ apps/launcher/run_launcher.py — H2 자세(FSM) 제어 + start_robot.sh 실행 
   ./start_fsm.sh / tools/init_fsm.py 는 수정하지 않았다 — 터미널에서 따로 쓸 수 있다.
   단, 둘을 동시에 쓰면 서로의 진행을 모른다. 한쪽만 쓸 것.
 
-로봇 서버
-  · Robot 시작 / 정지 : ./start_robot.sh 실행 / SIGTERM(= Ctrl+C 와 같은 종료 시퀀스)
+기능 (apps/*/app.yaml 을 읽어 카드로 그림 — 새 기능은 app.yaml 하나 추가)
+  · 한 번에 하나만 실행 (팔 · D435i 는 프로세스 하나만). 실기 모드(real)는 FSM 703 에서만 시작
+  · 정지 : 각 start 스크립트에 SIGTERM (= Ctrl+C 와 같은 종료 순서)
+  · 종료 : 정지 → FixStand → Damp (각 단계 카운트다운 · 취소 가능). 강제로 꺼졌으면 자동 Damp 안 함
+  · 미니 PC 학습 : 런처(root)가 GPU 최대 클럭을 제한하고 끝나면 되돌림 (sudo 비밀번호 대신)
 
 권한
   · launcher 는 root 로 돈다 (launcher.sh 의 sudo). FSM RPC 도 root 로 호출 (start_fsm.sh 와 동일).
@@ -360,7 +363,7 @@ class Job:
     def running(self):
         return self.proc is not None and self.proc.poll() is None
 
-    def start(self, args, label, as_user=False):
+    def start(self, args, label, as_user=False, env_extra=None):
         with self.lock:
             if self.running():
                 raise HTTPException(409, f"{self.name} 실행 중: {self.label}")
@@ -375,7 +378,7 @@ class Job:
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 start_new_session=True, text=True, bufsize=1,
                 preexec_fn=_as_user if drop else None,
-                env=_user_env() if drop else None)
+                env={**(_user_env() if drop else os.environ), **(env_extra or {})})
             threading.Thread(target=self._pump, args=(self.proc, logf), daemon=True).start()
 
     def _pump(self, proc, logf):
@@ -401,23 +404,177 @@ class Job:
 
 
 fsm = FsmCtl()
-robot = Job("robot")
+job = Job("app")            # 한 번에 하나만 (팔 · D435i 를 프로세스 하나만 쓸 수 있음)
+CUR_MODE = {"m": None}      # 지금 (또는 마지막) 실행한 모드
 
 
-def _stop_robot():
-    p = robot.proc
+# ==========================================
+# 앱 (apps/*/app.yaml) — 홈 카드 · 시작 명령
+# ==========================================
+def load_apps():
+    import yaml
+    out, modes = [], {}
+    for d in sorted(os.listdir(os.path.join(ROOT, "apps"))):
+        f = os.path.join(ROOT, "apps", d, "app.yaml")
+        if not os.path.isfile(f):
+            continue
+        with open(f, encoding="utf-8") as fh:
+            a = yaml.safe_load(fh) or {}
+        a["id"] = d
+        for m in a.get("modes") or []:
+            if m["id"] in modes:
+                raise SystemExit(f"[launcher] 모드 id 중복: {m['id']} ({f})")
+            cmd = list(m["cmd"])
+            if not os.path.isfile(os.path.join(ROOT, cmd[0])):
+                raise SystemExit(f"[launcher] {f}: 시작 파일 없음 {cmd[0]}")
+            if m.get("open") and m["open"].split(":", 1)[0] not in ports.PORTS:
+                raise SystemExit(f"[launcher] {f}: open 포트 이름 {m['open']} 이 config/ports.env 에 없음")
+            m.update(app=d, app_title=a.get("title", d), cmd=cmd, real=bool(m.get("real")))
+            modes[m["id"]] = m
+        out.append(a)
+    out.sort(key=lambda a: a.get("order", 99))
+    return out, modes
+
+
+APPS, MODES = load_apps()
+
+
+def local_cfg():
+    import yaml
+    f = os.path.join(ROOT, "config", "local.yaml")
+    if not os.path.isfile(f):
+        return {}
+    with open(f, encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
+
+
+def real_running():
+    m = CUR_MODE["m"]
+    return job.running() and m is not None and m["real"]
+
+
+# ---- 미니 PC 학습: GPU 최대 클럭 제한 (Arc B390 2500 MHz 연속 부하에서 PC 멈춤 — apps/trainer/start_trainer_xpu.sh) ----
+XPU = {"file": None, "old": None}
+
+
+def xpu_cap(on):
+    import glob
+    if on:
+        fs = sorted(glob.glob("/sys/class/drm/card*/device/tile0/gt0/freq0/max_freq"))
+        if not fs:
+            job.lines.append("[launcher] ⚠️ GPU 클럭 파일 없음 — 제한 없이 학습 (Intel xe 드라이버가 아님?)")
+            return
+        f, mhz = fs[0], int(os.environ.get("XPU_MAX_MHZ", "1200"))
+        old = open(f).read().strip()
+        with open(f, "w") as fh:
+            fh.write(str(mhz))
+        XPU.update(file=f, old=old)
+        job.lines.append(f"[launcher] GPU 최대 클럭 {old} → {open(f).read().strip()} MHz (학습 끝나면 되돌림)")
+    elif XPU["file"]:
+        subprocess.run(["pkill", "-TERM", "-f", "apps/trainer/train_act.py"], check=False)   # 클럭을 풀기 전에 학습부터 끔
+        time.sleep(3)
+        subprocess.run(["pkill", "-KILL", "-f", "apps/trainer/train_act.py"], check=False)
+        with open(XPU["file"], "w") as fh:
+            fh.write(XPU["old"])
+        job.lines.append(f"[launcher] GPU 최대 클럭 되돌림 → {XPU['old']} MHz")
+        XPU.update(file=None, old=None)
+
+
+def _watch_end(p, m):
+    """실행이 끝나면 (정지 · 오류 · 스스로 종료) 뒷정리 — 학습이면 클럭 복원."""
+    p.wait()
+    if m.get("xpu_cap"):
+        xpu_cap(False)
+
+
+def start_mode(mid):
+    m = MODES.get(mid)
+    if m is None:
+        raise HTTPException(404, f"모드 없음: {mid}")
+    if m.get("todo"):
+        raise HTTPException(409, f"아직 웹에서 시작 못 함 — {m['todo']}")
+    if job.running():
+        raise HTTPException(409, f"실행 중: {CUR_MODE['m']['app_title']} · {CUR_MODE['m']['label']} — 먼저 정지")
+    if SEQ["busy"]:
+        raise HTTPException(409, "종료 진행 중")
+    if m["real"]:
+        if fsm.busy is not None:
+            raise HTTPException(409, f"FSM {fsm.busy} 대기/전송 중")
+        cur = fsm.read_fsm()
+        if cur is not None and cur != FSM_RUN:
+            raise HTTPException(409, f"FSM {cur} ({FSM_NAME.get(cur, '')}) — {FSM_DAMP} → {FSM_LOCK} → {FSM_RUN} 로 {_LBL['run_enter']} 진입 후 시작")
+    CUR_MODE["m"] = m
+    SEQ.update(msg="", ok=None)
+    if m.get("xpu_cap"):
+        xpu_cap(True)
+    job.start(["bash", os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], f"{m['app_title']} · {m['label']}",
+              as_user=True, env_extra={"XPU_CAP_BY_LAUNCHER": "1"} if m.get("xpu_cap") else None)
+    if m["real"] and fsm.cur is None:
+        job.lines.append(f"[launcher] ⚠️ FSM 확인 불가({fsm.cur_err}) — {FSM_RUN} 상태인지 직접 확인할 것")
+    threading.Thread(target=_watch_end, args=(job.proc, m), daemon=True).start()
+
+
+def stop_job():
+    """bash 에만 SIGTERM → 각 start 스크립트의 trap cleanup (Ctrl+C 와 같은 종료 순서). → 정상 종료 여부"""
+    p = job.proc
     if p is None or p.poll() is not None:
-        return
-    # bash 에만 SIGTERM → start_robot.sh 의 trap cleanup (Ctrl+C 와 동일 시퀀스)
+        return True
     p.send_signal(signal.SIGTERM)
     try:
         p.wait(ROBOT_STOP_WAIT)
+        return True
     except subprocess.TimeoutExpired:
-        robot.lines.append("[launcher] 종료 지연 — 프로세스 그룹 SIGKILL")
+        job.lines.append("[launcher] 종료 지연 — 프로세스 그룹 SIGKILL (팔 제어권 반납이 생략됐을 수 있음)")
         try:
             os.killpg(p.pid, signal.SIGKILL)
         except ProcessLookupError:
             pass
+        return False
+
+
+# ==========================================
+# 종료: 실행 중인 것 정지 → FSM 703 → FixStand(4) → Damp(1)  (시작 1 → 4 → 703 의 역순)
+# ==========================================
+SEQ = {"busy": False, "msg": "", "ok": None}
+
+
+def _wait_fsm(target):
+    fsm.set(target, real_running)
+    while fsm.busy is not None:
+        time.sleep(0.2)
+    return bool(fsm.result and fsm.result[0])
+
+
+def _shutdown():
+    def say(msg, ok=None):
+        SEQ.update(msg=msg, ok=ok)
+        fsm.log(f"[종료] {msg}")
+    try:
+        if job.running():
+            say("실행 중인 것 정지 중 (팔 기본 자세 · 제어권 반납) …")
+            if not stop_job():
+                say("정지가 늦어 강제로 끔 — 팔 반납이 생략됐을 수 있어 자동 Damp 안 함. 로봇을 확인하고 Damp 를 직접 누르세요", False)
+                return
+        cur = fsm.read_fsm()
+        if cur is None:
+            say(f"FSM 확인 불가 ({fsm.cur_err}) — 로봇 미연결이면 그대로 끝. 연결돼 있으면 Damp 를 직접 누르세요", True)
+            return
+        if cur == FSM_DAMP:
+            say("이미 Damp — 끝", True)
+            return
+        if cur != FSM_LOCK:
+            say(f"FSM {cur} → {FSM_LOCK} ({_LBL['lock_button']}) — {DELAY_SEC:.0f}초 후")
+            if not _wait_fsm(FSM_LOCK):
+                say(f"{FSM_LOCK} 전송 실패 · 취소 — 멈춤 (Damp 는 직접)", False)
+                return
+            time.sleep(2.0)
+        say(f"FSM {FSM_LOCK} → {FSM_DAMP} (Damp) — {DELAY_SEC:.0f}초 후")
+        if not _wait_fsm(FSM_DAMP):
+            say(f"{FSM_DAMP} 전송 실패 · 취소 — 멈춤", False)
+            return
+        say("종료 완료 — Damp", True)
+    finally:
+        SEQ["busy"] = False
 
 
 @asynccontextmanager
@@ -426,9 +583,9 @@ async def lifespan(app: FastAPI):
     yield
     # launcher 종료(Ctrl+C) 시 로봇 서버도 정상 종료 시퀀스로 정지.
     # 남겨두면 다음 start_robot.sh 의 sweep 이 SIGKILL 로 죽여 arm 제어권 반납이 생략된다.
-    if robot.running():
-        print("[launcher] 종료 — start_robot.sh 정지 중...")
-        _stop_robot()
+    if job.running():
+        print("[launcher] 종료 — 실행 중인 것 정지 중...")
+        stop_job()
 
 
 app = FastAPI(title="pitron launcher", lifespan=lifespan)
@@ -436,7 +593,9 @@ app = FastAPI(title="pitron launcher", lifespan=lifespan)
 
 @app.post("/fsm/{target}")
 def run_fsm(target: int):
-    fsm.set(target, robot.running)
+    if SEQ["busy"] and target != FSM_DAMP:
+        raise HTTPException(409, "종료 진행 중 — Damp 만 가능")
+    fsm.set(target, real_running)
     return {"ok": True, "delay": DELAY_SEC}
 
 
@@ -445,30 +604,52 @@ def fsm_cancel():
     return {"ok": fsm.cancel_pending()}
 
 
-@app.post("/robot/start")
-def robot_start():
-    if fsm.busy is not None:
-        raise HTTPException(409, f"FSM {fsm.busy} 대기/전송 중")
-    cur = fsm.read_fsm()
-    if cur is not None and cur != FSM_RUN:
-        raise HTTPException(409, f"FSM {cur} ({FSM_NAME.get(cur, '')}) — {FSM_DAMP} → {FSM_LOCK} → {FSM_RUN} 로 {_LBL['run_enter']} 진입 후 시작")
-    robot.start(["bash", os.path.join(ROOT, "start_robot.sh")], "start_robot.sh", as_user=True)
-    if cur is None:
-        robot.lines.append(f"[launcher] ⚠️ FSM 확인 불가({fsm.cur_err}) — {FSM_RUN} 상태인지 직접 확인할 것")
+@app.get("/apps")
+def apps_list():
+    url = str(local_cfg().get("trainer_url") or "").strip()
+    out = []
+    for a in APPS:
+        b = {k: a.get(k) for k in ("id", "title", "group", "desc")}
+        b["modes"] = []
+        for m in a.get("modes") or []:
+            o = m.get("open")
+            b["modes"].append({**{k: m.get(k) for k in ("id", "label", "real", "step", "todo")},
+                               "open": {"port": ports.PORTS[o.split(":", 1)[0]], "path": o.split(":", 1)[1]} if o else None})
+        b["links"] = [{"step": l.get("step"), "label": l["label"], "url": url} for l in a.get("links") or []
+                      if l.get("url_from") == "trainer_url" and url]
+        out.append(b)
+    return out
+
+
+@app.post("/app/{mid}/start")
+def app_start(mid: str):
+    start_mode(mid)
     return {"ok": True}
 
 
-@app.post("/robot/stop")
-def robot_stop():
-    if not robot.running():
+@app.post("/app/stop")
+def app_stop():
+    if not job.running():
         return {"ok": True, "already": True}
-    threading.Thread(target=_stop_robot, daemon=True).start()
+    threading.Thread(target=stop_job, daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/shutdown")
+def shutdown():
+    if SEQ["busy"]:
+        raise HTTPException(409, "종료 진행 중")
+    SEQ.update(busy=True, msg="시작", ok=None)
+    threading.Thread(target=_shutdown, daemon=True).start()
     return {"ok": True}
 
 
 @app.get("/status")
 def status():
-    return {"fsm": fsm.state(robot.running()), "robot": robot.state()}
+    m = CUR_MODE["m"]
+    return {"fsm": fsm.state(real_running()),
+            "job": {**job.state(), "mode": m["id"] if m else None, "real": bool(m and m["real"])},
+            "seq": dict(SEQ)}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -532,6 +713,18 @@ pre{margin:0;flex:1;min-height:120px;overflow:auto;background:#0a0d12;border:1px
   border-radius:8px;padding:10px;font-size:11.5px;white-space:pre-wrap;word-break:break-all}
 .note{font-size:11px;color:var(--dim)}
 .links a{color:var(--accent2);margin-right:12px}
+.col{display:flex;flex-direction:column;gap:14px;min-height:0}
+.card.grow{flex:1}
+.app{border:1px solid var(--line);border-radius:8px;padding:10px 12px;background:#0a0d12;display:flex;flex-direction:column;gap:8px}
+.app .t{display:flex;align-items:baseline;gap:10px}.app .t b{font-size:15px;color:var(--ink)}.app .t span{font-size:11px;color:var(--dim)}
+.app .t a{margin-left:auto}
+.app .steps{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center}
+.app .sn{font-size:12px;color:var(--accent2);white-space:nowrap}
+.app .row button{padding:10px 8px;font-size:13px}
+button.cur{box-shadow:0 0 0 2px var(--ok) inset;color:var(--ok)}
+a.open{color:var(--accent2);font-size:12px;text-decoration:none;white-space:nowrap}
+a.open.off{color:var(--dim);pointer-events:none}
+.shut{margin-top:2px}
 /* 큰 화면: 버튼 키움 */
 @media(min-height:900px){button{padding:22px 8px;font-size:15px}button .no{font-size:24px}}
 @media(max-width:900px){body{height:auto}.wrap{grid-template-columns:1fr}pre{min-height:240px}}
@@ -553,6 +746,7 @@ pre{margin:0;flex:1;min-height:120px;overflow:auto;background:#0a0d12;border:1px
       <div class="fsmnow unk" id="fsmnow"><span class="k">현재 FSM</span><span class="v" id="fsm-v">확인 중</span><span class="n" id="fsm-n"></span><span class="bal" id="fsm-b"></span></div>
       <div class="note">일어서기: <b>@@STAND_SEQ@@</b> 순서로, 로봇이 자리 잡은 걸 보고 다음 단계를 누르세요</div>
 @@FSM_BUTTONS@@
+      <button class="st shut" id="b-shut" onclick="shutdownAll()">종료<small>실행 중인 것 정지 → @@LOCK@@ → @@DAMP@@ (시작의 역순)</small></button>
       <div class="row" style="align-items:stretch">
         <div class="state" id="fsm-s" style="flex:3">대기</div>
         <button class="st" id="b-cancel" onclick="fsmCancel()" style="flex:1;padding:8px;display:none">취소</button>
@@ -560,16 +754,20 @@ pre{margin:0;flex:1;min-height:120px;overflow:auto;background:#0a0d12;border:1px
       <pre id="fsm-log"></pre>
     </div>
   </div>
-  <div class="card">
-    <div class="h"><span>로봇 서버 <code>start_robot.sh</code></span><span></span></div>
-    <div class="b">
-      <div class="row">
-        <button class="go" id="b-rstart" onclick="robotStart()">Robot 시작<small>FSM @@RUN@@ 에서만 · 6개 서버</small></button>
-        <button class="st" id="b-rstop" onclick="robotStop()">Robot 정지<small>Ctrl+C 와 동일</small></button>
+  <div class="col">
+    <div class="card">
+      <div class="h"><span>기능</span><span>한 번에 하나만 · 실기는 FSM @@RUN@@ 에서</span></div>
+      <div class="b" id="apps">불러오는 중…</div>
+    </div>
+    <div class="card grow">
+      <div class="h"><span>실행 중</span><span id="job-mode"></span></div>
+      <div class="b">
+        <div class="row" style="align-items:stretch">
+          <div class="state" id="rb-s" style="flex:3">정지됨</div>
+          <button class="st" id="b-stop" onclick="appStop()" style="flex:1;padding:8px">정지<small>Ctrl+C 와 같음</small></button>
+        </div>
+        <pre id="rb-log"></pre>
       </div>
-      <div class="state" id="rb-s">정지됨</div>
-      <pre id="rb-log"></pre>
-      <div class="links note" id="links"></div>
     </div>
   </div>
 </div>
@@ -592,9 +790,27 @@ function warn(title,big,body){return new Promise(res=>{
   document.getElementById('m-yes').onclick=()=>done(true);
   document.addEventListener('keydown',esc);
   m.classList.add('show');document.getElementById('m-no').focus();});}
-document.getElementById('links').innerHTML=
-  `<a href="http://${host}:__PORT_ROBOT_SERVER__/" target="_blank">Control :__PORT_ROBOT_SERVER__</a>`+
-  `<a href="http://${host}:__PORT_DASHBOARD__/dashboard" target="_blank">Dashboard :__PORT_DASHBOARD__</a>`;
+// ---- 기능 카드 (apps/*/app.yaml) ----
+let APPS=[];
+const STEP={collect:'① 수집',train:'② 학습',infer:'③ 추론'};
+const openUrl=o=>`http://${host}:${o.port}${o.path}`;
+const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function modeBtn(m){return `<button class="${m.real?'go':'ok'}" id="m-${m.id}" data-todo="${m.todo?1:0}" onclick="appStart('${m.id}')"`+
+  `${m.todo?` title="${esc(m.todo)}"`:''}>${esc(m.label)}<small>${m.todo?'준비 중 — '+esc(m.todo):m.real?'실제 로봇 · FSM '+FSM.run:'로봇 없이'}</small></button>`;}
+const openA=m=>m.open?`<a class="open off" data-open="${m.id}" href="${openUrl(m.open)}" target="_blank">열기 →</a>`:'';
+function renderApps(){
+  const home=APPS.filter(a=>a.group!=='imitation'),im=APPS.filter(a=>a.group==='imitation');
+  let h=home.map(a=>`<div class="app"><div class="t"><b>${esc(a.title)}</b><span>${esc(a.desc)}</span>${openA(a.modes[0])}</div>`+
+    `<div class="row">${a.modes.map(modeBtn).join('')}</div></div>`).join('');
+  if(im.length){
+    const ms=im.flatMap(a=>a.modes),ls=im.flatMap(a=>a.links||[]);
+    h+=`<div class="app"><div class="t"><b>모방학습</b><span>VR 원격 조작 수집 → ACT 학습 → 정책 실행</span></div><div class="steps">`+
+      Object.entries(STEP).map(([k,n])=>{const sm=ms.filter(m=>m.step===k),sl=ls.filter(l=>l.step===k);
+        return `<div class="sn">${n}</div><div class="row">${sm.map(modeBtn).join('')}`+
+          `${sl.map(l=>`<button class="ok" onclick="window.open('${esc(l.url)}','_blank')">${esc(l.label)}<small>링크</small></button>`).join('')}`+
+          `<div style="flex:none;display:flex;flex-direction:column;justify-content:center;gap:4px">${sm.map(openA).join('')}</div></div>`;}).join('')+`</div></div>`;}
+  document.getElementById('apps').innerHTML=h;}
+fetch('/apps').then(r=>r.json()).then(d=>{APPS=d;renderApps();poll();}).catch(e=>{document.getElementById('apps').textContent='기능 목록 못 읽음: '+e;});
 let CUR=null;
 // Damp 만 경고 후 실행, lock / run 은 바로 실행
 async function confirmFsm(t){
@@ -609,10 +825,16 @@ async function post(u){const r=await fetch(u,{method:'POST'});const d=await r.js
 async function fsm(t){if(!await confirmFsm(t))return;
   try{await post('/fsm/'+t);}catch(e){alert(e.message);}poll();}
 async function fsmCancel(){try{await post('/fsm_cancel');}catch(e){}poll();}
-async function robotStart(){if(!confirm('start_robot.sh 를 실행합니다.\n\n· arm_server 가 기동하면서 팔/허리 제어권(weight=1)을 잡습니다.'))return;
-  try{await post('/robot/start');}catch(e){alert(e.message);}poll();}
-async function robotStop(){if(!confirm('로봇 서버를 정지합니다 (팔 제어권 반납 후 종료).'))return;
-  try{await post('/robot/stop');}catch(e){alert(e.message);}poll();}
+async function appStart(id){const m=APPS.flatMap(a=>a.modes).find(x=>x.id===id);if(!m)return;
+  const msg=m.real?`${m.label} — 실제 로봇이 움직입니다.\n\n· 거치대 · FSM ${FSM.run} 확인\n· 주변을 비우고 E-STOP 을 손에`:`${m.label} — 로봇 없이 (가상)`;
+  if(!confirm(msg))return;
+  try{await post('/app/'+id+'/start');}catch(e){alert(e.message);}poll();}
+async function appStop(){if(!confirm('실행 중인 것을 정지합니다 (팔 기본 자세 · 제어권 반납 후 종료).'))return;
+  try{await post('/app/stop');}catch(e){alert(e.message);}poll();}
+async function shutdownAll(){
+  if(!await warn('종료','실행 중인 것을 정지한 뒤 '+FSM.lock+' → '+FSM.damp+' (Damp) 로 갑니다',
+    '· 로봇이 거치대에 걸려 있습니까? Damp 하면 힘이 빠집니다\n· 각 단계는 '+5+'초 카운트다운 — 취소하면 그 자리에서 멈춤\n· 로봇 미연결(가상만 썼으면) FSM 명령은 보내지 않음'))return;
+  try{await post('/shutdown');}catch(e){alert(e.message);}poll();}
 function fill(pre,lines){const atBottom=pre.scrollTop+pre.clientHeight>=pre.scrollHeight-20;
   pre.textContent=lines.join('\n');if(atBottom)pre.scrollTop=pre.scrollHeight;}
 function setState(id,cls,txt){const el=document.getElementById(id);el.className='state'+(cls?' '+cls:'');el.textContent=txt;}
@@ -646,14 +868,21 @@ async function poll(){try{const d=await(await fetch('/status')).json();
   else if(f.result)setState('fsm-s',f.result[0]?'on':'err',f.result[1]);
   else setState('fsm-s','','대기');
   fill(document.getElementById('fsm-log'),f.log);
-  // 로봇 서버
-  document.getElementById('b-rstart').disabled=r.running||f.busy!==null||(f.cur!==null&&f.cur!==FSM.run);
-  document.getElementById('b-rstart').classList.toggle('next',f.cur===FSM.run&&!r.running);
-  document.getElementById('b-rstop').disabled=!r.running;
-  if(r.running)setState('rb-s','on',`실행 중 (${Math.floor(r.elapsed/60)}분 ${Math.floor(r.elapsed%60)}초)`);
-  else if(r.label)setState('rb-s',r.rc===0?'':'err',`정지됨 (rc=${r.rc})`);
+  // 실행 중 · 기능 버튼
+  const j=d.job,sq=d.seq;
+  document.querySelectorAll('#apps button[id^="m-"]').forEach(b=>{const id=b.id.slice(2),m=APPS.flatMap(a=>a.modes).find(x=>x.id===id);
+    b.disabled=j.running||sq.busy||b.dataset.todo==='1'||(m&&m.real&&(f.busy!==null||(f.cur!==null&&f.cur!==FSM.run)));
+    b.classList.toggle('cur',j.running&&j.mode===id);});
+  document.querySelectorAll('#apps a.open').forEach(a=>a.classList.toggle('off',!(j.running&&j.mode===a.dataset.open)));
+  document.getElementById('b-stop').disabled=!j.running||sq.busy;
+  document.getElementById('b-shut').disabled=sq.busy;
+  document.getElementById('job-mode').textContent=j.label||'';
+  if(sq.busy)setState('rb-s','run','종료: '+sq.msg);
+  else if(j.running)setState('rb-s','on',`${j.label} — 실행 중 (${Math.floor(j.elapsed/60)}분 ${Math.floor(j.elapsed%60)}초)`);
+  else if(sq.msg&&sq.ok!==null)setState('rb-s',sq.ok?'':'err','종료: '+sq.msg);
+  else if(j.label)setState('rb-s',j.rc===0?'':'err',`${j.label} — 정지됨 (rc=${j.rc})`);
   else setState('rb-s','','정지됨');
-  fill(document.getElementById('rb-log'),r.log);
+  fill(document.getElementById('rb-log'),j.log);
 }catch(e){setState('fsm-s','err','launcher 연결 끊김');}}
 poll();setInterval(poll,500);
 </script></body></html>"""
@@ -692,6 +921,8 @@ def _render_html(h):
         ("@@STAND_SEQ@@", f"{FSM_DAMP} → {FSM_LOCK} → {FSM_RUN}", 1),
         ("@@FSM_BUTTONS@@", rows, 1),
         ("@@RUN@@", str(FSM_RUN), 1),
+        ("@@LOCK@@", str(FSM_LOCK), 1),
+        ("@@DAMP@@", str(FSM_DAMP), 1),
         ("@@FSM_JS@@", json.dumps(js, ensure_ascii=False).replace("</", "<\\/"), 1),
     ]
     for old, new, n in reps:
