@@ -36,39 +36,38 @@ ROBOT_CHECK=1 ./start_fsm.sh stand     # 거치대 + FSM 703 (한 번)
 5. [정지] = 그 자리에서 멈춤 (그리퍼는 그 상태 유지) → [복귀] = 위로 → 준비 자세
 6. 끝나면 [기본 자세로] (같은 경로 반대)
 
-## 녹화 (ACT 데이터) — `recorder.py`
+## 녹화 → LeRobot v3 — `pitron/learning/recorder.py` · `lerobot_sync.py`
 
-웹 **데이터 수집** 칸: [수집 켬] + 데이터셋 이름 (영문 · 숫자 · _ -) → [실행] = 녹화 시작 (● 녹화 중 n 프레임) →
-잡기가 끝나거나 [정지] 하면 녹화 끝 → **[저장 (학습에 씀)] / [버리기]** 를 고를 때까지 다음 [실행] 은 막힘.
-자동 판정(끝까지 + 닫기 '잡음')과 닫은 간격을 보여 주지만 저장 여부는 사람이 정함 (저장 = `ok: true`, `auto_ok` 에 자동 판정).
-**zip (성공만)** 링크 → 학습 PC 웹에 올림.
+수집 화면: 데이터셋 이름 → [수집 켬] → 시연 → 에피소드마다 **[저장] / [버리기]**. 새 데이터셋은 처음 저장할 때 아래 설정으로 만들어지고 그 뒤로 고정:
+카메라 크기 (320×240 · 424×240 · 640×480 · 카메라별 원래 크기) · 맞춤 방식 (자르기 · 검은 띠 · 눌러 줄이기, `pitron/learning/camfit.py`) · 작업 설명 (바꾸면 v3 를 다시 만듦).
+모든 카메라가 같은 크기여야 하는 정책 (예: diffusion) 이 있어 기본은 320×240 · 자르기.
 
 ```
-gripper/data/<데이터셋>/info.json                       format h2-gripper-episodes-v1, cameras {이름: {w, h}}, state_names
-gripper/data/<데이터셋>/episodes/ep_000001/episode.npz  t · state(N,16) · action(N,16) · tcp(N,6) · stage(N,) ·
-                                                        jpeg_<카메라> · jpeg_off_<카메라>   (30 Hz)
-gripper/data/<데이터셋>/episodes/ep_000001/meta.json    ok · result · side · stages · plan · close (닫은 간격 · 토크)
+data/datasets/<데이터셋>/info.json                       원본 녹화 (format h2-gripper-episodes-v1, cameras · fit · task · state_names)
+data/datasets/<데이터셋>/episodes/ep_000001/…            원본 에피소드 (npz · meta) — 수집 화면의 에피소드 보기 · 지우기
+data/datasets/<데이터셋>/lerobot/                        LeRobot v3.0 (성공 에피소드만) — 다운로드 · 학습은 이것
 ```
 
-- state = [왼팔 7 실측, 왼 그리퍼 q, 오른팔 7 실측, 오른 그리퍼 q] (rt/lowstate 500 Hz 의 최신값) — 한 손 학습은 학습기에서 골라 씀
-- action = [왼팔 7 지령, 왼 그리퍼 목표, 오른팔 7 지령, 오른 그리퍼 목표] (지령 = arm_server /stream 으로 실제 보낸 값)
-- 카메라: body = D435i 컬러 424×240 + 손목 카메라 (`gripper.yaml wrist_cams`, `wrist_cam_size` 320×240 으로 열어 그대로 저장).
-  데이터셋 안에서는 카메라 구성 · 크기가 같아야 함 (다르면 녹화를 켤 때 거부)
-- 크기: 잡기 한 번 ≈ 38 초 · 1100 프레임 · 약 16 MB (가짜 카메라 기준, 실제 영상은 JPEG 가 더 클 수 있음)
-- 확인: 가짜 로봇 · 가짜 카메라로 녹화 → npz · meta · zip 까지 (2026-11-06). 실기 녹화 · 학습기 읽기는 아직
+- 저장 · 지우기 · 작업 설명 바꿈 → 백그라운드에서 lerobot 가상환경 프로세스가 `lerobot/` 를 맞춤 (새 에피소드는 이어 붙이고, 지웠으면 다시 만듦, nice 10)
+- 켤 때 예전 데이터셋도 v3 로 맞춤. 영상은 h264 (브라우저 · 윈도우 뷰어에서 바로 재생)
+- v3 내용: `observation.state` (16) · `action` (16) · `observation.images.<카메라>` · `tcp` (6) · `stage` (분석용, 학습 입력 아님) · `meta/h2.json` (에피소드별 손 · 결과 · 단계)
+- state = [왼팔 7 실측, 왼 그리퍼 q, 오른팔 7 실측, 오른 그리퍼 q] · action = [왼팔 7 지령, 왼 그리퍼 목표, 오른팔 7 지령, 오른 그리퍼 목표]
+- 확인: 컨테이너에서 녹화 → v3 (처음 · 이어 붙이기 · 지운 뒤 다시) · zip · lerobot 학습 (2026-11-24). 실기 녹화는 아직
 
-## 정책 실행 (ACT) — `policy.py`
+## 정책 실행 (lerobot 모델) — `policy.py` · `pitron/learning/lerobot_infer.py`
 
-웹 **정책 실행** 칸: 학습 PC 에서 받은 model zip 올리기 → 모델 · 장치 (CPU / GPU / NPU) 고르고 [불러오기] (컴파일 + 추론 시간) →
-시작 조건이 모두 OK 면 [▶ 정책 시작]. 멈춤 = 빨간 [정지] 또는 Esc (팔은 그 자리, 그리퍼는 그 상태).
+수집 화면 추론 칸: 모델 고르기 (이 PC 에서 학습한 모델은 자동으로 목록에, 다른 PC 모델은 zip 올리기) · 장치 → [불러오기] → 시작 조건 OK → [▶ 정책 시작].
+모델 = lerobot `pretrained_model` 폴더 (+ `h2_model.json`). 정책 종류 상관없음 — lerobot 표준대로 (`config.json` type → 정책 클래스 · 정규화 · `select_action`).
+ACT 는 OpenVINO 로 (CPU · GPU · NPU, 변환 결과는 `<모델>/openvino/` 캐시), 나머지는 torch (CPU · Intel GPU). 데이터셋은 안 씀.
 
-- 시작 조건: 그 손이 학습 데이터 첫 자세 근처 (먼저 [준비 자세로]) · 카메라 (모델이 쓰는 것 전부) · 팔 실측 · 그리퍼 상태 · 카메라 숙임 ±1°
-- 시작: 학습 데이터 첫 지령 평균 자세로 천천히 → 정책. 추론은 따로 돌고 제어는 30 Hz (ACT temporal ensemble, 예측마다 관측한 틱 기준) —
-  추론이 33 ms 보다 느려도 팔은 30 Hz 로 움직임 (가짜 로봇 · 추론 100 ms 흉내로 확인)
-- 멈춤 (안전): 정책 출력이 학습 범위를 0.15 rad 넘게 벗어남 · 집게 가운데가 학습 범위 ± 5 cm 밖 · 그리퍼가 테이블 평면 + 5 mm 아래 ·
-  지령 ↔ 실측 15° · 최대 90 초 · 끝 자세에 1 초 머묾 (= 한 회 끝)
-- 영상은 녹화와 같게 (카메라 크기로 줄임 → JPEG q90 → RGB)
-- ⚠ 추론 시간: 이 저장소 시험 컨테이너 CPU 에서 카메라 3 대 · ResNet18 이 70–110 ms. 미니 PC 의 CPU / GPU / NPU 에서 재 볼 것
+- 시작 조건: 양팔 준비 자세 (수집과 같은 시작) · 카메라 (모델이 쓰는 것 전부) · 팔 실측 · 그리퍼 상태 · 카메라 숙임 ±1° · 관절 순서 (h2_model.json)
+- 제어 30 Hz: 한 틱에 추론 요청 하나. 정책이 chunk 를 새로 계산하는 동안은 마지막 목표를 다시 보내 제자리에서 기다림 (arm_server 세션 유지)
+- 멈춤 (안전): 정책 출력이 모델의 학습 범위 (action min/max) 를 0.15 rad 넘게 벗어남 · 집게 가운데가 작업 범위 밖 (`config/local.yaml policy_tcp_box`, 없으면 안 봄) ·
+  그리퍼가 테이블 평면 + 5 mm 아래 · 지령 ↔ 실측 15° · 추론 답 15 초 없음 · 최대 90 초
+- 한 회 끝: 8 초 뒤 지령이 양팔 준비 자세에 1 초 머묾 (반복이면 2 초 뒤 다음 회)
+- 영상은 수집과 같게 (모델 입력 크기로 camfit → JPEG q90 → RGB)
+- 확인 (컨테이너 CPU, 가짜 팔 서버): ACT OpenVINO 첫 추론 85 ms · 지령 주기 33 ms · torch 와 차이 1.5e-6 /
+  diffusion torch chunk 6.6 초 동안 제자리 대기 후 이어감 · 추론 대기 한도 넘으면 멈춤 (2026-11-24). 미니 PC · 실기는 아직
 
 카메라만 확인 (로봇 꺼짐 · 충전 중): `source activate_tv.sh && python apps/gripper_pick/pick_web.py --cam-only` → D435i · 손목 카메라 화면만.
 

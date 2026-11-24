@@ -658,7 +658,7 @@ def _script_root(pid):
     return best
 
 
-TRAIN_PAT = "lerobot.scripts.lerobot_train|apps/trainer/train_act.py"   # 학습 프로세스 (pgrep -f 정규식)
+TRAIN_PAT = "lerobot.scripts.lerobot_train|train_act.py"   # 학습 프로세스 (pgrep -f 정규식)
 
 
 def _pgrep(pat):

@@ -35,9 +35,9 @@ import os as _os, sys as _sys  # noqa: E401
 _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
-from pitron.learning.act_model import ACT, ACTConfig, ACTExport, ACTExportMulti, IMAGENET_MEAN, IMAGENET_STD   # noqa: E402
+from act_model import ACT, ACTConfig, ACTExport, ACTExportMulti, IMAGENET_MEAN, IMAGENET_STD   # noqa: E402
 from pitron.learning import formats   # noqa: E402
-from pitron.learning.dataset import (EpisodeDataset, GRIP_FORMAT, GripperEpisodeDataset, compute_stats,          # noqa: E402
+from dataset import (EpisodeDataset, GRIP_FORMAT, GripperEpisodeDataset, compute_stats,          # noqa: E402
                      compute_stats_gripper, dataset_format, load_episodes, load_gripper_episodes)
 
 MODEL_FORMAT = formats.MODEL_FORMAT_BOX

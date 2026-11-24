@@ -1,15 +1,16 @@
 """
-formats.py — ACT 데이터셋 · 모델 zip 형식 (한 곳). 저장 (recorder) · 학습 (dataset · train_act) · 실행 (policy) · 보기 (act_viewer) 가 같이 씀.
+formats.py — 수집 원본 녹화 형식 (한 곳). recorder (저장) · lerobot_sync (→ LeRobot v3) 가 씀.
   표준 라이브러리만 — 어디서 import 해도 아무 일 없음. 형식을 바꾸면 이름의 -v1 을 올리고 읽는 쪽을 같이 고칠 것.
+  학습 · 추론 · 뷰어는 LeRobot v3 데이터셋 · lerobot 모델만 씀. 아래 모델 zip · 박스 형식은 tools/legacy_act (예전 자체 학습기) 용
 
-데이터셋 (DATASET_FORMAT)
+원본 녹화 (DATASET_FORMAT)
   <dataset>/info.json                       format · fps · cameras{이름: {w, h}} · state_names · created
   <dataset>/episodes/ep_000001/episode.npz  t(N,) · state(N,16) · action(N,16) · tcp(N,6) · stage(N,) ·
                                             jpeg_<카메라>(M,) uint8 (JPEG 이어 붙임) · jpeg_off_<카메라>(N+1,)
   <dataset>/episodes/ep_000001/meta.json    format · ok · result · side · fps · n · duration_s · cameras · state_names · stages …
   state · action 16 = STATE_LAYOUT (왼팔 7 · 왼 그리퍼 · 오른팔 7 · 오른 그리퍼). npz 는 pickle 없이 저장 · 읽기.
 
-모델 zip (MODEL_FORMAT)
+예전 모델 zip (MODEL_FORMAT, tools/legacy_act)
   <이름>/policy.xml · policy.bin   OpenVINO IR — 입력 state [1,D] · image_<카메라> [1,3,H,W] 0~1 RGB → action [1,chunk,D]
   <이름>/meta.json                 format · side · cameras · chunk_size · stats · start_pose · end_pose · 학습 정보
 """

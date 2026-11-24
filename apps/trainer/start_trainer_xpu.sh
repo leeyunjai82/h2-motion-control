@@ -5,7 +5,7 @@
 #
 # 2026-11-10 실기 (NUCS BOX-358H · Arc B390 · 커널 7.0.0-42 · torch 2.11.0+xpu):
 #   GPU 최대 클럭 2500 MHz 로 학습하면 시작 순간 95 ℃ · 시스템 전체가 몇 초씩 멈춤 · 와이파이 카드가 떨어지고 약 1 분 뒤 PC 멈춤.
-#   최대 클럭을 1200 MHz 로 제한하니 와이파이 · PC 가 버팀 (apps/trainer/xpu_check.py --augment --iters 1000, tools/sys_watch.sh 로 확인)
+#   최대 클럭을 1200 MHz 로 제한하니 와이파이 · PC 가 버팀 (tools/legacy_act/xpu_check.py --augment --iters 1000, tools/sys_watch.sh 로 확인)
 #   → 이 스크립트가 띄울 때 GPU 최대 클럭을 XPU_MAX_MHZ (기본 1200) 로 제한하고, 끌 때 원래 값으로 되돌림 (sudo 필요)
 HERE="$(cd "$(dirname "$0")" && pwd)"
 export TRAINER_DEVICE="${TRAINER_DEVICE:-xpu}"           # 웹 '학습 장치' 기본값 (CPU 로 바꿀 수 있음)

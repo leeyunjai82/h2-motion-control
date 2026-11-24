@@ -180,7 +180,7 @@ h2-motion-control/
 │   ├── drivers/            #   arm/ (robot_arm · arm_controller_wrapper), hand/ (dex1_gripper · gripper_config), camera/ (head_cam)
 │   ├── motion/             #   robot_arm_ik (양팔 IK), weighted_moving_filter
 │   ├── perception/         #   ov_detect (OMZ 얼굴 · 사람 · 나이성별 · 행동), box_estimator
-│   └── learning/           #   formats (데이터셋 · 모델 zip 형식), recorder (녹화), dataset, act_model
+│   └── learning/           #   recorder (녹화) · lerobot_sync (→ LeRobot v3) · lerobot_infer (추론 프로세스) · camfit · formats
 ├── services/               # 장치 소유 서버 — 앱과 상관없이 같음
 │   ├── arm/arm_server.py           # :50022 팔 (rt/arm_sdk 단독)
 │   ├── camera/rs_stream.py         # :50001 D435i
@@ -189,7 +189,7 @@ h2-motion-control/
 ├── apps/                   # 솔루션
 │   ├── box_handover/       #   박스 핸드오버 — robot_server (:50000) · robot_web.html · detect_box (:50010) · sim_server
 │   ├── gripper_pick/       #   그리퍼 잡기 · VR 수집 · 정책 실행 — pick_web (:50030) · collect.html · xr_* · gripper.yaml (잡기 · VR 값)
-│   ├── trainer/            #   ACT 학습 웹 (:50100, 학습 PC) — train_act · 설치 · 실행 스크립트
+│   ├── trainer/            #   LeRobot 학습 웹 (:50100, 미니 PC · 학습 PC) — lerobot-train · 설치 · 실행 스크립트
 │   ├── act_viewer/         #   ACT 데이터셋 · 모델 보기 (:8800, Windows 전시 PC)
 │   ├── motion_editor/      #   모션 에디터 (:8000) — simulator · joint_check
 │   └── launcher/           #   홈 (:80) — run_launcher. 각 앱의 app.yaml 을 읽어 기능 카드로 그림

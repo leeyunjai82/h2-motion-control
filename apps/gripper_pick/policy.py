@@ -235,7 +235,7 @@ class PolicyRunner:
         self.th = None
         self.stop_evt = threading.Event()
         self.state = {"running": False, "step": 0, "infer_ms": None, "why_end": "", "phase": ""}
-        box = lerobot_env._local_cfg().get("policy_tcp_box") or {}
+        box = lerobot_env.local_cfg().get("policy_tcp_box") or {}
         self.tcp_box = {s: (np.asarray(box[s]["min"], float), np.asarray(box[s]["max"], float))
                         for s in ("left", "right") if isinstance(box.get(s), dict)}
 

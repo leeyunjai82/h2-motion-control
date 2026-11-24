@@ -11,7 +11,7 @@ import pwd
 from pitron import paths
 
 
-def _local_cfg():
+def local_cfg():
     p = os.path.join(paths.REPO_ROOT, "config", "local.yaml")
     if not os.path.isfile(p):
         return {}
@@ -35,11 +35,11 @@ def _home():
 
 
 def python():
-    return str(_local_cfg().get("lerobot_python") or os.path.join(_home(), "miniconda3", "envs", "lerobot", "bin", "python"))
+    return str(local_cfg().get("lerobot_python") or os.path.join(_home(), "miniconda3", "envs", "lerobot", "bin", "python"))
 
 
 def repo_prefix():
-    return str(_local_cfg().get("lerobot_repo_prefix") or "local")
+    return str(local_cfg().get("lerobot_repo_prefix") or "local")
 
 
 def missing_msg(py=None):

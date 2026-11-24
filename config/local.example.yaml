@@ -17,6 +17,13 @@ brand:
   name:
   sub:
 
-# LeRobot v3 내보내기 (홈 · 데이터 수집 카드): lerobot 0.4.x 가상환경 python (비우면 ~/miniconda3/envs/lerobot/bin/python) · repo-id 앞부분
+# lerobot 가상환경 python (수집 → LeRobot v3 변환 · 학습 · 추론 프로세스, apps/trainer/install_lerobot.sh 로 설치)
+#   비우면 ~/miniconda3/envs/lerobot/bin/python · repo-id 앞부분 (비우면 local)
 lerobot_python:
 lerobot_repo_prefix:
+
+# 정책 추론 작업 범위 — 집게 가운데 (pelvis 기준 x y z [m]) 가 이 상자 밖으로 가면 멈춤. 비우면 이 검사 안 함
+#   현장 (테이블 · 통 위치) 에 맞게 재서 넣을 것 — 값은 이 로봇 · 현장에서 확인 필요
+# policy_tcp_box:
+#   left:  {min: [x, y, z], max: [x, y, z]}
+#   right: {min: [x, y, z], max: [x, y, z]}

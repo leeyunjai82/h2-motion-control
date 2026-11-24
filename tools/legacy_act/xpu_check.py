@@ -52,7 +52,7 @@ def main():
 
     say("import torch ...")
     import torch
-    from pitron.learning.act_model import ACT, ACTConfig
+    from act_model import ACT, ACTConfig
     from train_act import DEFAULT_TRAIN, augment_batch
     say(f"torch {torch.__version__}")
     if a.device == "xpu":
@@ -73,7 +73,7 @@ def main():
     SD, B = 16, a.batch
     loader = None
     if a.dataset:
-        from pitron.learning.dataset import load_gripper_episodes, compute_stats_gripper, GripperEpisodeDataset
+        from dataset import load_gripper_episodes, compute_stats_gripper, GripperEpisodeDataset
         say(f"   실제 데이터셋 읽기 {a.dataset} ...")
         eps, info, dcams, _ = load_gripper_episodes(a.dataset, "both", only_ok=True)
         stats = compute_stats_gripper(eps, 30)
