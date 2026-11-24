@@ -418,7 +418,7 @@ iframe{width:100%;height:520px;border:1px solid var(--line);border-radius:8px;ba
   <label>높이 H<input type="range" id="H" min="0.03" max="0.30" step="0.01"><span id="vH"></span></label>
   <div><button onclick="pres(true)">박스 놓기</button><button onclick="pres(false)">박스 치우기</button></div>
  </div>
- <div class="card"><h3>동작</h3>
+ <div class="card"><h3>동작 명령</h3>
   <button class="go" onclick="post('/sim/grab')">잡기 → 건네기</button>
   <button onclick="post('/sim/handover?direction=left')">건네기 좌 (사람 기준)</button>
   <button onclick="post('/sim/handover?direction=center')">건네기 정면</button>

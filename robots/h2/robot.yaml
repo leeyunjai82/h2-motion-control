@@ -294,7 +294,7 @@ fsm:                          # unitree_sdk2py h2_loco_client.py + H2R init_fsm.
   sit: 3
   labels:
     lock_button: "FixStand"
-    run_button: "PhaseWalk (balance)"
+    run_button: "PhaseWalk (밸런스)"
     run_enter: "PhaseWalk(703)"
 
 # 인식 장치 (사용자 2026-10-09: 박스 = GPU, 얼굴 = NPU → head_track.device). 환경변수 YOLO_DEVICE 가 있으면 그것이 우선

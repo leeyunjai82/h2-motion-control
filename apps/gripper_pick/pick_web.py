@@ -1385,7 +1385,7 @@ $('gclose').onclick=()=>{if(confirm('집게를 닫습니다 (≈10 mm). 손가�
 async function poll(){try{const s=await (await fetch('/api/state')).json();
  if(s.table_z!==null&&s.table_z!==undefined&&tableZ===null){tableZ=s.table_z;$('tblz').textContent=`테이블 점 ${s.table_n} · 평균 z ${s.table_z.toFixed(3)}`;hint();}
  const g=s.gripper||{}; const gs=k=>g[k]?`${g[k].q.toFixed(2)} rad ≈ ${g[k].mm} mm`:'상태 없음';
- $('status').innerHTML=`<b>${s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`+
+ $('status').innerHTML=`<b>${({idle:'대기'})[s.phase]||s.phase}</b> ${s.stage||''}<br>팔: ${s.arm}${s.tcp?` · 집게 가운데 L ${f3(s.tcp.left)} / R ${f3(s.tcp.right)}`:''}<br>그리퍼 L ${gs('left')} · R ${gs('right')}${s.tty===null?'':(s.tty?` · 485 포트 ${s.tty}`:' · <span class="bad">485 보드 포트 없음 — USB 확인</span>')}`+
   (s.cam_pitch?`<br>카메라 숙임 (몸통 기준) ${s.cam_pitch.now.toFixed(2)}° · 기준 ${s.cam_pitch.ref.toFixed(2)}° · <span class="${Math.abs(s.cam_pitch.diff)<=s.cam_pitch_lim[0]?'ok':'bad'}">차이 ${s.cam_pitch.diff>0?'+':''}${s.cam_pitch.diff.toFixed(2)}°</span>`+
     (Math.abs(s.cam_pitch.diff)>s.cam_pitch_lim[1]?` — 거치대를 ${Math.abs(s.cam_pitch.diff).toFixed(1)}° ${s.cam_pitch.diff>0?'위로':'아래로'} (실행 막힘)`:(Math.abs(s.cam_pitch.diff)>s.cam_pitch_lim[0]?' — 수집 전에 맞추기 권장':'')):
    (s.cam_pitch_err?`<br><span class="bad">카메라 숙임: ${s.cam_pitch_err}</span>`:''));

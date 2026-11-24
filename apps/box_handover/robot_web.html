@@ -395,18 +395,18 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
   <div class="right">
     <div class="chips">
       <span class="chip" id="chip-conn">연결 <b>-</b></span>
-      <span class="chip" id="chip-mode">Mode <b>OFF</b></span>
-      <span class="chip" id="chip-arm">Arm <b>-</b></span>
+      <span class="chip" id="chip-mode">모드 <b>끔</b></span>
+      <span class="chip" id="chip-arm">팔 <b>-</b></span>
       <span class="chip" id="chip-task">작업 <b>-</b></span>
-      <span class="chip" id="chip-sys" onclick="toggleSys(event)">System <b>-</b></span>
+      <span class="chip" id="chip-sys" onclick="toggleSys(event)">시스템 <b>-</b></span>
     </div>
-    <button class="demo-btn" id="demo-btn" onclick="toggleDemo()" title="시연 모드: 개발용 칸 숨김">DEMO</button>
+    <button class="demo-btn" id="demo-btn" onclick="toggleDemo()" title="시연 모드: 개발용 칸 숨김">시연</button>
     <span id="lang-slot"></span>
-    <a id="link-dash" class="dev-only" href="#">dashboard ↗</a>
+    <a id="link-dash" class="dev-only" href="#">대시보드 ↗</a>
   </div>
 </div>
 <div class="card sys-pop" id="sys-pop" hidden>
-  <div class="card-h">System <span class="tag" id="sys-tag">-</span></div>
+  <div class="card-h">시스템 <span class="tag" id="sys-tag">-</span></div>
   <div class="card-b sys" id="sys-list" style="padding-top:6px;padding-bottom:6px"><div class="hint">확인 중</div></div>
 </div>
 
@@ -415,60 +415,60 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
   <!-- ===== LEFT: settings ===== -->
   <div class="col col-left">
     <div class="card">
-      <div class="card-h">Grab Mode <span class="tag" id="mode-tag">OFF</span></div>
+      <div class="card-h">잡기 모드 <span class="tag" id="mode-tag">끔</span></div>
       <div class="card-b">
         <div class="seg two">
-          <button class="btn" id="mode-none" onclick="setMode('none')">OFF</button>
-          <button class="btn" id="mode-box" onclick="setMode('box')">Box</button>
+          <button class="btn" id="mode-none" onclick="setMode('none')">끔</button>
+          <button class="btn" id="mode-box" onclick="setMode('box')">박스</button>
         </div>
-        <button class="btn primary full" id="grab-now" style="margin-top:9px" onclick="grabManual()" disabled title="Box 모드에서">✋ Grab Now</button>
+        <button class="btn primary full" id="grab-now" style="margin-top:9px" onclick="grabManual()" disabled title="박스 모드에서">✋ 지금 잡기</button>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
           <label class="sw">
             <input type="checkbox" id="auto-chk" onchange="toggleAuto()"><span class="tr"></span>
-            <span id="auto-lbl" style="color:var(--dim);white-space:nowrap">Auto Grab : OFF</span>
+            <span id="auto-lbl" style="color:var(--dim);white-space:nowrap">자동 잡기 : 끔</span>
           </label>
           <span class="hint dev-only" style="white-space:nowrap">
-            <a id="link-box" href="#" target="_blank" style="color:var(--accent2)" title="Box 인식">:__PORT_DETECT_BOX__</a>
+            <a id="link-box" href="#" target="_blank" style="color:var(--accent2)" title="박스 인식">:__PORT_DETECT_BOX__</a>
           </span>
         </div>
       </div>
     </div>
 
     <div class="card dev-only">
-      <div class="card-h">Wrist RPY <span style="color:var(--dim)">deg</span></div>
+      <div class="card-h">손목 RPY <span style="color:var(--dim)">°</span></div>
       <div class="card-b">
         <div class="wtab">
-          <span></span><span class="h" style="color:var(--accent)">LEFT</span><span class="h" style="color:var(--amber)">RIGHT</span>
+          <span></span><span class="h" style="color:var(--accent)">왼손</span><span class="h" style="color:var(--amber)">오른손</span>
           <span class="k">roll</span><input class="in" id="l-roll" type="number" value="-10" step="5"><input class="in" id="r-roll" type="number" value="10" step="5">
           <span class="k">pitch</span><input class="in" id="l-pitch" type="number" value="0" step="5"><input class="in" id="r-pitch" type="number" value="0" step="5">
           <span class="k">yaw</span><input class="in" id="l-yaw" type="number" value="-15" step="5"><input class="in" id="r-yaw" type="number" value="15" step="5">
         </div>
-        <button class="btn full" style="margin-top:9px" onclick="applyWrist()">Apply</button>
+        <button class="btn full" style="margin-top:9px" onclick="applyWrist()">적용</button>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-h">Handover</div>
+      <div class="card-h">건네기</div>
       <div class="card-b">
         <div class="seg" id="ho-seg" style="display:flex">
-          <button class="btn" id="ho-left" style="flex:1" onclick="setHandover('left')"><span class="ic">◀ </span>Left<span class="sub ho-deg">15°</span></button>
-          <button class="btn on" id="ho-center" style="flex:1" onclick="setHandover('center')"><span class="ic">■ </span>Center<span class="sub">건네기</span></button>
-          <button class="btn" id="ho-right" style="flex:1" onclick="setHandover('right')"><span class="ic">▶ </span>Right<span class="sub ho-deg">15°</span></button>
-          <button class="btn" id="ho-place" style="flex:1" onclick="setHandover('place')"><span class="ic">⤓ </span>Place<span class="sub">내려놓기</span></button>
+          <button class="btn" id="ho-left" style="flex:1" onclick="setHandover('left')"><span class="ic">◀ </span>왼쪽<span class="sub ho-deg">15°</span></button>
+          <button class="btn on" id="ho-center" style="flex:1" onclick="setHandover('center')"><span class="ic">■ </span>정면<span class="sub">건네기</span></button>
+          <button class="btn" id="ho-right" style="flex:1" onclick="setHandover('right')"><span class="ic">▶ </span>오른쪽<span class="sub ho-deg">15°</span></button>
+          <button class="btn" id="ho-place" style="flex:1" onclick="setHandover('place')"><span class="ic">⤓ </span>테이블<span class="sub">내려놓기</span></button>
         </div>
-        <div class="hint" style="margin-top:6px">Left / Right = 로봇 앞에 선 사람 기준</div>
+        <div class="hint" style="margin-top:6px">왼쪽 / 오른쪽 = 로봇 앞에 선 사람 기준</div>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-h">Control <span style="color:var(--dim)">Esc</span></div>
+      <div class="card-h">제어 <span style="color:var(--dim)">Esc</span></div>
       <div class="card-b ctl">
-        <button class="btn warn full" onclick="stopAll()" title="Esc">⏹ Stop<span class="sub">정지·기본자세</span></button>
+        <button class="btn warn full" onclick="stopAll()" title="Esc">⏹ 정지<span class="sub">기본 자세로</span></button>
       </div>
     </div>
 
     <div class="card">
-      <div class="card-h">On-device AI <span style="color:var(--dim)">CPU · GPU · NPU</span></div>
+      <div class="card-h">온디바이스 AI <span style="color:var(--dim)">CPU · GPU · NPU</span></div>
       <div class="card-b" style="padding-top:8px;padding-bottom:8px">
         <table class="pt">
           <thead><tr><th>장치</th><th>사용률</th><th>모델</th></tr></thead>
@@ -482,7 +482,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
     </div>
 
     <div class="card grow fill log">
-      <div class="card-h">Log <span style="color:var(--dim)" id="evlog-n">0</span></div>
+      <div class="card-h">기록 <span style="color:var(--dim)" id="evlog-n">0</span></div>
       <div class="card-b"><pre class="evlog" id="evlog"></pre></div>
     </div>
   </div>
@@ -491,29 +491,29 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
   <div class="col col-center">
     <div class="card" id="pipe-card">
       <div class="pipe">
-        <div class="pc off" id="pc-see"><div class="ph"><b>SEE</b><span>perception</span></div>
+        <div class="pc off" id="pc-see"><div class="ph"><b>인식</b><span>보기</span></div>
           <div class="pm" id="see-m">-</div><div class="ps" id="see-s"></div><div class="ps" id="see-h"></div></div>
         <div class="parr">›</div>
-        <div class="pc off" id="pc-think"><div class="ph"><b>THINK</b><span>decision</span></div>
+        <div class="pc off" id="pc-think"><div class="ph"><b>판단</b><span>결정</span></div>
           <div class="pm" id="think-m">-</div><div class="ps" id="think-s"></div></div>
         <div class="parr">›</div>
-        <div class="pc off" id="pc-act"><div class="ph"><b>ACT</b><span>motion</span></div>
+        <div class="pc off" id="pc-act"><div class="ph"><b>동작</b><span>움직임</span></div>
           <div class="pm" id="act-m">-</div><div class="ps" id="act-s"></div><div class="pbar"><i id="act-bar"></i></div></div>
       </div>
-      <div class="kpi" id="kpi"><span>Grabs <b id="k-n">0</b></span><span>Success <b id="k-ok">-</b></span><span>Avg <b id="k-avg">-</b></span><span>Last <b id="k-last">-</b></span><span style="margin-left:auto">since page open</span></div>
+      <div class="kpi" id="kpi"><span>잡기 <b id="k-n">0</b></span><span>성공 <b id="k-ok">-</b></span><span>평균 <b id="k-avg">-</b></span><span>마지막 <b id="k-last">-</b></span><span style="margin-left:auto">페이지 연 뒤</span></div>
     </div>
     <div class="card grow fill cam">
-      <div class="card-h">Camera View <span class="hd-r"><span id="dev-cam"></span><button class="segbtn dev-only" id="seg-btn" onclick="toggleSeg()" title="seg 표시 (끄면 파지점 + 인식 분포)">SEG</button><span class="tag" id="feed-tag">OFF</span></span></div>
+      <div class="card-h">카메라 화면 <span class="hd-r"><span id="dev-cam"></span><button class="segbtn dev-only" id="seg-btn" onclick="toggleSeg()" title="seg 표시 (끄면 파지점 + 인식 분포)">SEG</button><span class="tag" id="feed-tag">OFF</span></span></div>
       <div class="card-b">
         <div class="cam-wrap">
           <span class="cam-badge" id="cam-badge" style="display:none">●REC</span>
           <div class="cam-hud" id="cam-hud"></div>
           <img id="detect-feed" style="display:none">
           <div class="ai-ov" id="ai-ov"></div>
-          <div class="cam-empty" id="feed-none">Select a Grab Mode<br>to show the camera view</div>
+          <div class="cam-empty" id="feed-none">잡기 모드를 고르면<br>카메라 화면이 나옵니다</div>
         </div>
         <div class="statusline" id="statusline">
-          <span class="lbl">Status</span><span id="grab-msg">Idle (OFF)</span>
+          <span class="lbl">상태</span><span id="grab-msg">대기 (끔)</span>
           <span id="coord" style="margin-left:auto;color:var(--accent);font-size:11px"></span>
         </div>
         <div class="stages" id="stages"></div>
@@ -525,7 +525,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
   <!-- ===== RIGHT: robot 3D + control ===== -->
   <div class="col">
     <div class="card" id="card-vision" style="display:none">
-      <div class="card-h">Head Vision <span class="hd-r"><span id="dev-vision"></span><button class="segbtn dev-only" id="crop-btn" onclick="toggleCrop()" title="CROP: 인식된 것만 잘라 한 줄 / 끄면 두 눈 전체 화면">CROP</button><a id="link-vision" class="dev-only" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
+      <div class="card-h">머리 카메라 인식 <span class="hd-r"><span id="dev-vision"></span><button class="segbtn dev-only" id="crop-btn" onclick="toggleCrop()" title="CROP: 인식된 것만 잘라 한 줄 / 끄면 두 눈 전체 화면">CROP</button><a id="link-vision" class="dev-only" href="#" target="_blank" style="color:var(--accent2)">↗</a></span></div>
       <div class="card-b vision-b"><img id="vision-strip" class="vision-full" alt="">
         <div class="glasses" id="glasses" style="display:none">
           <span class="temple l"></span><span class="lens l"><canvas id="eye-l"></canvas></span>
@@ -534,16 +534,16 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
         <div class="human" id="human"></div></div>
     </div>
     <div class="card grow fill robot">
-      <div class="card-h">Robot View <a id="link-robotonly" href="#" target="_blank" style="color:var(--accent2)">↗</a></div>
+      <div class="card-h">로봇 화면 <a id="link-robotonly" href="#" target="_blank" style="color:var(--accent2)">↗</a></div>
       <div class="card-b">
         <iframe id="robot-frame" class="robot-frame" src="about:blank"></iframe>
       </div>
     </div>
 
     <div class="card dev-only" id="card-motions">
-      <div class="card-h">Motions <span style="cursor:pointer" onclick="refreshMotions()">⟳</span></div>
+      <div class="card-h">모션 <span style="cursor:pointer" onclick="refreshMotions()">⟳</span></div>
       <div class="card-b">
-        <div class="mlist" id="mlist"><div class="hint" style="text-align:center">Loading...</div></div>
+        <div class="mlist" id="mlist"><div class="hint" style="text-align:center">불러오는 중…</div></div>
       </div>
     </div>
   </div>
@@ -686,6 +686,7 @@ function toast(m,ms){const el=document.getElementById('toast');el.textContent=m;
   clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),ms||1800);}
 
 // ---- mode + feed ----
+const MODE_KO={none:'끔',box:'박스'};
 function setMode(m){fetch('/set_mode?mode='+m,{method:'POST'}).then(r=>r.json()).then(d=>{applyMode(m);
   if(d.warn&&d.warn.length)toast('⚠️ '+d.warn.join(' · '),6000);});}   // 팔이 안 움직일 이유 (arm 미연결 · release · FSM)
 function applyMode(m){
@@ -695,13 +696,13 @@ function applyMode(m){
     fetch(`http://${host}:__PORT_DETECT_BOX__/set_auto_mode?enabled=false`).catch(()=>{});
   }
   if(curMode!==m){chk.checked=false;
-    document.getElementById('auto-lbl').textContent='Auto Grab : OFF';
+    document.getElementById('auto-lbl').textContent='자동 잡기 : 끔';
     document.getElementById('auto-lbl').style.color='var(--dim)';}
-  if(curMode!==m)logEv('Mode → '+m.toUpperCase(),m==='none'?'':'bz');
+  if(curMode!==m)logEv('모드 → '+MODE_KO[m],m==='none'?'':'bz');
   curMode=m;
   document.getElementById('grab-now').disabled=(m==='none');
-  document.getElementById('mode-tag').textContent=m.toUpperCase();
-  setChip('chip-mode','Mode',m.toUpperCase(),m==='none'?'':'info');
+  document.getElementById('mode-tag').textContent=MODE_KO[m];
+  setChip('chip-mode','모드',MODE_KO[m],m==='none'?'':'info');
   ['none','box'].forEach(k=>document.getElementById('mode-'+k).classList.toggle('on',k===m));
   updateFeed(m);
 }
@@ -710,13 +711,13 @@ function updateFeed(m){
     tag=document.getElementById('feed-tag'),badge=document.getElementById('cam-badge');
   const url={box:`http://${host}:__PORT_DETECT_BOX__/video_feed`}[m];
   if(url){img.src=url+'?t='+Date.now();img.style.display='block';none.style.display='none';
-    tag.textContent=m.toUpperCase();badge.style.display='';
-    document.getElementById('grab-msg').textContent=m.toUpperCase()+' mode · detecting';}
-  else{img.src='';img.style.display='none';none.style.display='';tag.textContent='OFF';badge.style.display='none';
-    document.getElementById('grab-msg').textContent='Idle (OFF)';}
+    tag.textContent=MODE_KO[m];badge.style.display='';
+    document.getElementById('grab-msg').textContent=MODE_KO[m]+' 모드 · 찾는 중';}
+  else{img.src='';img.style.display='none';none.style.display='';tag.textContent='끔';badge.style.display='none';
+    document.getElementById('grab-msg').textContent='대기 (끔)';}
 }
 function grabManual(){fetch('/grab_manual').then(r=>r.json()).then(d=>{
-  toast(d.ok?'Grabbing...':'Failed: '+(d.reason||''));});}
+  toast(d.ok?'잡는 중…':'실패: '+(d.reason||''));});}
 
 // 자동 모드 토글 — 현재 모드의 detect 서버에 직접 전달
 function toggleAuto(){
@@ -724,25 +725,25 @@ function toggleAuto(){
   const lbl=document.getElementById('auto-lbl');
   if(curMode==='none'){
     document.getElementById('auto-chk').checked=false;
-    toast('Select Box first');
-    lbl.textContent='Auto Grab : OFF';lbl.style.color='var(--dim)';
+    toast('먼저 박스 모드를 고르세요');
+    lbl.textContent='자동 잡기 : 끔';lbl.style.color='var(--dim)';
     return;
   }
   fetch(`http://${host}:__PORT_DETECT_BOX__/set_auto_mode?enabled=${on}`).then(()=>{
-    lbl.textContent='Auto Grab : '+(on?'ON':'OFF');
+    lbl.textContent='자동 잡기 : '+(on?'켬':'끔');
     lbl.style.color=on?'var(--accent)':'var(--dim)';
-    toast('Auto '+(on?'ON':'OFF'));
-  }).catch(()=>toast('detect server not reachable'));
+    toast('자동 잡기 '+(on?'켬':'끔'));
+  }).catch(()=>toast('박스 인식 서버 응답 없음'));
 }
 
 // ---- wrist / box / handover ----
 function applyWrist(){const g=id=>document.getElementById(id).value||0;
   const q=`l_roll=${g('l-roll')}&l_pitch=${g('l-pitch')}&l_yaw=${g('l-yaw')}&r_roll=${g('r-roll')}&r_pitch=${g('r-pitch')}&r_yaw=${g('r-yaw')}`;
-  fetch('/set_wrist?'+q).then(()=>toast('Wrist applied'));}
+  fetch('/set_wrist?'+q).then(()=>toast('손목 값 적용'));}
 // H2 는 허리 고정 — 건네기는 팔로만: left / center / right (사람 기준, 좌우는 robot.yaml grab.handover_side_deg) / place(내려놓기)
 function setHandover(dir){
   fetch(`/set_handover_direction?direction=${dir}`).then(r=>r.json()).then(d=>{
-    if(d&&d.direction)hoMark(d.direction);else toast('Failed: '+((d&&d.error)||''));}).catch(e=>toast('Error: '+e.message));}
+    if(d&&d.direction)hoMark(d.direction);else toast('실패: '+((d&&d.error)||''));}).catch(e=>toast('오류: '+e.message));}
 function hoMark(dir){['left','center','right','place'].forEach(k=>document.getElementById('ho-'+k).classList.toggle('on',k===dir));}
 document.addEventListener('DOMContentLoaded',()=>{if(window.UI&&window.UI.handover)hoMark(window.UI.handover);
   if(window.UI&&window.UI.handover_side!=null)document.querySelectorAll('.ho-deg').forEach(e=>e.textContent=(+window.UI.handover_side).toFixed(0)+'°');});
@@ -753,25 +754,25 @@ document.addEventListener('DOMContentLoaded',()=>{const w=window.UI&&window.UI.w
 // ---- motions ----
 async function refreshMotions(){const el=document.getElementById('mlist');
   try{const d=await(await fetch('/motions')).json();
-    if(!d.motions.length){el.innerHTML='<div class="hint" style="text-align:center">None</div>';return;}
+    if(!d.motions.length){el.innerHTML='<div class="hint" style="text-align:center">없음</div>';return;}
     el.innerHTML=d.motions.map(m=>`<div class="mitem"><span class="nm">${m}</span><button class="play" onclick="runMotion('${m.replace(/'/g,"\\'")}')">▶</button></div>`).join('');
-  }catch(e){el.innerHTML='<div class="hint" style="text-align:center;color:var(--warn)">Connection failed</div>';}}
-async function runMotion(n){try{const r=await fetch(`/motions/run/${encodeURIComponent(n)}`,{method:'POST'});const d=await r.json();if(!r.ok)throw new Error(d.detail);toast('▶ '+n);}catch(e){toast('Error: '+e.message);}}
+  }catch(e){el.innerHTML='<div class="hint" style="text-align:center;color:var(--warn)">연결 실패</div>';}}
+async function runMotion(n){try{const r=await fetch(`/motions/run/${encodeURIComponent(n)}`,{method:'POST'});const d=await r.json();if(!r.ok)throw new Error(d.detail);toast('▶ '+n);}catch(e){toast('오류: '+e.message);}}
 // 정지 일원화: 모션 중단 + 기본 자세 복귀 (Home 과 동일 자세)
 async function stopAll(){
   try{await fetch('/stop',{method:'POST'});toast('⏹ Stopped — 기본 자세');}
-  catch(e){toast('Error: '+e.message);}
+  catch(e){toast('오류: '+e.message);}
 }
 // ---- 상태 칩 / 상태 패널 공통 ----
 function setChip(id,label,val,cls){const el=document.getElementById(id);
   el.className='chip'+(cls?' '+cls:'');el.innerHTML=`${label} <b>${val}</b>`;}
 // ---- arm_sdk 제어권 — 위 Arm 칩만 (arm_server 가 기동 때 hold, 종료 때 반납. 수동: POST /arm_hold · /arm_release) ----
-const ARM_TXT={hold:['HOLD','ok'],release:['RELEASE','info']};
+const ARM_TXT={hold:['잡음','ok'],release:['풀림','info']};
 let armReady=null;   // arm_server 연결 (/status arm_ready)
 function updateArmMode(m,switching){
-  if(armReady===false){setChip('chip-arm','Arm','미연결','err');return;}
+  if(armReady===false){setChip('chip-arm','팔','미연결','err');return;}
   const t=ARM_TXT[m]||['-',''];
-  setChip('chip-arm','Arm',switching?t[0]+'…':t[0],switching?'busy':t[1]);}
+  setChip('chip-arm','팔',switching?t[0]+'…':t[0],switching?'busy':t[1]);}
 
 // ---- System 카드: 로봇 FSM · 서버 상태 (/system, 2초) ----
 function escHtml(s){return String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));}
@@ -784,17 +785,17 @@ function pollSystem(){
     const f=d.fsm||{}, sv=d.services||[], warn=d.warn||[];
     const cam=d.camera||{};
     const rows=[sysRow(f.state,'FSM','',f.text,f.why)].concat(sv.map(s=>sysRow(s.state,s.name,':'+s.port,s.text,s.why)));
-    if(cam.text)rows.push(sysRow(cam.state,'Camera','pitch',cam.text,cam.why));
+    if(cam.text)rows.push(sysRow(cam.state,'카메라','숙임',cam.text,cam.why));
     const wbox=warn.length?`<div class="sysw">${warn.map(w=>'⚠️ '+escHtml(w)).join('<br>')}</div>`:'';
     document.getElementById('sys-list').innerHTML=rows.join('')+wbox;
     const nErr=sv.filter(s=>s.state==='err').length+(f.state==='err'?1:0);
     const nWarn=warn.length+sv.filter(s=>s.state==='warn').length+(f.state==='warn'?1:0)+(cam.state==='warn'?1:0);
-    tag.textContent=nErr?'ERR':nWarn?'CHECK':'OK';
+    tag.textContent=nErr?'오류':nWarn?'확인':'정상';
     tag.style.color=nErr?'var(--warn)':nWarn?'var(--amber)':'var(--ok)';
     const chip=document.getElementById('chip-sys');
     chip.className='chip '+(nErr?'err':nWarn?'busy':'ok');chip.querySelector('b').textContent=tag.textContent;
     const line=r=>`${r.n}${r.p?' '+r.p:''}: ${r.v||'-'}`;
-    chip.title=[{n:'FSM',v:f.text}].concat(sv.map(s=>({n:s.name,p:':'+s.port,v:s.text})),cam.text?[{n:'Camera',p:'pitch',v:cam.text}]:[])
+    chip.title=[{n:'FSM',v:f.text}].concat(sv.map(s=>({n:s.name,p:':'+s.port,v:s.text})),cam.text?[{n:'카메라',p:'숙임',v:cam.text}]:[])
       .map(line).concat(warn.map(w=>'⚠ '+w)).join('\n')+'\n(누르면 자세히)';
   }).catch(()=>{tag.textContent='-';tag.style.color='var(--dim)';
     const chip=document.getElementById('chip-sys');chip.className='chip';chip.querySelector('b').textContent='-';});
@@ -828,7 +829,7 @@ function pollStatus(){
     d.busy=d.grab_busy;
     if(armReady!==d.arm_ready){armReady=d.arm_ready;pollArm();}
     document.getElementById('livedot').className='dot live';
-    setChip('chip-conn','연결','OK','ok');
+    setChip('chip-conn','연결','정상','ok');
     const sl=document.getElementById('statusline');
     renderStages(d.stages||[],d.busy?d.stage_idx:-1);
     const stKey=d.busy?`${d.stage_idx}`:(d.is_running?'motion':'idle');
@@ -838,7 +839,7 @@ function pollStatus(){
       else if(lastStKey!==null&&lastStKey!=='idle')logEv('대기');
       lastStKey=stKey;}
     if(d.busy){sl.classList.add('busy');
-      document.getElementById('grab-msg').textContent=d.stage?`Grabbing — ${d.stage_idx+1}/${d.stages.length} ${d.stage}`:'Grabbing...';
+      document.getElementById('grab-msg').textContent=d.stage?`잡는 중 — ${d.stage_idx+1}/${d.stages.length} ${d.stage}`:'잡는 중…';
       setChip('chip-task','작업','잡는 중','busy');}
     else if(d.is_running){sl.classList.remove('busy');setChip('chip-task','작업','모션 실행','busy');}
     else{sl.classList.remove('busy');setChip('chip-task','작업','대기','');}
@@ -862,7 +863,7 @@ function pollCoord(){
       if(d.box_h_cm)s+=`  H ${d.box_h_cm}`;
       if(d.box_d_cm)s+=`  D ${d.box_d_cm}`;
       co.textContent=s;
-    }else{co.textContent='no target';}
+    }else{co.textContent='대상 없음';}
     renderAI(d);
     devBadges('dev-cam',d.perf?[['',devName(d.perf.exec,d.perf.device)]]:[]);
     useDev('box',d.perf&&d.perf.active?devName(d.perf.exec,d.perf.device):null,d.perf&&d.perf.infer_ms);
@@ -876,7 +877,7 @@ function setSeg(v){segOn=!!v;document.getElementById('seg-btn').classList.toggle
 function toggleSeg(){
   fetch(`http://${host}:__PORT_DETECT_BOX__/set_overlay?seg=${!segOn}`).then(r=>r.json())
     .then(d=>{setSeg(d.show_seg);toast(d.show_seg?'SEG 표시 켬':'SEG 끔 — 파지점 L/T/R 만');})
-    .catch(()=>toast('detect server not reachable'));}
+    .catch(()=>toast('박스 인식 서버 응답 없음'));}
 
 // ---- AI 인식 정보 오버레이 (detect_box /status 의 perf) ----
 function renderAI(d){
@@ -948,24 +949,24 @@ function renderPipe(){
   // SEE
   const size=p.W_cm==null?'':`${(+p.W_cm).toFixed(0)}×${(+p.D_cm).toFixed(0)}×${(+p.H_cm).toFixed(0)} cm`;
   const dist=found&&DET.torso?Math.hypot(DET.torso.x,DET.torso.y)*100:null;
-  document.getElementById('see-h').textContent=off||!(ppl||hands)?'':`people ${ppl}${hands?` · hand up ${hands}`:''}`;
-  setPC('see',off?'Grab Mode OFF':found?`Box ${conf==null?'':conf+'%'}`:'Searching box…',
-    off?'':(found?[size,dist==null?'':dist.toFixed(0)+' cm'].filter(Boolean).join(' · '):'camera + AI'),
+  document.getElementById('see-h').textContent=off||!(ppl||hands)?'':`사람 ${ppl}${hands?` · 손 든 사람 ${hands}`:''}`;
+  setPC('see',off?'잡기 모드 끔':found?`박스 ${conf==null?'':conf+'%'}`:'박스 찾는 중…',
+    off?'':(found?[size,dist==null?'':dist.toFixed(0)+' cm'].filter(Boolean).join(' · '):'카메라 + AI'),
     off?'off':(!busy&&!found?'on':''));
   // THINK
-  const dir={center:'→ center',left:'→ left',right:'→ right',place:'→ table'}[hoDir()];
-  setPC('think',off?'-':busy?'Grab · both arms':found?(auto?'Auto grab: go':'Ready to grab'):'Waiting for target',
-    off?'':`${dir} · auto ${auto?'ON':'OFF'}`, off?'off':(!busy&&found?'on':''));
+  const dir={center:'→ 정면',left:'→ 왼쪽',right:'→ 오른쪽',place:'→ 테이블'}[hoDir()];
+  setPC('think',off?'-':busy?'잡기 · 양팔':found?(auto?'자동 잡기: 시작':'잡을 준비'):'대상 기다림',
+    off?'':`${dir} · 자동 ${auto?'켬':'끔'}`, off?'off':(!busy&&found?'on':''));
   // ACT
-  let am='Idle', as='';
-  if(busy){am=`${idx+1}/${n} ${ST.stage||''}`;as='grabbing';}
-  else if(LASTG){am=`Last ${LASTG.ok?'✓':'✗'} ${LASTG.total.toFixed(1)} s`;}
+  let am='대기', as='';
+  if(busy){am=`${idx+1}/${n} ${ST.stage||''}`;as='잡는 중';}
+  else if(LASTG){am=`마지막 ${LASTG.ok?'✓':'✗'} ${LASTG.total.toFixed(1)} s`;}
   setPC('act',off&&!busy?'-':am,as,busy?'on':(off?'off':''));
   document.getElementById('act-bar').style.width=busy&&n?`${(idx+1)/n*100}%`:'0';
   // 카메라 위
   const hud=document.getElementById('cam-hud'), cw=document.querySelector('.cam-wrap');
   cw.classList.toggle('grab',busy);cw.classList.toggle('found',!busy&&found&&!off);
-  if(!off&&found){hud.innerHTML=`<span class="b">BOX ${conf==null?'':conf+'%'}${size?`<small>${size}</small>`:''}</span>`+(busy?`<span class="b" style="border-color:var(--amber);color:var(--amber)">${idx+1}/${n} ${ST.stage||''}</span>`:'');hud.style.display='flex';}
+  if(!off&&found){hud.innerHTML=`<span class="b">박스 ${conf==null?'':conf+'%'}${size?`<small>${size}</small>`:''}</span>`+(busy?`<span class="b" style="border-color:var(--amber);color:var(--amber)">${idx+1}/${n} ${ST.stage||''}</span>`:'');hud.style.display='flex';}
   else hud.style.display='none';
 }
 function kpiAdd(h){

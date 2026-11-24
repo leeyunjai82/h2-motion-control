@@ -376,21 +376,21 @@ body.dashboard-mode .right { width: 240px; }
 <div class="main">
   <div class="left">
     <div class="sec">
-      <div class="sec-title">Connection</div>
+      <div class="sec-title">연결</div>
       <div style="display:flex;align-items:center;gap:8px">
         <div class="status-dot" id="connDot"></div>
         <span style="font-size:11px;color:#555" id="connText">Checking...</span>
       </div>
     </div>
     <div class="sec">
-      <div class="sec-title">View</div>
-      <button class="tb on" id="gridBtn"><span class="ic">&#x22DE;</span>Grid</button>
-      <button class="tb" id="wireBtn"><span class="ic">&#x25A6;</span>Wireframe</button>
-      <button class="tb" id="axisBtn"><span class="ic">&#x2197;</span>Joint Axes</button>
-      <button class="tb" id="ssBtn"><span class="ic">&#x1F4F7;</span>Screenshot</button>
+      <div class="sec-title">보기</div>
+      <button class="tb on" id="gridBtn"><span class="ic">&#x22DE;</span>격자</button>
+      <button class="tb" id="wireBtn"><span class="ic">&#x25A6;</span>와이어프레임</button>
+      <button class="tb" id="axisBtn"><span class="ic">&#x2197;</span>관절 축</button>
+      <button class="tb" id="ssBtn"><span class="ic">&#x1F4F7;</span>스크린샷</button>
     </div>
     <div class="sec" id="infoSec" style="display:none">
-      <div class="sec-title">Model Info</div>
+      <div class="sec-title">모델 정보</div>
       <div id="infoRows"></div>
     </div>
     <div class="sec" id="imuSec" style="display:none">
@@ -421,8 +421,8 @@ body.dashboard-mode .right { width: 240px; }
 
   <div class="right">
     <div class="right-head">
-      <b>Joint States</b>
-      <input class="search-box" id="searchBox" placeholder="Search..." type="text">
+      <b>관절 상태</b>
+      <input class="search-box" id="searchBox" placeholder="관절 찾기…" type="text">
       <span class="jcount" id="jcount">-</span>
     </div>
     <div class="joints" id="jointsEl">
@@ -667,8 +667,8 @@ async function checkConnection(){
     const d=await(await fetch('/api/status')).json();
     const dot=document.getElementById('connDot');const txt=document.getElementById('connText');
     if(dot&&txt){
-      if(d.connected){dot.className='status-dot on';txt.textContent='Robot connected';txt.style.color='#4caf80';}
-      else{dot.className='status-dot err';txt.textContent='Simulation mode';txt.style.color='#ff6666';}
+      if(d.connected){dot.className='status-dot on';txt.textContent='로봇 연결됨';txt.style.color='#4caf80';}
+      else{dot.className='status-dot err';txt.textContent='시뮬레이션';txt.style.color='#ff6666';}
     }
   }catch(e){console.error(e);}
 }
@@ -700,6 +700,7 @@ function startSSE(){
 function buildJointDisplays(joints){
   const movable=Object.values(joints).filter(j=>j.type!=='fixed');
   const jcountEl=document.getElementById('jcount');if(jcountEl)jcountEl.textContent=movable.length;
+  const GKO={'Head':'머리','Waist/Pelvis':'허리 · 골반','Left Arm':'왼팔','Right Arm':'오른팔','Left Hand':'왼손','Right Hand':'오른손','Left Leg':'왼다리','Right Leg':'오른다리','Other':'기타'};
   const groups={'Head':[],'Waist/Pelvis':[],'Left Arm':[],'Right Arm':[],'Left Hand':[],'Right Hand':[],'Left Leg':[],'Right Leg':[],'Other':[]};
   for(const j of movable){const n=j.name.toLowerCase();
     if(n.includes('head'))groups['Head'].push(j);
@@ -716,11 +717,11 @@ function buildJointDisplays(joints){
 
   const el=document.getElementById('jointsEl');
   if(!el)return;
-  if(!movable.length){el.innerHTML='<div class="no-joint">No movable joints</div>';return;}
+  if(!movable.length){el.innerHTML='<div class="no-joint">움직이는 관절 없음</div>';return;}
   let html='';
   for(const[gname,jlist]of Object.entries(groups)){
     if(!jlist.length)continue;const gid=sid(gname);
-    html+=`<div class="group-header" onclick="toggleG('${gid}')"><span class="garr open" id="arr_${gid}">&#x25B6;</span><span>${gname}</span><span style="color:#2a2a3a;margin-left:4px">(${jlist.length})</span></div><div class="group-body" id="gb_${gid}">`;
+    html+=`<div class="group-header" onclick="toggleG('${gid}')"><span class="garr open" id="arr_${gid}">&#x25B6;</span><span>${GKO[gname]||gname}</span><span style="color:#2a2a3a;margin-left:4px">(${jlist.length})</span></div><div class="group-body" id="gb_${gid}">`;
     for(const j of jlist){
       html+=`<div class="ji" id="ji_${sid(j.name)}" data-joint="${j.name}">
         <div class="ji-head">
@@ -987,15 +988,15 @@ DASHBOARD_HTML = """<!DOCTYPE html>
 <script src="/i18n.js"></script>
   <div class="grid">
     <div class="panel full">
-      <h2>Robot (3D Viewer + Joint States)</h2>
+      <h2>로봇 (3D · 관절 상태)</h2>
       <iframe id="robot-iframe" src="/robot-only?embed=1"></iframe>
     </div>
     <div class="panel">
-      <h2>Video Feed</h2>
+      <h2>카메라 영상</h2>
       <img src="/video_feed" alt="video_feed">
     </div>
     <div class="panel">
-      <h2>Depth Feed</h2>
+      <h2>깊이 영상</h2>
       <img src="/depth_feed" alt="depth_feed">
     </div>
   </div>

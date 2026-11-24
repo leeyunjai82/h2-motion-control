@@ -50,6 +50,23 @@ HOME_LINK = ('<a id="pitron-home" href="#" title="홈 (런처) — FSM · 기능
              '})();</script>')
 
 
+_I18N = {"mt": None, "js": ""}
+
+
+def i18n_inline():
+    """web/i18n.js 를 <script> 로 (페이지가 따로 불러오지 않을 때 — 한/영 전환을 모든 화면에 같게)."""
+    p = os.path.join(paths.REPO_ROOT, "web", "i18n.js")
+    try:
+        mt = os.path.getmtime(p)
+        if mt != _I18N["mt"]:
+            with open(p, encoding="utf-8") as f:
+                _I18N.update(mt=mt, js=f.read())
+    except OSError:
+        return ""
+    return "<script>" + _I18N["js"] + "</script>"
+
+
 def with_home(html):
+    add = HOME_LINK if "i18n.js" in html else i18n_inline() + HOME_LINK
     i = html.rfind("</body>")
-    return fill(html[:i] + HOME_LINK + html[i:] if i >= 0 else html + HOME_LINK)
+    return fill(html[:i] + add + html[i:] if i >= 0 else html + add)

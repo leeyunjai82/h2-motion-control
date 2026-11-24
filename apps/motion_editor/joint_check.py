@@ -332,7 +332,7 @@ iframe{width:100%;height:640px;border:0;border-radius:6px;background:#000}.note{
  <a href="/" style="color:#5aa9ff">← 모션 에디터</a></div>
 <div class="wrap"><div class="card">
  <div>
-  <button onclick="api('/check/hold')">제어권 잡기 (hold)</button>
+  <button onclick="api('/check/hold')">제어권 잡기</button>
   <button onclick="api('/check/release')">제어권 반납 (손으로 움직이기)</button>
   <button onclick="api('/check/baseline')">기준 잡기 (Δ=0)</button>
   <button onclick="api('/check/reset')">명령 이동 원위치</button>
@@ -373,10 +373,11 @@ async function ikpoll(){try{const d=await(await fetch('/check/ik_state')).json()
    `<b style="color:${Math.max(...r.err_cm)>2?'var(--bad)':'var(--ok)'}">오차 L ${r.err_cm[0]} / R ${r.err_cm[1]} cm</b> · `+
    `<b style="color:${Math.max(...r.rot_deg)>5?'var(--bad)':'var(--ok)'}">손 자세 변화 L ${r.rot_deg[0]}° / R ${r.rot_deg[1]}°</b>`;}catch(e){}}
 setInterval(ikpoll,700);
+const KIND_KO={leg:'다리',arm:'팔',waist:'허리',head:'머리',weight:'무게',none:'없음'};
 function build(rows){const tb=document.getElementById('tb');tb.innerHTML='';
   rows.forEach(r=>{const tr=document.createElement('tr');tr.id='r'+r.slot;tr.className='k-'+r.kind;
     const can=(r.kind==='arm'||r.kind==='waist');
-    tr.innerHTML=`<td>${r.slot}</td><td>${r.name||'—'} <span class="note">${r.kind}</span></td>
+    tr.innerHTML=`<td>${r.slot}</td><td>${r.name||'—'} <span class="note">${KIND_KO[r.kind]||r.kind}</span></td>
      <td class="num" id="q${r.slot}"></td><td class="num" id="d${r.slot}"></td>
      <td>${can?`<button onclick="jog(${r.slot},-__STEP__)">−</button><button onclick="jog(${r.slot},__STEP__)">+</button> <span class="note" id="o${r.slot}"></span>`:'<span class="note">손으로</span>'}</td>
      <td>${(r.name&&r.kind!=='weight')?`<select id="j${r.slot}"><option value="">-</option><option value="ok">✓ 맞음</option><option value="ng">✗ 다름</option></select>`:''}</td>

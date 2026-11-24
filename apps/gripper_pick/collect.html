@@ -127,7 +127,7 @@ input[type=file].in{width:100%}
 <div class="grid">
   <div class="col cams">
     <div class="card fill">
-      <div class="card-h">Cameras <span class="tag">머리 · 손목</span></div>
+      <div class="card-h">카메라 <span class="tag">머리 · 손목</span></div>
       <div class="card-b">
         <div class="camgrid">
           <div class="camcell"><img id="vhead" src="/video" alt="머리 카메라"><div class="camlbl">BODY · 머리 카메라</div></div>
@@ -142,7 +142,7 @@ input[type=file].in{width:100%}
 
   <div class="col">
     <div class="card">
-      <div class="card-h">Episodes <span class="tag" id="ds-tag">-</span></div>
+      <div class="card-h">에피소드 <span class="tag" id="ds-tag">-</span></div>
       <div class="card-b">
         <div class="big-num" id="next">—</div>
         <div class="hint" id="dsinfo"></div>
@@ -186,14 +186,14 @@ input[type=file].in{width:100%}
     </div>
 
     <div class="card fill">
-      <div class="card-h">Log <span class="tag" id="log-tag">잡기 웹</span></div>
+      <div class="card-h">기록 <span class="tag" id="log-tag">잡기 웹</span></div>
       <div class="card-b"><pre class="log" id="log">—</pre></div>
     </div>
   </div>
 
   <div class="col">
     <div class="card">
-      <div class="card-h">Dataset → 학습 PC</div>
+      <div class="card-h">데이터셋 → 학습 PC</div>
       <div class="card-b">
         <a id="dl" class="btn primary" href="#" style="display:block">⬇ LeRobot v3 데이터셋 zip</a>
         <div class="msg" id="v3st">—</div>
@@ -202,7 +202,7 @@ input[type=file].in{width:100%}
     </div>
 
     <div class="card">
-      <div class="card-h">Policy · 추론 <span class="tag" id="pol-tag">-</span></div>
+      <div class="card-h">추론 <span class="tag" id="pol-tag">-</span></div>
       <div class="card-b">
         <span class="mini">모델 (이 PC 에서 학습한 모델은 자동으로 들어옴 · lerobot 정책 종류 상관없음)</span>
         <select class="in" id="msel" style="width:100%"></select>
@@ -229,7 +229,7 @@ input[type=file].in{width:100%}
     </div>
 
     <div class="card fill">
-      <div class="card-h">Robot <span class="tag" id="robot-tag">-</span></div>
+      <div class="card-h">로봇 <span class="tag" id="robot-tag">-</span></div>
       <div class="card-b"><div id="robot" style="font-size:12px;line-height:1.8">—</div>
         <div class="hint" style="margin-top:auto">Space 시작 / 끝 · S 저장 · D 버리기 · 에피소드 보기 중에는 Space = 재생</div></div>
     </div>
@@ -408,7 +408,7 @@ function render() {
   const tcp = st.tcp || {}; const tp = k => tcp[k] ? tcp[k].map(v => v.toFixed(2)).join(", ") : "-";
   const rr = st.ready || {}; const rdy = k => rr[k] ? (rr[k].at ? "<span class='ok'>준비 자세</span>" : `준비 자세에서 ${rr[k].dist_cm} cm`) : "-";
   $("robot").innerHTML =
-    `<span class="mini" style="display:inline">팔</span> ${armOk ? "<span class='ok'>ok</span>" : `<span class='bad'>${st.arm}</span>`} · 단계 ${st.stage || st.phase || "-"}<br>` +
+    `<span class="mini" style="display:inline">팔</span> ${armOk ? "<span class='ok'>ok</span>" : `<span class='bad'>${st.arm}</span>`} · 단계 ${({ idle: "대기" })[st.stage || st.phase] || st.stage || st.phase || "-"}<br>` +
     `<span class="mini" style="display:inline">그리퍼</span> 왼 ${gm("left")} · 오른 ${gm("right")}<br>` +
     `<span class="mini" style="display:inline">집게 위치</span> 왼 [${tp("left")}] · 오른 [${tp("right")}] m<br>` +
     `<span class="mini" style="display:inline">팔 자세</span> 왼 ${rdy("left")} · 오른 ${rdy("right")}<br>` +

@@ -21,9 +21,7 @@ import os
 import sys
 import time
 
-PROTO = os.fdopen(os.dup(1), "w", buffering=1)   # 주고받기 전용 (진짜 stdout)
-os.dup2(2, 1)                                    # 라이브러리 print 는 stderr 로
-sys.stdout = sys.stderr
+PROTO = None                                     # 주고받기 전용 (진짜 stdout) — main() 에서 엶
 
 
 def send(obj):
@@ -90,6 +88,10 @@ def ov_swap(pol, model_dir, ov_device, example):
 
 
 def main():
+    global PROTO
+    PROTO = os.fdopen(os.dup(1), "w", buffering=1)
+    os.dup2(2, 1)                                # 라이브러리 print 는 stderr 로
+    sys.stdout = sys.stderr
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", required=True)
     ap.add_argument("--device", default="cpu", help="torch 장치 cpu · cuda · xpu")

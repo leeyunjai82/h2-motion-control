@@ -306,8 +306,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._file(PAGE, "text/html; charset=utf-8")
             if p == "/vendor/three.min.js":
                 return self._file(THREE, "application/javascript")
-            if p == "/web/robot3d.js":
-                return self._file(os.path.join(paths.WEB_DIR, "robot3d.js"), "application/javascript")
+            if p in ("/web/robot3d.js", "/web/i18n.js"):
+                return self._file(os.path.join(paths.WEB_DIR, os.path.basename(p)), "application/javascript")
             if p == "/api/robot":
                 return self._json(robot_info())
             if p == "/api/files":

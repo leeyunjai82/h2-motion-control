@@ -120,13 +120,13 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
   <header class="app-header">
     <h1 class="app-title"><b class="brand">pitron<b>·motion editor</b></b> <span>v7.4</span> <a href="/check" style="font-size:13px;margin-left:10px;color:#7fd8f5">모터 번호 확인 →</a></h1>
     <div class="mode-toggle">
-      <button id="mode-joint" class="active">Joint · 관절</button>
-      <button id="mode-ik">IK · 좌표</button>
+      <button id="mode-joint" class="active">관절</button>
+      <button id="mode-ik">IK 좌표</button>
     </div>
     <div class="header-status">
       <span id="lang-slot"></span>
       <button id="home-button">⌂ 홈 자세</button>
-      <button id="reset-all-button">EMERGENCY STOP</button>
+      <button id="reset-all-button">비상 정지</button>
     </div>
   </header>
 
@@ -191,7 +191,7 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
       <div><label>현재 자세 저장</label>
         <div class="checkbox-item"><input type="checkbox" id="save-pose-checkbox" checked>
           <label for="save-pose-checkbox" id="save-pose-label">포함 (현재 모드 기준)</label></div></div>
-      <div><label>안전 모드 (Joint)</label>
+      <div><label>안전 모드 (관절)</label>
         <div class="checkbox-item"><input type="checkbox" id="safe-mode-checkbox" checked>
           <label for="safe-mode-checkbox">x0.5 제한</label></div></div>
     </div>
@@ -263,10 +263,10 @@ document.addEventListener('DOMContentLoaded', () => {
     26:[-113,113], 27:[-92.5,92.5], 28:[-92.5,92.5],
   };
   const CONTROL_GROUPS = {
-    'R_ARM_CONTROLS': [['Shoulder Pitch',22],['Shoulder Roll',23],['Shoulder Yaw',24],['Elbow',25],
-                       ['Wrist Roll',26],['Wrist Pitch',27],['Wrist Yaw',28]],
-    'L_ARM_CONTROLS': [['Shoulder Pitch',15],['Shoulder Roll',16],['Shoulder Yaw',17],['Elbow',18],
-                       ['Wrist Roll',19],['Wrist Pitch',20],['Wrist Yaw',21]]
+    'R_ARM_CONTROLS': [['어깨 Pitch',22],['어깨 Roll',23],['어깨 Yaw',24],['팔꿈치',25],
+                       ['손목 Roll',26],['손목 Pitch',27],['손목 Yaw',28]],
+    'L_ARM_CONTROLS': [['어깨 Pitch',15],['어깨 Roll',16],['어깨 Yaw',17],['팔꿈치',18],
+                       ['손목 Roll',19],['손목 Pitch',20],['손목 Yaw',21]]
   };
   const WAIST_INDICES = new Set([0,1,2]);   // 예전 모션 파일의 허리 값 표시용 (재생 때 무시)
   let originalLimits = JSON.parse(JSON.stringify(JOINT_LIMITS));
@@ -426,7 +426,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tbody.innerHTML = motionFrames.map((f, i) => {
       const t = frameType(f);
       const badge = t ? `<span class="frame-type ${t}">${t === 'ik' ? 'IK' : 'JNT'}</span>`
-        : (f.locomotion && !f.hand_motion) ? '<span class="frame-type skip">SKIP</span>' : '-';
+        : (f.locomotion && !f.hand_motion) ? '<span class="frame-type skip">건너뜀</span>' : '-';
       return `<tr data-index="${i}">
         <td>${i+1}</td><td>${badge}</td>
         <td class="frame-detail">${frameDetail(f)}</td>

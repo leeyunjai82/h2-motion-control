@@ -23,7 +23,11 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from pitron.learning import formats
+import os as _os, sys as _sys  # noqa: E401
+_ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
+if _ROOT not in _sys.path:
+    _sys.path.append(_ROOT)
+from pitron.learning import formats  # noqa: E402
 
 EP_FORMAT = formats.DATASET_FORMAT_BOX
 GRIP_FORMAT = formats.DATASET_FORMAT

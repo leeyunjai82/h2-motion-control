@@ -134,12 +134,13 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
     <select class="in" id="rep" title="에피소드가 끝나면"><option value="all">전체 반복</option><option value="one">이 에피소드 반복</option><option value="off">반복 끔</option></select>
     <button class="btn" onclick="$('pick').click()">zip 열기</button>
     <input type="file" id="pick" accept=".zip" multiple style="display:none">
+    <span id="lang-slot"></span>
   </div>
 </div>
 
 <div class="kpis">
-  <div class="ttl"><h1>Imitation <b>Learning</b></h1><p>시연 데이터 (LeRobot v3) → lerobot 학습 → 정책</p></div>
-  <div class="k"><span>시연</span><b id="k-demo">-</b><small id="k-demo-s">에피소드</small></div>
+  <div class="ttl"><h1><b>모방 학습</b></h1><p>시연 데이터 (LeRobot v3) → lerobot 학습 → 정책</p></div>
+  <div class="k"><span>시연 수</span><b id="k-demo">-</b><small id="k-demo-s">에피소드</small></div>
   <div class="k"><span>시연 시간</span><b id="k-time">-</b><small id="k-time-s">-</small></div>
   <div class="k"><span>카메라</span><b id="k-cam">-</b><small id="k-cam-s">-</small></div>
   <div class="k"><span>학습 step</span><b id="k-step">-</b><small id="k-step-s">-</small></div>
@@ -196,6 +197,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 
 <script src="/vendor/three.min.js"></script>
 <script src="/web/robot3d.js"></script>
+<script src="/web/i18n.js"></script>
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
