@@ -1,7 +1,7 @@
 """
 recorder.py — 그리퍼 잡기 웹(pick_web)의 잡기 1 회 = ACT 에피소드 1 개 녹화 (30 Hz)
 
-  <data>/<dataset>/info.json                        format, cameras{이름: {w,h}}, state_names, fps, 만든 때
+  <data>/<dataset>/info.json                        format, cameras{이름: {w,h}}, fit, task, state_names, fps, 만든 때
   <data>/<dataset>/episodes/ep_000001/episode.npz   t(N,) · state(N,16) · action(N,16) · tcp(N,6) · stage(N,) ·
                                                     jpeg_<카메라>(M,) uint8 (JPEG 이어 붙임) · jpeg_off_<카메라>(N+1,)
   <data>/<dataset>/episodes/ep_000001/meta.json     format, ok, result, side, fps, n, cameras, state_names, stages, plan, close
@@ -10,7 +10,9 @@ recorder.py — 그리퍼 잡기 웹(pick_web)의 잡기 1 회 = ACT 에피소�
   action = [왼팔 7 지령,      왼 그리퍼 목표,   오른팔 7 지령,  오른 그리퍼 목표]   (지령 = arm_server /stream 으로 보낸 값)
   tcp    = 왼 · 오른 집게 가운데 (실측 관절 FK, pelvis) — 학습 안 씀, 안전 필터 · 분석용
   카메라 = body (D435i 컬러, 반 해상도) + 손목 카메라 (gripper.yaml wrist_cams, 있는 것만). 데이터셋 안에서는 같은 구성만 허용
-  npz 는 pickle 없이 (학습기가 allow_pickle=False 로 엶)
+  npz 는 pickle 없이 (allow_pickle=False 로 엶)
+  카메라 크기 · 맞춤 방식 (camfit: crop · pad · stretch) · 작업 설명은 데이터셋을 처음 만들 때 정하고 그 뒤로 고정 (작업 설명만 바꿀 수 있음)
+  <data>/<dataset>/lerobot/                         LeRobot v3.0 (성공 에피소드만, lerobot_sync 가 맞춤) — 다운로드 · 학습은 이것
 """
 import datetime
 import json
@@ -24,7 +26,7 @@ import cv2
 import numpy as np
 
 from pitron import paths
-from pitron.learning import formats
+from pitron.learning import camfit, formats
 
 EP_FORMAT = formats.DATASET_FORMAT
 FPS = formats.FPS
@@ -153,6 +155,7 @@ class Recorder:
                         pass
         inf = self.info(name)
         return {"name": name, "episodes": n_all, "ok": n_ok, "sides": sides, "last_side": last_side, "cameras": (inf or {}).get("cameras"),
+                "fit": (inf or {}).get("fit", "stretch") if inf else None, "task": (inf or {}).get("task"), "v3": self.v3_count(name),
                 "size_mb": round(sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(self.ds_dir(name)) for f in fs) / 1e6, 1)
                 if os.path.isdir(self.ds_dir(name)) else 0.0}
 
@@ -160,6 +163,26 @@ class Recorder:
         if not os.path.isdir(self.data_dir):
             return []
         return [self.summary(n) for n in sorted(os.listdir(self.data_dir)) if NAME_RE.match(n) and os.path.isdir(os.path.join(self.data_dir, n))]
+
+    def v3_count(self, name):
+        """lerobot/ 에 들어간 에피소드 수 (없으면 None)."""
+        p = os.path.join(self.ds_dir(name), "lerobot", "meta", "h2.json")
+        try:
+            with open(p, encoding="utf-8") as f:
+                return len(json.load(f).get("episodes", []))
+        except (OSError, json.JSONDecodeError):
+            return None
+
+    def set_task(self, name, task):
+        """작업 설명 바꾸기 (lerobot/ 을 다시 만들게 됨)."""
+        inf = self.info(name)
+        if inf is None:
+            raise FileNotFoundError(name)
+        inf["task"] = str(task).strip()
+        p = os.path.join(self.ds_dir(name), "info.json")
+        with open(p + ".tmp", "w", encoding="utf-8") as f:
+            json.dump(inf, f, ensure_ascii=False, indent=1)
+        os.replace(p + ".tmp", p)
 
     def check_cameras(self, name, cameras):
         """데이터셋 카메라 구성과 같은지. 새 데이터셋이면 None (처음 에피소드가 정함)."""
@@ -175,8 +198,9 @@ class Recorder:
         return None
 
     # ----- 녹화 -----
-    def start(self, name, cameras, state_names, sample_fn, meta):
-        """cameras {이름: {w, h}} = 저장 크기. sample_fn() → dict 또는 None (그 틱 건너뜀)."""
+    def start(self, name, cameras, state_names, sample_fn, meta, fit="stretch", task=""):
+        """cameras {이름: {w, h}} = 저장 크기 · fit = 맞춤 방식 · task = 작업 설명 (새 데이터셋일 때만 씀, 있으면 info.json 값).
+        sample_fn() → dict 또는 None (그 틱 건너뜀)."""
         with self.lk:
             if self.active:
                 raise RuntimeError("이미 녹화 중")
@@ -188,6 +212,12 @@ class Recorder:
             self.active = True
             self.n = 0
         self.buf = {"t": [], "state": [], "action": [], "tcp": [], "stage": [], "jpg": {k: [] for k in cameras}}
+        inf = self.info(name)
+        self.fit = (inf.get("fit", "stretch") if inf else fit) or "stretch"
+        self.task = (inf.get("task") if inf else task) or ""
+        if self.fit not in camfit.MODES:
+            self.active = False
+            raise ValueError(f"맞춤 방식 {self.fit}")
         self.name, self.cameras, self.state_names, self.meta0 = name, cameras, list(state_names), dict(meta)
         self.t0 = time.time()
         self.stop_evt = threading.Event()
@@ -209,8 +239,7 @@ class Recorder:
                 jp = {}
                 for k, c in self.cameras.items():
                     img = s["images"][k]
-                    if img.shape[1] != c["w"] or img.shape[0] != c["h"]:
-                        img = cv2.resize(img, (c["w"], c["h"]), interpolation=cv2.INTER_AREA)
+                    img = camfit.fit(img, c["w"], c["h"], self.fit)
                     ok, b = cv2.imencode(".jpg", img, enc)
                     jp[k] = b.tobytes() if ok else None
                 if all(v is not None for v in jp.values()):
@@ -271,7 +300,8 @@ class Recorder:
         os.makedirs(ep_root, exist_ok=True)
         if self.info(self.name) is None:
             with open(os.path.join(root, "info.json"), "w", encoding="utf-8") as f:
-                json.dump({"format": EP_FORMAT, "fps": FPS, "cameras": self.cameras, "state_names": self.state_names,
+                json.dump({"format": EP_FORMAT, "fps": FPS, "cameras": self.cameras, "fit": self.fit, "task": self.task,
+                           "state_names": self.state_names,
                            "created": datetime.datetime.now().isoformat(timespec="seconds")}, f, ensure_ascii=False, indent=1)
         ids = [int(m.group(1)) for m in (re.match(r"ep_(\d+)$", e) for e in os.listdir(ep_root)) if m]
         ep = f"ep_{(max(ids) + 1 if ids else 1):06d}"
@@ -366,25 +396,18 @@ class Recorder:
         shutil.rmtree(d)
 
     # ----- 내보내기 -----
-    def make_zip(self, name, only_ok=False):
-        """데이터셋 → zip 파일 (data/<이름>.zip, 메모리에 다 올리지 않음). 학습 PC 웹(trainer)에 올리는 파일. → 경로"""
-        root = self.ds_dir(name)
-        if not os.path.isdir(os.path.join(root, "episodes")):
-            raise FileNotFoundError(name)
-        path = os.path.join(self.data_dir, f"{name}{'_ok' if only_ok else ''}.zip")
+    def make_zip(self, name):
+        """lerobot/ (LeRobot v3) → zip (data/datasets/<이름>_lerobot.zip, 압축 안 함 — mp4 · parquet 는 이미 압축됨).
+        zip 안: <이름>/meta · data · videos. 부르기 전에 lerobot_sync 로 맞춰 둘 것. → 경로"""
+        src = os.path.join(self.ds_dir(name), "lerobot")
+        if not os.path.isfile(os.path.join(src, "meta", "info.json")):
+            raise FileNotFoundError(f"{name}: LeRobot v3 없음 (성공 에피소드 0 또는 변환 전)")
+        path = os.path.join(self.data_dir, f"{name}_lerobot.zip")
         tmp = path + ".tmp"
-        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:     # npz · jpeg 는 이미 압축됨
-            z.write(os.path.join(root, "info.json"), f"{name}/info.json")
-            for e in sorted(os.listdir(os.path.join(root, "episodes"))):
-                d = os.path.join(root, "episodes", e)
-                mp = os.path.join(d, "meta.json")
-                if not os.path.isfile(mp):
-                    continue
-                if only_ok:
-                    with open(mp, encoding="utf-8") as f:
-                        if not json.load(f).get("ok"):
-                            continue
-                for fn in ("meta.json", "episode.npz"):
-                    z.write(os.path.join(d, fn), f"{name}/episodes/{e}/{fn}")
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+            for r, _, fs in os.walk(src):
+                for fn in sorted(fs):
+                    full = os.path.join(r, fn)
+                    z.write(full, os.path.join(name, os.path.relpath(full, src)))
         os.replace(tmp, path)
         return path

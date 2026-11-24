@@ -15,7 +15,7 @@ while true; do
   l=$(cut -d' ' -f1 /proc/loadavg)
   t=$(cat /sys/class/thermal/thermal_zone*/temp 2>/dev/null | sort -n | tail -1); t=$(( ${t:-0} / 1000 ))
   w=$(cat /sys/class/net/wl*/operstate 2>/dev/null | head -1); w=${w:-none}
-  r=$(ps -C python -o rss=,args= 2>/dev/null | awk '/train_act/{s+=$1} END{printf "%d", s/1024}')
+  r=$(ps -C python -o rss=,args= 2>/dev/null | awk '/lerobot_train|train_act/{s+=$1} END{printf "%d", s/1024}')
   echo "$(date +%H:%M:%S) $m $l $t $w $r" >> "$OUT"
   sync "$OUT" 2>/dev/null || sync
   sleep 1

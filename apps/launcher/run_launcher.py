@@ -587,10 +587,10 @@ def xpu_cap(on):
         old = open(f).read().strip()
         with open(f, "w") as fh:
             fh.write(str(mhz))
-        XPU.update(file=f, old=old, pre=set(_pgrep("apps/trainer/train_act.py")))
+        XPU.update(file=f, old=old, pre=set(_pgrep(TRAIN_PAT)))
         job.lines.append(f"[launcher] GPU 최대 클럭 {old} → {open(f).read().strip()} MHz (학습 끝나면 되돌림)")
     elif XPU["file"]:
-        mine = [p for p in _pgrep("apps/trainer/train_act.py") if p not in XPU.get("pre", set())]   # 런처가 띄운 학습만
+        mine = [p for p in _pgrep(TRAIN_PAT) if p not in XPU.get("pre", set())]   # 런처가 띄운 학습만
         for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 0)):    # 클럭을 풀기 전에 학습부터 끔
             for p in mine:
                 try:
@@ -658,6 +658,9 @@ def _script_root(pid):
     return best
 
 
+TRAIN_PAT = "lerobot.scripts.lerobot_train|apps/trainer/train_act.py"   # 학습 프로세스 (pgrep -f 정규식)
+
+
 def _pgrep(pat):
     r = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True)
     return [int(x) for x in r.stdout.split() if int(x) != os.getpid()]
@@ -718,8 +721,8 @@ def find_conflicts():
             for pid in pids:
                 add(pid, f"{WATCH_PORTS[port]} :{port}",
                     "팔이 기본 자세로 돌아간 뒤 제어권을 반납함 (팔이 움직임)" if WATCH_PORTS[port] == "arm_server" else None)
-    for pid in _pgrep("apps/trainer/train_act.py"):
-        add(pid, "학습 (train_act)", "학습이 중단됨 — 마지막 체크포인트 (5000 step 마다) 에서 이어 학습 가능")
+    for pid in _pgrep(TRAIN_PAT):
+        add(pid, "학습 (lerobot-train)", "학습이 중단됨 — 마지막 체크포인트 (저장 주기마다) 로 모델을 만들거나 이어 학습 가능")
     for pid in _pgrep("dex1_1_gripper_server"):
         if not (DEX1["proc"] is not None and DEX1["proc"].pid == pid):
             add(pid, "그리퍼 서비스", "그리퍼 힘이 풀림 — 잡고 있는 물건은 먼저 내려놓기")

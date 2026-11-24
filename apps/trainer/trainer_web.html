@@ -1,7 +1,7 @@
 <!DOCTYPE html>
-<!-- Version: 1.0
-  1.0 - 학습 PC ACT 학습 화면: 데이터셋 zip 업로드(진행률) · 학습 설정·큐 · 진행/loss 곡선/로그 · 취소/지금 마치기 · model zip 다운로드
-        색·글꼴·카드는 제어 UI(apps/box_handover/robot_web.html)·로봇 physical AI 화면과 같음 -->
+<!-- Version: 2.0
+  2.0 - LeRobot 학습 화면: v3 데이터셋 (수집 · 올린 zip) · 정책 종류 · lerobot-train 큐 · 진행/loss 곡선/로그 · 취소/지금 마치기 · model zip
+  1.0 - ACT 학습 화면 -->
 <html lang="ko"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>pitron trainer</title>
@@ -69,7 +69,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .tbl .x{color:var(--dim);cursor:pointer;padding:0 4px}.tbl .x:hover{color:var(--warn)}
 .st{font-size:10.5px;padding:1px 7px;border-radius:999px;border:1px solid currentColor}
 .st.queued{color:var(--dim)}.st.running{color:var(--amber)}.st.done{color:var(--ok)}
-.st.failed,.st.interrupted{color:var(--warn)}.st.canceled,.st.canceling{color:var(--dim)}
+.st.failed,.st.interrupted{color:var(--warn)}.st.canceled,.st.canceling{color:var(--dim)}.st.finishing{color:var(--amber)}
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-top:10px}
 .metrics .m{background:var(--panel2);border:1px solid var(--line);border-radius:7px;padding:5px 8px}
 .metrics .m span{display:block;font-size:9.5px;color:var(--dim);letter-spacing:.5px}
@@ -93,13 +93,13 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 <div class="topbar">
   <span class="dot" id="livedot"></span>
   <span class="logo">pitron<b>·trainer</b></span>
-  <span class="port-label" style="color:var(--dim);font-size:11px">ACT · 50100</span>
+  <span class="port-label" style="color:var(--dim);font-size:11px">LeRobot 학습 · 50100</span>
   <div class="right">
     <div class="chips">
       <span class="chip" id="chip-gpu">GPU <b>-</b></span>
-      <span class="chip" id="chip-q">Queue <b>-</b></span>
-      <span class="chip" id="chip-ver">torch <b>-</b></span>
-      <span class="chip" id="chip-disk">Disk <b>-</b></span>
+      <span class="chip" id="chip-q">큐 <b>-</b></span>
+      <span class="chip" id="chip-ver">lerobot <b>-</b></span>
+      <span class="chip" id="chip-disk">디스크 <b>-</b></span>
     </div>
   </div>
 </div>
@@ -107,79 +107,70 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 <div class="grid">
   <div class="col">
     <div class="card fill">
-      <div class="card-h">Datasets <span class="tag" id="ds-tag">-</span></div>
+      <div class="card-h">데이터셋 · LeRobot v3 <span class="tag" id="ds-tag">-</span></div>
       <div class="card-b">
         <div class="row"><input class="in grow" type="file" id="ds-file" accept=".zip">
-          <button class="btn sm" onclick="uploadDs()">업로드</button></div>
+          <button class="btn sm" onclick="uploadDs()">올리기</button></div>
         <div class="prog" id="up-prog" style="display:none"><b id="up-bar"></b></div>
-        <div class="hint" id="up-text">이 PC 에서 수집한 데이터셋은 목록에 바로 보임 (<b>수집</b>). 다른 PC 에서 받은 <b>데이터셋 zip</b> 만 여기에 올리세요.</div>
+        <div class="hint" id="up-text">이 PC 에서 수집한 데이터셋은 바로 보임 (<b>수집</b>). 다른 PC 에서 받은 <b>LeRobot v3 zip</b> 만 올리세요 (예전 형식 zip 은 v3 로 바꿔 넣음).</div>
         <div class="scroll" style="margin-top:8px"><table class="tbl" id="ds-tbl"></table></div>
+        <div class="hint" id="ds-detail"></div>
       </div>
     </div>
     <div class="card">
-      <div class="card-h">System</div>
+      <div class="card-h">시스템</div>
       <div class="card-b"><table class="tbl" id="sys-tbl" style="cursor:default"></table>
-        <div class="hint">데이터셋 고르기 → 학습 큐 → 끝나면 이 PC 에서는 모델 저장소에 자동 저장 (추론에서 고름).
-          다른 PC 에서 학습했으면 model zip 을 받아 추론 화면에 올림.<br>
-          OpenVINO 는 로봇 PC 와 같은 버전으로 (apps/trainer/README.md).</div></div>
+        <div class="hint" id="sys-hint"></div></div>
     </div>
   </div>
 
   <div class="col">
     <div class="card">
-      <div class="card-h">New Training · 학습 <span class="tag" id="sel-ds">데이터셋 선택</span></div>
+      <div class="card-h">새 학습 <span class="tag" id="sel-ds">데이터셋 선택</span></div>
       <div class="card-b">
         <div class="fld" style="margin-top:0">
-          <div style="grid-column:1/-1"><span class="mini">모델 이름 (비우면 act_데이터셋_날짜)</span><input class="in" id="t-name"></div>
+          <div><span class="mini">정책 종류</span><select class="in" id="t-policy"></select></div>
+          <div style="grid-column:2/-1"><span class="mini">모델 이름 (비우면 정책_데이터셋_날짜)</span><input class="in" id="t-name"></div>
           <div><span class="mini">학습 step</span><input class="in" id="t-steps" type="number" step="1000"></div>
           <div><span class="mini">batch</span><input class="in" id="t-batch_size" type="number"></div>
-          <div><span class="mini">손 (그리퍼 데이터셋)</span><select class="in" id="t-side"><option value="right">오른손</option><option value="left">왼손</option><option value="both">양손 16</option></select></div>
-          <div><span class="mini">이미지 W×H</span><select class="in" id="t-image">
-            <option value="auto">데이터셋 그대로</option><option value="424x240">424×240</option>
-            <option value="848x480">848×480</option><option value="320x240">320×240</option>
-            <option value="640x480">640×480</option><option value="212x120">212×120 (빠름)</option></select></div>
-          <div><span class="mini">chunk (스텝)</span><input class="in" id="t-chunk_size" type="number"></div>
-          <div><span class="mini">KL 가중</span><input class="in" id="t-kl_weight" type="number" step="1"></div>
-          <div><span class="mini">lr</span><input class="in" id="t-lr" type="number" step="0.000001"></div>
-          <div><span class="mini">검증 비율</span><input class="in" id="t-val_frac" type="number" step="0.05"></div>
+          <div><span class="mini">학습 장치</span><select class="in" id="t-device"><option value="auto">자동</option><option value="cuda">NVIDIA (CUDA)</option><option value="xpu">Intel GPU (XPU)</option><option value="cpu">CPU</option></select></div>
+          <div><span class="mini">저장 주기 step</span><input class="in" id="t-save_freq" type="number" step="1000"></div>
           <div><span class="mini">dataloader workers</span><input class="in" id="t-num_workers" type="number"></div>
-          <div><span class="mini">학습 장치</span><select class="in" id="t-device"><option value="auto">자동 (CUDA→Intel→CPU)</option><option value="cpu">CPU</option><option value="xpu">Intel GPU (XPU)</option><option value="cuda">NVIDIA (CUDA)</option></select></div>
-          <div><span class="mini">검증 주기 step</span><input class="in" id="t-eval_every" type="number" step="500"></div>
+          <div><span class="mini">seed</span><input class="in" id="t-seed" type="number"></div>
+          <div style="grid-column:1/-1"><span class="mini">이어서 학습 / 미세 조정 (비우면 처음부터) — 이 PC 모델 이름 또는 Hub id (예 lerobot/smolvla_base)</span>
+            <input class="in" id="t-pretrained" list="models-dl"><datalist id="models-dl"></datalist></div>
+          <div style="grid-column:1/-1"><span class="mini">추가 옵션 (lerobot-train 인자 그대로, 예 --policy.chunk_size=50 --policy.n_action_steps=50)</span>
+            <input class="in" id="t-extra"></div>
         </div>
-        <div class="row" style="gap:18px">
-          <label class="sw"><input type="checkbox" id="t-augment"><span class="tr"></span><span>증강 (이동 ±2 %·밝기)</span></label>
-          <label class="sw"><input type="checkbox" id="t-amp"><span class="tr"></span><span>bf16 AMP</span></label>
-        </div>
+        <label class="sw"><input type="checkbox" id="t-image_aug"><span class="tr"></span><span>이미지 증강 (밝기 · 대비 · 채도 · 색조 · 선명도)</span></label>
         <button class="btn primary" style="width:100%;margin-top:12px;padding:10px" onclick="addJob()">▶ 학습 큐에 넣기</button>
-        <div class="hint">기본값 = LeRobot ACT 기본 (lr 1e-5, batch 8, chunk 100, KL 10, 디코더 1 층). chunk 100 = 30 Hz 에서 3.3 초.
-          끝나면 자동으로 OpenVINO IR 변환 → <b>model zip</b>.</div>
+        <div class="hint" id="t-hint">정책 설정은 lerobot 기본값. 끝나면 마지막 체크포인트로 <b>model zip</b> (정책 종류와 상관없이 추론에서 그대로 불러옴).</div>
       </div>
     </div>
     <div class="card fill">
-      <div class="card-h">Jobs <span class="tag" id="job-tag"></span></div>
+      <div class="card-h">작업 <span class="tag" id="job-tag"></span></div>
       <div class="card-b"><div class="scroll"><table class="tbl" id="job-tbl"></table></div></div>
     </div>
   </div>
 
   <div class="col">
     <div class="card fill">
-      <div class="card-h">Job <span class="tag" id="jd-tag">-</span></div>
+      <div class="card-h">진행 <span class="tag" id="jd-tag">-</span></div>
       <div class="card-b">
         <div class="row">
-          <button class="btn primary grow" id="jd-dl" onclick="dlZip()">⬇ model zip (로봇으로)</button>
-          <button class="btn sm" id="jd-finish" onclick="jobAct('finish')" title="지금까지 학습한 것으로 변환·마무리">지금 마치기</button>
+          <button class="btn primary grow" id="jd-dl" onclick="dlZip()">⬇ model zip</button>
+          <button class="btn sm" id="jd-finish" onclick="jobAct('finish')" title="학습을 멈추고 마지막 체크포인트로 모델을 만듦">지금 마치기</button>
           <button class="btn warn sm" id="jd-cancel" onclick="jobAct('cancel')">취소</button>
         </div>
         <div class="prog"><b id="jd-bar"></b></div>
         <div class="metrics">
           <div class="m"><span>step</span><b id="jd-step">-</b></div>
           <div class="m"><span>loss</span><b id="jd-loss">-</b></div>
-          <div class="m"><span>val 오차 °</span><b id="jd-val">-</b></div>
+          <div class="m"><span>체크포인트</span><b id="jd-ckpt">-</b></div>
           <div class="m"><span>남은 시간</span><b id="jd-eta">-</b></div>
         </div>
         <canvas id="cv" width="800" height="300"></canvas>
-        <div class="hint">파랑 = 학습 loss (L1 + KL·가중, 로그 눈금) · 주황 = 검증 L1 (정규화 단위, 정책 추론과 같은 방식) ·
-          val 오차 = 검증 에피소드에서 관절 평균 오차 [°]</div>
+        <div class="hint">학습 loss (로그 눈금). 정책마다 loss 정의가 달라 서로 비교하지 않음.</div>
         <div class="err-line" id="jd-err"></div>
         <pre class="log" id="jd-log"></pre>
       </div>
@@ -190,13 +181,13 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 
 <script>
 const $ = id => document.getElementById(id);
-let selDs = '', selJob = '', DEF = null, jobsCache = [];
+let selDs = '', selJob = '', DEF = null, jobsCache = [], DSL = [];
+const ST_KO = {queued: '대기', running: '학습 중', done: '완료', failed: '실패', interrupted: '중단됨', canceled: '취소됨', canceling: '취소 중', finishing: '마치는 중'};
 function toast(m, err){ const t = $('toast'); t.textContent = m; t.className = 'show' + (err ? ' err' : ''); clearTimeout(t._h); t._h = setTimeout(() => t.className = '', err ? 5000 : 2500); }
-function esc(s){ return String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+function esc(s){ return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 async function api(method, url, body, text){
   try{
-    const r = await fetch(url, {method, headers: body ? {'Content-Type': 'application/json'} : {},
-                                body: body ? JSON.stringify(body) : undefined});
+    const r = await fetch(url, {method, headers: body ? {'Content-Type': 'application/json'} : {}, body: body ? JSON.stringify(body) : undefined});
     $('livedot').className = 'dot live';
     if(text) return await r.text();
     const d = await r.json().catch(() => ({}));
@@ -205,39 +196,49 @@ async function api(method, url, body, text){
   }catch(e){ $('livedot').className = 'dot err'; return null; }
 }
 function chip(id, label, val, cls){ const c = $(id); c.className = 'chip ' + (cls || ''); c.innerHTML = `${label} <b>${val}</b>`; }
-const hms = s => s == null ? '-' : (s >= 3600 ? `${Math.floor(s/3600)}h${String(Math.floor(s%3600/60)).padStart(2,'0')}m` : `${Math.floor(s/60)}m${String(s%60).padStart(2,'0')}s`);
+const hms = s => s == null ? '-' : (s >= 3600 ? `${Math.floor(s/3600)}h${String(Math.floor(s%3600/60)).padStart(2,'0')}m` : `${Math.floor(s/60)}m${String(Math.round(s%60)).padStart(2,'0')}s`);
 
 async function loadInfo(){
   const d = await api('GET', '/api/info'); if(!d) return;
-  const g = (d.gpus || [])[0] || {};
-  if(g.error) chip('chip-gpu', 'GPU', '없음', 'err');
+  const g = d.gpu, pr = d.probe || {};
+  if(!g) chip('chip-gpu', 'GPU', '없음 (CPU)', 'err');
   else if(g.xpu) chip('chip-gpu', 'GPU', g.name, 'ok');
   else chip('chip-gpu', 'GPU', `${g.name.replace('NVIDIA ','').replace('GeForce ','')} · ${(g.mem_used/1024).toFixed(1)}/${(g.mem_total/1024).toFixed(0)} GB · ${g.util}% · ${g.temp}°C`, g.util > 50 ? 'busy' : 'ok');
-  chip('chip-q', 'Queue', `${d.queue.running} 실행 · ${d.queue.queued} 대기`, d.queue.running ? 'busy' : 'ok');
-  chip('chip-ver', 'torch', `${d.torch || '없음'} · ov ${d.openvino || '없음'}`, d.torch && d.openvino ? 'info' : 'err');
-  chip('chip-disk', 'Disk', `${d.disk_free_gb} GB`, d.disk_free_gb < 20 ? 'err' : 'ok');
-  const rows = [['GPU', g.error ? esc(g.error) : esc(g.name)], ['드라이버', g.driver || '-'],
-    ['VRAM', g.mem_total ? `${(g.mem_used/1024).toFixed(1)} / ${(g.mem_total/1024).toFixed(1)} GB` : '-'],
-    ['torch', d.torch || '<span style="color:var(--warn)">없음</span>'], ['torchvision', d.torchvision || '-'],
-    ['openvino', d.openvino || '<span style="color:var(--warn)">없음</span>'], ['python', d.python], ['디스크 여유', d.disk_free_gb + ' GB']];
-  $('sys-tbl').innerHTML = rows.map(r => `<tr><td style="color:var(--dim)">${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  chip('chip-q', '큐', `${d.queue.running} 실행 · ${d.queue.queued} 대기`, d.queue.running ? 'busy' : 'ok');
+  chip('chip-ver', 'lerobot', !pr.done ? '확인 중' : pr.ok ? `${pr.lerobot} · torch ${pr.torch}` : '없음', !pr.done ? 'busy' : pr.ok ? 'info' : 'err');
+  chip('chip-disk', '디스크', `${d.disk_free_gb} GB`, d.disk_free_gb < 20 ? 'err' : 'ok');
+  const rows = [['GPU', g ? esc(g.name) : '-'], ['자동 장치', d.device_auto || '-'],
+    ['lerobot', pr.ok ? pr.lerobot : `<span style="color:var(--warn)">${esc(pr.err || '확인 중')}</span>`], ['torch', pr.torch || '-'],
+    ['CUDA', pr.cuda || '-'], ['Intel XPU', pr.xpu || '-'], ['python', esc(d.lerobot_py)], ['디스크 여유', d.disk_free_gb + ' GB']];
+  $('sys-tbl').innerHTML = rows.map(r => `<tr><td style="color:var(--dim)">${r[0]}</td><td style="white-space:normal;word-break:break-all">${r[1]}</td></tr>`).join('');
+  $('sys-hint').innerHTML = d.collect_pc ? '이 PC = 수집 PC: 학습이 끝나면 모델 저장소 (data/policies) 에 자동 저장 → 추론에서 고름'
+                                         : '학습이 끝나면 <b>model zip</b> 을 받아 추론 PC 에 올림';
+  $('models-dl').innerHTML = (d.models || []).map(m => `<option value="${esc(m)}">`).join('');
+  if(pr.done && pr.ok && !$('t-policy').options.length){
+    $('t-policy').innerHTML = pr.policies.map(p => `<option value="${p}">${p}</option>`).join('');
+    $('t-policy').value = (d.defaults || {}).policy || 'act';
+  }
   if(!DEF){
     DEF = d.defaults;
-    for(const k of ['steps','batch_size','chunk_size','kl_weight','lr','val_frac','num_workers','eval_every']) $('t-' + k).value = DEF[k];
-    $('t-image').value = DEF.image; $('t-side').value = DEF.side || 'right'; $('t-device').value = DEF.device || 'auto'; $('t-augment').checked = DEF.augment; $('t-amp').checked = DEF.amp;
+    for(const k of ['steps','batch_size','save_freq','num_workers','seed']) $('t-' + k).value = DEF[k];
+    $('t-device').value = DEF.device || 'auto'; $('t-image_aug').checked = !!DEF.image_aug;
   }
 }
 
 // ---------------- 데이터셋 ----------------
 async function loadDs(){
   const d = await api('GET', '/api/datasets'); if(!d) return;
+  DSL = d;
   $('ds-tag').textContent = `${d.length}개`;
   if(!selDs && d.length) selDs = d[d.length - 1].name;
-  $('ds-tbl').innerHTML = '<tr><th>데이터셋</th><th class="num">성공/전체</th><th class="num">분</th><th class="num">MB</th><th>이미지</th><th></th></tr>' +
-    d.map(x => `<tr class="${x.name === selDs ? 'cur' : ''}" onclick="pickDs('${x.name}')"><td>${esc(x.name)}</td>
-      <td class="num">${x.ok}/${x.episodes}</td><td class="num">${x.minutes}</td><td class="num">${x.size_mb}</td>
-      <td>${x.image ? (x.image.cams ? '그리퍼 ' + Object.keys(x.image.cams).length + '캠' : x.image.w + '×' + x.image.h) : '-'}</td>${x.source === '수집' ? '<td class="x" title="이 PC 에서 수집한 데이터셋 (업로드 없이 바로 학습)" style="color:var(--ok);cursor:default">수집</td>' : `<td class="x" onclick="event.stopPropagation();delDs('${x.name}')">✕</td>`}</tr>`).join('');
+  $('ds-tbl').innerHTML = '<tr><th>데이터셋</th><th class="num">에피소드</th><th class="num">분</th><th class="num">MB</th><th>카메라</th><th></th></tr>' +
+    d.map(x => `<tr class="${x.name === selDs ? 'cur' : ''}" onclick="pickDs('${esc(x.name)}')"><td>${esc(x.name)}</td>
+      <td class="num">${x.episodes}</td><td class="num">${x.minutes}</td><td class="num">${x.size_mb}</td>
+      <td>${Object.keys(x.cameras || {}).length}대</td>${x.source === '수집' ? '<td class="x" title="이 PC 에서 수집한 데이터셋 (올리기 없이 바로 학습)" style="color:var(--ok);cursor:default">수집</td>' : `<td class="x" onclick="event.stopPropagation();delDs('${esc(x.name)}')">✕</td>`}</tr>`).join('');
   $('sel-ds').textContent = selDs || '데이터셋 선택';
+  const s = d.find(x => x.name === selDs);
+  $('ds-detail').innerHTML = s ? `<b>${esc(s.name)}</b> · ${s.frames} 프레임 · ${s.fps} fps · state ${s.state_dim ?? '-'}<br>카메라 ${Object.entries(s.cameras).map(([k, v]) => `${esc(k)} ${v}`).join(' · ')}` +
+    (s.task ? `<br>작업: ${esc(s.task)}` : '') : '';
 }
 function pickDs(n){ selDs = n; loadDs(); }
 async function delDs(n){ if(!confirm(`데이터셋 ${n} 삭제?`)) return; if(await api('DELETE', `/api/datasets/${n}`)){ if(selDs === n) selDs = ''; loadDs(); } }
@@ -247,24 +248,24 @@ function uploadDs(){
   x.open('PUT', `/api/datasets/upload?filename=${encodeURIComponent(f.name)}`);
   $('up-prog').style.display = '';
   x.upload.onprogress = e => { if(e.lengthComputable){ $('up-bar').style.width = (e.loaded / e.total * 100) + '%';
-    $('up-text').textContent = `업로드 ${(e.loaded/1e6).toFixed(0)} / ${(e.total/1e6).toFixed(0)} MB${e.loaded === e.total ? ' — 푸는 중...' : ''}`; } };
+    $('up-text').textContent = `올리는 중 ${(e.loaded/1e6).toFixed(0)} / ${(e.total/1e6).toFixed(0)} MB${e.loaded === e.total ? ' — 푸는 중 (예전 형식이면 v3 로 바꾸는 중)...' : ''}`; } };
   x.onload = () => {
     let d = {}; try{ d = JSON.parse(x.responseText); }catch(e){}
-    if(x.status === 200){ toast(`업로드됨: ${d.name} (${d.ok} ep)`); selDs = d.name; $('ds-file').value = '';
-      $('up-text').textContent = `${d.name}: 성공 ${d.ok}/${d.episodes} ep · ${d.frames} 프레임 · ${d.minutes} 분`; loadDs(); }
+    if(x.status === 200){ toast(`올림: ${d.name} (${d.episodes} 에피소드)`); selDs = d.name; $('ds-file').value = '';
+      $('up-text').textContent = `${d.name}: ${d.episodes} 에피소드 · ${d.frames} 프레임 · ${d.minutes} 분`; loadDs(); }
     else { toast(d.detail || `HTTP ${x.status}`, true); $('up-text').textContent = '실패: ' + (d.detail || x.status); }
     $('up-prog').style.display = 'none';
   };
-  x.onerror = () => { toast('업로드 실패', true); $('up-prog').style.display = 'none'; };
+  x.onerror = () => { toast('올리기 실패', true); $('up-prog').style.display = 'none'; };
   x.send(f);
 }
 
 // ---------------- 작업 ----------------
 async function addJob(){
   if(!selDs){ toast('데이터셋을 고르세요', true); return; }
-  const p = {name: $('t-name').value.trim(), image: $('t-image').value, side: $('t-side').value, device: $('t-device').value, augment: $('t-augment').checked, amp: $('t-amp').checked};
-  for(const k of ['steps','batch_size','chunk_size','num_workers','eval_every']) p[k] = parseInt($('t-' + k).value);
-  for(const k of ['kl_weight','lr','val_frac']) p[k] = parseFloat($('t-' + k).value);
+  const p = {name: $('t-name').value.trim(), policy: $('t-policy').value, device: $('t-device').value, image_aug: $('t-image_aug').checked,
+             pretrained: $('t-pretrained').value.trim(), extra: $('t-extra').value.trim()};
+  for(const k of ['steps','batch_size','save_freq','num_workers','seed']) p[k] = parseInt($('t-' + k).value);
   const d = await api('POST', '/api/jobs', {dataset: selDs, params: p});
   if(d){ toast(`큐에 넣음: ${d.id}`); selJob = d.id; loadJobs(); }
 }
@@ -273,11 +274,10 @@ async function loadJobs(){
   jobsCache = d;
   if(!selJob && d.length) selJob = d[0].id;
   $('job-tag').textContent = `${d.length}개`;
-  $('job-tbl').innerHTML = '<tr><th>작업</th><th>데이터셋</th><th>상태</th><th class="num">진행</th><th class="num">val°</th><th></th></tr>' +
-    d.map(j => `<tr class="${j.id === selJob ? 'cur' : ''}" onclick="pickJob('${j.id}')"><td title="${esc(j.params.name)}">${j.id}</td><td>${esc(j.dataset)}</td>
-      <td><span class="st ${j.status}">${j.status}</span></td>
-      <td class="num">${j.status === 'running' ? Math.round(j.step / j.total * 100) + '%' : (j.step ? j.step : '-')}</td>
-      <td class="num">${j.val_err_deg != null ? (+j.val_err_deg).toFixed(2) : '-'}</td>
+  $('job-tbl').innerHTML = '<tr><th>작업</th><th>정책</th><th>데이터셋</th><th>상태</th><th class="num">진행</th><th></th></tr>' +
+    d.map(j => `<tr class="${j.id === selJob ? 'cur' : ''}" onclick="pickJob('${j.id}')"><td title="${esc(j.params.name)}">${j.id}</td><td>${esc(j.params.pretrained ? '이어서' : j.params.policy)}</td><td>${esc(j.dataset)}</td>
+      <td><span class="st ${j.status}">${ST_KO[j.status] || j.status}</span></td>
+      <td class="num">${j.status === 'running' ? Math.round(j.step / (j.total || 1) * 100) + '%' : (j.step ? j.step : '-')}</td>
       <td class="x" onclick="event.stopPropagation();delJob('${j.id}')">✕</td></tr>`).join('');
 }
 function pickJob(id){ selJob = id; loadJobs(); loadJob(); }
@@ -285,7 +285,8 @@ async function delJob(id){ if(!confirm(`작업 ${id} 와 결과 파일 삭제?`)
 async function jobAct(a){
   if(!selJob) return;
   if(a === 'cancel' && !confirm('학습을 취소합니다 (model zip 안 만듦). 계속?')) return;
-  if(await api('POST', `/api/jobs/${selJob}/${a}`)) toast(a === 'finish' ? '지금까지 학습한 것으로 변환합니다' : '취소 요청');
+  if(a === 'finish' && !confirm('학습을 멈추고 마지막 체크포인트로 모델을 만듭니다. 계속?')) return;
+  if(await api('POST', `/api/jobs/${selJob}/${a}`)) toast(a === 'finish' ? '마지막 체크포인트로 모델을 만듭니다' : '취소 요청');
   loadJobs();
 }
 function dlZip(){ if(selJob) location.href = `/api/jobs/${selJob}/model.zip`; }
@@ -293,17 +294,16 @@ function dlZip(){ if(selJob) location.href = `/api/jobs/${selJob}/model.zip`; }
 function draw(j){
   const cv = $('cv'), c = cv.getContext('2d'), W = cv.width, H = cv.height, P = 34;
   c.clearRect(0, 0, W, H);
-  const tr = (j.curve || []).filter(p => p[1] > 0), vl = (j.vcurve || []).filter(p => p[1] > 0);
+  const tr = (j.curve || []).filter(p => p[1] > 0);
   if(!tr.length){ c.fillStyle = '#6b7785'; c.font = '20px monospace'; c.fillText('loss 기록 없음', P + 10, H / 2); return; }
-  const all = tr.map(p => p[1]).concat(vl.map(p => p[1]));
+  const all = tr.map(p => p[1]);
   const lo = Math.log10(Math.min(...all)), hi = Math.log10(Math.max(...all)) + 1e-6, xmax = Math.max(j.total || 1, ...tr.map(p => p[0]));
   const X = s => P + (W - P - 8) * s / xmax, Y = v => 8 + (H - P - 8) * (1 - (Math.log10(v) - lo) / (hi - lo || 1));
   c.strokeStyle = '#2a3340'; c.fillStyle = '#6b7785'; c.font = '16px monospace'; c.lineWidth = 1;
   for(let e = Math.floor(lo); e <= Math.ceil(hi); e++){ const y = Y(10 ** e); if(y < 4 || y > H - P + 4) continue;
     c.beginPath(); c.moveTo(P, y); c.lineTo(W, y); c.stroke(); c.fillText(`1e${e}`, 0, y + 5); }
   c.fillText(`${xmax} step`, W - 140, H - 8);
-  const line = (pts, col, w) => { c.strokeStyle = col; c.lineWidth = w; c.beginPath(); pts.forEach((p, i) => i ? c.lineTo(X(p[0]), Y(p[1])) : c.moveTo(X(p[0]), Y(p[1]))); c.stroke(); };
-  line(tr, '#00b7eb', 2); if(vl.length) line(vl, '#ffb454', 2.5);
+  c.strokeStyle = '#00b7eb'; c.lineWidth = 2; c.beginPath(); tr.forEach((p, i) => i ? c.lineTo(X(p[0]), Y(p[1])) : c.moveTo(X(p[0]), Y(p[1]))); c.stroke();
 }
 async function loadJob(){
   if(!selJob) return;
@@ -312,11 +312,12 @@ async function loadJob(){
   $('jd-bar').style.width = (j.step / (j.total || 1) * 100) + '%';
   $('jd-step').textContent = `${j.step}/${j.total}`;
   $('jd-loss').textContent = j.loss != null ? (+j.loss).toFixed(4) : '-';
-  $('jd-val').textContent = j.val_err_deg != null ? (+j.val_err_deg).toFixed(2) : '-';
-  $('jd-eta').textContent = j.status === 'running' ? (j.phase === 'export' ? '변환 중' : hms(j.eta_s)) :
-    (j.status === 'done' && j.finished && j.started ? '걸림 ' + hms(Math.round(j.finished - j.started)) : j.status);
-  $('jd-dl').disabled = !j.zip; $('jd-finish').disabled = j.status !== 'running'; $('jd-cancel').disabled = !['running','queued'].includes(j.status);
-  $('jd-err').textContent = j.error ? '오류: ' + j.error : (j.export_diff_deg != null ? `OpenVINO 변환 검사: torch 와 최대 차이 ${(+j.export_diff_deg).toFixed(3)}°` : '');
+  $('jd-ckpt').textContent = j.model_step ? `모델 ${j.model_step}` : (j.ckpt_step ? `${j.ckpt_step}` : '-');
+  $('jd-eta').textContent = j.status === 'running' ? hms(j.eta_s) :
+    (j.status === 'done' && j.finished && j.started ? '걸림 ' + hms(Math.round(j.finished - j.started)) : (ST_KO[j.status] || j.status));
+  $('jd-dl').disabled = !j.zip; $('jd-finish').disabled = j.status !== 'running' || !j.ckpt_step; $('jd-cancel').disabled = !['running','queued'].includes(j.status);
+  $('jd-err').textContent = j.error ? '오류: ' + j.error : (j.saved_model ? `모델 저장소에 저장됨: ${j.saved_model} (추론에서 고름)` : '');
+  $('jd-err').style.color = j.error ? '' : 'var(--ok)';
   draw(j);
   const lg = await api('GET', `/api/jobs/${selJob}/log?tail=200`, null, true);
   if(lg != null){ const el = $('jd-log'), atEnd = el.scrollTop + el.clientHeight >= el.scrollHeight - 20; el.textContent = lg; if(atEnd) el.scrollTop = el.scrollHeight; }

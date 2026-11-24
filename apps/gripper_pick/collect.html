@@ -29,6 +29,9 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .chip.ok{color:var(--ok);border-color:#1f5a43}.chip.info{color:var(--accent);border-color:#0b5a70}
 .chip.busy{color:var(--amber);border-color:#6a4a1f}.chip.err{color:var(--warn);border-color:#5a2b2b}
 .dsbar{display:flex;gap:10px;align-items:center}
+.dsset{margin-top:10px;display:grid;grid-template-columns:auto 1fr;gap:6px 8px;align-items:center;font-size:12px}
+.dsset .in{width:100%}
+.dsset .lock{color:var(--dim)}
 .grid{display:grid;grid-template-columns:5fr 3fr 3fr;gap:14px;padding:14px;flex:1;min-height:0;overflow:hidden}
 .col{display:flex;flex-direction:column;gap:12px;min-width:0;min-height:0;overflow-y:auto;padding-right:2px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;flex:none}
@@ -143,6 +146,7 @@ input[type=file].in{width:100%}
       <div class="card-b">
         <div class="big-num" id="next">—</div>
         <div class="hint" id="dsinfo"></div>
+        <div id="dsset" class="dsset"></div>
         <button class="btn" id="epopen" style="width:100%;margin-top:10px">수집 데이터 보기 (에피소드별) ▸</button>
       </div>
     </div>
@@ -191,8 +195,9 @@ input[type=file].in{width:100%}
     <div class="card">
       <div class="card-h">Dataset → 학습 PC</div>
       <div class="card-b">
-        <a id="dl" class="btn primary" href="#" style="display:block">⬇ 데이터셋 zip (저장한 성공 에피소드만)</a>
-        <div class="hint">이 PC 에서 학습하면 zip 필요 없음 (홈 · 학습에서 데이터셋을 고름). 다른 PC (5090) 에서 학습할 때만 이 zip 을 그 학습 웹에 올림</div>
+        <a id="dl" class="btn primary" href="#" style="display:block">⬇ LeRobot v3 데이터셋 zip</a>
+        <div class="msg" id="v3st">—</div>
+        <div class="hint">저장한 성공 에피소드가 자동으로 LeRobot v3 (data/datasets/&lt;이름&gt;/lerobot) 에 들어감. 이 PC 에서 학습하면 zip 필요 없음, 다른 PC 에서 학습할 때만 이 zip 을 올림</div>
       </div>
     </div>
 
@@ -298,11 +303,57 @@ async function refreshDs() {
     const name = $("ds").value.trim();
     ds = (j.datasets || []).find(d => d.name === name) || null;
     const cams = Object.entries(j.cameras_now || {}).map(([k, v]) => `${k} ${v.w}×${v.h}`).join(" · ");
-    $("dsinfo").innerHTML = (ds ? `전체 <b>${ds.episodes}</b> 개 (성공 ${ds.ok}) · ${ds.size_mb} MB` : "새 데이터셋 (아직 에피소드 없음)") + (cams ? `<br>카메라 ${cams}` : "");
+    $("dsinfo").innerHTML = ds && ds.cameras ? `전체 <b>${ds.episodes}</b> 개 (성공 ${ds.ok}) · ${ds.size_mb} MB` : "새 데이터셋 (아직 에피소드 없음) — 첫 에피소드를 저장할 때 아래 설정으로 만듦";
     $("ds-tag").textContent = name || "-";
+    renderSet(j, name, cams);
+    renderV3();
     render();
   } catch (e) {}
 }
+
+// ---------------- 데이터셋 설정 (새 데이터셋만 바꿈, 작업 설명은 언제든) ----------------
+let setKey = "";
+const SIZES = [["320x240", "320×240"], ["424x240", "424×240"], ["640x480", "640×480"], ["native", "카메라별 원래 크기"]];
+function renderSet(j, name, cams) {
+  const exist = !!(ds && ds.cameras), key = name + "|" + exist + "|" + (ds ? ds.task : "");
+  if (key === setKey) return;
+  setKey = key;
+  const fits = j.fits || {}, nw = j.new || {};
+  if (exist) {
+    const c = Object.entries(ds.cameras).map(([k, v]) => `${k} ${v.w}×${v.h}`).join(" · ");
+    $("dsset").innerHTML = `<span class="mini">카메라</span><span class="lock">${c} · ${fits[ds.fit] || ds.fit} (데이터셋에 고정)</span>
+      <span class="mini">작업 설명</span><div class="row" style="margin:0"><input class="in grow" id="dstask" value="${(ds.task || "").replace(/"/g, "&quot;")}"><button class="btn sm" id="dstaskb">바꾸기</button></div>`;
+    $("dstaskb").onclick = async () => {
+      const t = $("dstask").value.trim(); if (!t) return;
+      if (!confirm(`작업 설명을 바꾸면 LeRobot v3 를 처음부터 다시 만듭니다 (CPU 사용).\n"${t}"`)) return;
+      try { await post("/api/dataset/task", { name, task: t }); setKey = ""; refreshDs(); } catch (e) { alert(e.message); }
+    };
+  } else {
+    $("dsset").innerHTML = `<span class="mini">카메라 크기</span><select class="in" id="nsize">${SIZES.map(([v, l]) => `<option value="${v}"${v === nw.size ? " selected" : ""}>${l}</option>`).join("")}</select>
+      <span class="mini">맞춤 방식</span><select class="in" id="nfit">${Object.entries(fits).map(([v, l]) => `<option value="${v}"${v === nw.fit ? " selected" : ""}>${l}</option>`).join("")}</select>
+      <span class="mini">작업 설명</span><input class="in" id="ntask" value="${(nw.task || "").replace(/"/g, "&quot;")}">
+      <span></span><span class="sub">지금 저장 크기: ${cams || "-"} · 모든 카메라 같은 크기면 어느 lerobot 정책이든 학습 가능</span>`;
+    const send = async () => {
+      try { await post("/api/rec", { enabled: $("recon").checked, name, size: $("nsize").value, fit: $("nfit").value, task: $("ntask").value }); setKey = ""; refreshDs(); }
+      catch (e) { alert(e.message); }
+    };
+    $("nsize").onchange = send; $("nfit").onchange = send; $("ntask").onchange = send;
+  }
+}
+function renderV3() {
+  const s = (ds && ds.v3_state) || {};
+  let t;
+  if (!ds || !ds.ok) t = '<span class="sub">성공 에피소드를 저장하면 만들어짐</span>';
+  else if (s.state === "running") t = `<span class="warn">LeRobot v3 변환 중 ${s.done || 0} / ${s.total || "?"}</span>`;
+  else if (s.state === "queued") t = '<span class="warn">LeRobot v3 변환 대기</span>';
+  else if (s.state === "error" || s.state === "no_lerobot") t = `<span class="bad">변환 실패: ${s.msg || ""}</span>`;
+  else t = ds.v3 === ds.ok ? `<span class="ok">LeRobot v3 · 에피소드 ${ds.v3} 개</span>` : `<span class="warn">LeRobot v3 ${ds.v3 ?? 0} / ${ds.ok} — 맞추는 중</span>`;
+  $("v3st").innerHTML = t;
+  const ready = ds && ds.v3 && ds.v3 === ds.ok && !["running", "queued"].includes(s.state);
+  $("dl").href = ready ? `/api/dataset/zip?name=${encodeURIComponent(ds.name)}` : "#";
+  $("dl").classList.toggle("off", !ready || !!(st && st.rec && st.rec.active));
+}
+setInterval(refreshDs, 3000);
 
 function render() {
   if (!st) return;
@@ -396,9 +447,7 @@ function renderModel() {
                         : waitNext ? `<span class="warn">● ${p.phase}</span> <span class="sub">— 끝: ${p.why_end}</span>`
                         : (p.why_end ? `<span class="sub">끝: ${p.why_end}</span>` : "");
   $("pol-tag").textContent = p.running ? "실행 중" : m ? "준비" : "-";
-  const name = $("ds").value.trim();
-  $("dl").href = name ? `/api/dataset/zip?name=${encodeURIComponent(name)}&only_ok=true` : "#";
-  $("dl").classList.toggle("off", !(ds && ds.ok > 0) || !!(st.rec && st.rec.active));
+  renderV3();
 }
 
 // ---------------- 에피소드 보기 ----------------

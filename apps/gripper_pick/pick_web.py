@@ -25,6 +25,7 @@ import glob
 import json
 import math
 import os
+import re
 import sys
 import threading
 import time
@@ -38,6 +39,7 @@ _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file_
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron.learning import recorder as rec
+from pitron.learning import camfit, lerobot_env
 from pitron import ports
 import policy as pol
 import xr_real
@@ -362,6 +364,11 @@ class Runner:
         self.rec = rec.Recorder()
         self.rec_on = False             # 실행할 때 녹화
         self.rec_name = "pick_" + datetime.date.today().strftime("%Y%m%d")
+        self.rec_new = {"size": "320x240", "fit": "crop", "task": "pick up the object and put it in the bin"}   # 새 데이터셋 설정
+        self.v3 = lerobot_env.SyncWorker(self.rec.data_dir, log=print)   # 수집 원본 → lerobot/ (LeRobot v3)
+        for d in self.rec.datasets():                                     # 켤 때 한 번: 예전 데이터셋도 v3 로 맞춤
+            if d["ok"] and d.get("v3") != d["ok"]:
+                self.v3.want(d["name"])
         self.stage_idx = 0              # 녹화 stage (실행 순서 번호, 0 = 시작 전)
         self.pol = pol.PolicyRunner(self, pc)   # ACT 정책 실행
         self.speed = 2.0                # 속도 배율 (웹) — 계획 · 자세 이동에 씀
@@ -524,14 +531,26 @@ class Runner:
         return {k: plan.get(k) for k in keys if k in plan}
 
     # ----- 녹화 -----
-    def rec_cameras(self):
-        """녹화할 카메라 {이름: {w, h}} — body = D435i 반 해상도, 손목 = 장치 크기 반."""
+    def cams_native(self):
+        """카메라별 원래 크기 기준 {이름: {w, h}} — body = D435i 반 해상도, 손목 = 장치 크기 (320 폭 넘으면 반)."""
         cams = {"body": {"w": W // 2, "h": H // 2}}
         if self.wrist:
             for n in self.wrist.names():
                 w0, h0 = self.wrist.size.get(n, (320, 240))
-                cams[n] = {"w": w0, "h": h0} if w0 <= 320 else {"w": w0 // 2, "h": h0 // 2}   # 320 폭 이하면 그대로
+                cams[n] = {"w": w0, "h": h0} if w0 <= 320 else {"w": w0 // 2, "h": h0 // 2}
         return cams
+
+    def rec_cameras(self, name=None):
+        """녹화할 카메라 {이름: {w, h}} — 있는 데이터셋은 그 크기 그대로, 새 데이터셋은 rec_new size (native = 카메라별 원래 크기)."""
+        nat = self.cams_native()
+        inf = self.rec.info(name or self.rec_name)
+        if inf:
+            return {k: {"w": int(v["w"]), "h": int(v["h"])} for k, v in inf["cameras"].items() if k in nat} or nat
+        size = self.rec_new["size"]
+        if size == "native":
+            return nat
+        w, h = (int(x) for x in size.split("x"))
+        return {k: {"w": w, "h": h} for k in nat}
 
     def rec_sample(self):
         """30 Hz 한 틱: state(16) · action(16) · tcp(6) · stage · images. 값이 하나라도 없으면 None (그 틱 건너뜀)."""
@@ -594,7 +613,8 @@ class Runner:
             try:
                 self.rec.start(self.rec_name, self.rec_cameras(), self.rec_state_names(), self.rec_sample,
                                {"side": plan["side"], "plan_id": self.plan_id, "stages": ["시작"] + names,
-                                "plan": self.summary(plan), "step_mode": bool(step_mode), "table_plane": self.table_plane})
+                                "plan": self.summary(plan), "step_mode": bool(step_mode), "table_plane": self.table_plane},
+                               fit=self.rec_new["fit"], task=self.rec_new["task"])
             except (ValueError, RuntimeError) as e:
                 raise HTTPException(409, f"녹화 시작 못 함: {e}")
             self.say(f"녹화 시작 → {self.rec_name}")
@@ -866,6 +886,9 @@ class RunReq(BaseModel):
 class RecReq(BaseModel):
     enabled: bool
     name: str
+    size: Optional[str] = None      # 새 데이터셋: native · 320x240 · 424x240 · 640x480
+    fit: Optional[str] = None       # 새 데이터셋: crop · pad · stretch
+    task: Optional[str] = None      # 새 데이터셋 작업 설명 (있는 데이터셋은 /api/dataset/task)
 
 
 class TableReq(BaseModel):
@@ -980,7 +1003,17 @@ def make_app(r: Runner):
             r.rec.ds_dir(q.name)
         except ValueError as e:
             raise HTTPException(400, str(e))
-        err = r.rec.check_cameras(q.name, r.rec_cameras()) if q.enabled else None
+        if q.size is not None:
+            if q.size != "native" and not re.match(r"^\d{2,4}x\d{2,4}$", q.size):
+                raise HTTPException(400, "카메라 크기: native 또는 가로x세로")
+            r.rec_new["size"] = q.size
+        if q.fit is not None:
+            if q.fit not in camfit.MODES:
+                raise HTTPException(400, f"맞춤 방식: {camfit.MODES}")
+            r.rec_new["fit"] = q.fit
+        if q.task is not None and q.task.strip():
+            r.rec_new["task"] = q.task.strip()[:200]
+        err = r.rec.check_cameras(q.name, r.rec_cameras(q.name)) if q.enabled else None
         if err:
             raise HTTPException(409, err)
         r.rec_on, r.rec_name = bool(q.enabled), q.name
@@ -1064,20 +1097,40 @@ def make_app(r: Runner):
         except RuntimeError as e:
             raise HTTPException(409, str(e))
         r.say(f"에피소드 저장 {res.get('episode')} ({res.get('n')} 프레임, {res.get('mb')} MB)" if res.get("saved") else "에피소드 버림")
+        if res.get("saved"):
+            r.v3.want(r.rec_name)
         r._jsonl({"rec": res})
         return res
 
     @app.get("/api/datasets")
     def api_datasets():
-        return {"datasets": r.rec.datasets(), "cameras_now": r.rec_cameras(),
-                "wrist_err": getattr(r.wrist, "err", {}) if r.wrist else {}}
+        dss = r.rec.datasets()
+        for d in dss:
+            d["v3_state"] = r.v3.state(d["name"])
+        return {"datasets": dss, "cameras_now": r.rec_cameras(), "cameras_native": r.cams_native(), "new": r.rec_new,
+                "fits": camfit.LABEL, "wrist_err": getattr(r.wrist, "err", {}) if r.wrist else {}}
+
+    @app.post("/api/dataset/task")
+    def api_dataset_task(body: dict):
+        name, task = str(body.get("name", "")), str(body.get("task", "")).strip()[:200]
+        if not task:
+            raise HTTPException(400, "작업 설명이 비었음")
+        try:
+            r.rec.set_task(name, task)
+        except (ValueError, FileNotFoundError) as e:
+            raise HTTPException(404, f"데이터셋 없음: {e}")
+        r.v3.want(name)
+        r.say(f"작업 설명 바꿈: {name} → {task} (LeRobot v3 다시 만듦)")
+        return {"ok": True}
 
     @app.get("/api/dataset/zip")
-    def api_dataset_zip(name: str, only_ok: bool = True):
+    def api_dataset_zip(name: str):
         if r.rec.active:
             raise HTTPException(409, "녹화 중")
+        if r.v3.busy(name):
+            raise HTTPException(409, "LeRobot v3 변환 중 — 끝나면 다시")
         try:
-            path = r.rec.make_zip(name, only_ok)
+            path = r.rec.make_zip(name)
         except (ValueError, FileNotFoundError) as e:
             raise HTTPException(404, f"데이터셋 없음: {e}")
         from fastapi.responses import FileResponse
@@ -1115,6 +1168,7 @@ def make_app(r: Runner):
         except (ValueError, FileNotFoundError) as e:
             raise HTTPException(404, f"에피소드 없음: {e}")
         r.say(f"에피소드 지움: {name}/{ep}")
+        r.v3.want(name)
         r._jsonl({"rec_delete": {"name": name, "ep": ep}})
         return {"ok": True}
 
@@ -1352,7 +1406,11 @@ async function dsList(){try{const j=await (await fetch('/api/datasets')).json();
  const cams=Object.entries(j.cameras_now).map(([k,v])=>`${k} ${v.w}×${v.h}`).join(', ');
  const werr=Object.entries(j.wrist_err||{}).map(([k,v])=>`${k}: ${v}`).join(', ');
  $('dslist').innerHTML=`지금 카메라: ${cams}${werr?` · <span class="bad">${werr}</span>`:''}<br>`+
-  j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · <a href="/api/dataset/zip?name=${d.name}&only_ok=true" style="color:#8cf">zip (성공만)</a>`).join('<br>');}catch(e){}}
+  j.datasets.map(d=>`${d.name}: 성공 ${d.ok} / ${d.episodes} 개 · ${d.size_mb} MB · ${v3txt(d)}`).join('<br>');}catch(e){}}
+setInterval(dsList,3000);
+function v3txt(d){const s=d.v3_state||{};if(s.state==='running')return `LeRobot v3 변환 중 ${s.done||0}/${s.total||'?'}`;if(s.state==='queued')return 'LeRobot v3 변환 대기';
+ if(s.state==='error'||s.state==='no_lerobot')return `<span style="color:#f88">LeRobot v3 변환 실패: ${s.msg||''}</span>`;
+ return d.v3?`<a href="/api/dataset/zip?name=${d.name}" style="color:#8cf">LeRobot v3 zip (${d.v3} 개)</a>`:'LeRobot v3 없음 (성공 에피소드 0)';}
 let recInit=false, wristInit=false, spdInit=false;
 $('pyaw').onchange=async()=>{try{await post('/api/place_yaw',{yaw:$('pyaw').value});planOk=false;$('plan').textContent='놓을 때 yaw 를 바꿈 — 다시 클릭';}catch(e){alert(e.message);}};
 $('spd').onchange=async()=>{try{await post('/api/speed',{f:+$('spd').value});planOk=false;$('plan').textContent='속도를 바꿈 — 박스를 다시 클릭';}catch(e){alert(e.message);}};

@@ -161,7 +161,8 @@ class XRTeleop:
             try:
                 r.rec.start(r.rec_name, r.rec_cameras(), r.rec_state_names(), r.rec_sample,
                             {"side": "both", "mode": "vr", "stages": ["시작", "VR 조작", "준비 자세 복귀"], "table_plane": r.table_plane,
-                             "max_vel": self.max_vel})
+                             "max_vel": self.max_vel},
+                            fit=r.rec_new["fit"], task=r.rec_new["task"])
                 r.say(f"녹화 시작 → {r.rec_name} (VR)")
             except (ValueError, RuntimeError) as e:
                 self.stop(f"녹화 시작 못 함: {e}")

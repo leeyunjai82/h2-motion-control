@@ -1,7 +1,7 @@
-title: ACT 학습
+title: 학습
 order: 40
 group: imitation
-desc: 데이터셋 → ACT 학습 → OpenVINO 모델 zip
+desc: LeRobot v3 데이터셋 → lerobot-train → 모델
 modes:
   - id: train_local
     step: train
