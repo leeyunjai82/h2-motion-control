@@ -204,12 +204,18 @@ input[type=file].in{width:100%}
     <div class="card">
       <div class="card-h">Policy · 추론 <span class="tag" id="pol-tag">-</span></div>
       <div class="card-b">
-        <span class="mini">model zip (다른 PC 에서 학습한 모델 — 이 PC 학습은 자동으로 목록에 들어옴)</span>
-        <input class="in" type="file" id="mfile" accept=".zip">
+        <span class="mini">모델 (이 PC 에서 학습한 모델은 자동으로 들어옴 · lerobot 정책 종류 상관없음)</span>
+        <select class="in" id="msel" style="width:100%"></select>
         <div class="row" style="margin-top:8px">
           <span class="mini" style="margin:0">장치</span>
           <select class="in" id="mdev"><option>GPU</option><option>CPU</option><option>NPU</option></select>
-          <button class="btn grow" id="mup">올리고 불러오기</button>
+          <span class="mini" style="margin:0" title="모델에 정보가 없을 때만 씀">맞춤</span>
+          <select class="in" id="mfit"><option value="">모델 정보대로</option><option value="crop">자르기</option><option value="pad">검은 띠</option><option value="stretch">눌러 줄이기</option></select>
+          <button class="btn grow" id="mload">불러오기</button>
+        </div>
+        <div class="row" style="margin-top:6px">
+          <input class="in grow" type="file" id="mfile" accept=".zip" title="다른 PC 에서 학습한 model zip">
+          <button class="btn sm" id="mup">zip 올리기</button>
         </div>
         <div class="msg" id="minfo">불러온 모델 없음</div>
         <div class="sub" id="mcheck"></div>
@@ -414,6 +420,25 @@ function render() {
   if (lg.textContent !== txt) { lg.textContent = txt; if (atEnd) lg.scrollTop = lg.scrollHeight; }
 }
 
+let MODELS = [];
+async function modelList(sel) {
+  try {
+    const j = await (await fetch("/api/models")).json();
+    MODELS = j.models || [];
+    const cur = sel || $("msel").value || (j.loaded && j.loaded.name) || "";
+    $("msel").innerHTML = MODELS.length ? MODELS.map(m => `<option value="${m.name}">${m.name} · ${m.policy}${m.step ? " · " + m.step + " step" : ""}${m.dataset ? " · " + m.dataset : ""}</option>`).join("")
+                                        : '<option value="">모델 없음 — 학습하거나 zip 을 올리세요</option>';
+    if (cur && MODELS.some(m => m.name === cur)) $("msel").value = cur;
+  } catch (e) {}
+}
+modelList();
+async function loadModel(name) {
+  if (!name) { alert("모델을 고르세요"); return; }
+  $("minfo").textContent = `불러오는 중 (${name}) — 추론 프로세스 준비 · 변환에 몇십 초 걸릴 수 있음…`;
+  try { await post("/api/model/load", { name, device: $("mdev").value, fit: $("mfit").value || null }); }
+  catch (e) { alert(e.message); $("minfo").textContent = "실패: " + e.message; }
+}
+$("mload").onclick = () => loadModel($("msel").value);
 $("mup").onclick = async () => {
   const f = $("mfile").files[0];
   if (!f) { alert("모델 zip 을 고르세요"); return; }
@@ -421,13 +446,13 @@ $("mup").onclick = async () => {
   try {
     const r = await fetch("/api/model/upload?filename=" + encodeURIComponent(f.name), { method: "POST", body: f });
     const j = await r.json(); if (!r.ok) throw new Error(j.detail || r.status);
-    $("minfo").textContent = `불러오는 중 (${j.name}, 컴파일 몇 초)…`;
-    await post("/api/model/load", { name: j.name, device: $("mdev").value });
+    $("mfile").value = ""; await modelList(j.name); await loadModel(j.name);
   } catch (e) { alert(e.message); $("minfo").textContent = "실패: " + e.message; }
 };
 $("pstart").onclick = async () => {
   const rep = $("prepeat").checked;
-  if (!confirm("실제 팔이 정책대로 움직입니다. 주변을 비우고 E-stop 을 손에 두세요." +
+  const wn = (st.policy || {}).warn || [];
+  if (!confirm("실제 팔이 정책대로 움직입니다. 주변을 비우고 E-stop 을 손에 두세요." + (wn.length ? "\n\n주의:\n· " + wn.join("\n· ") : "") +
                (rep ? "\n반복 켬: 한 회가 정상으로 끝나면 2 초 뒤 다음 회를 자동으로 시작합니다 ([■ 정지] 로 멈춤)." : "") + "\n시작할까요?")) return;
   try { await post("/api/policy/start", { repeat: rep }); } catch (e) { alert(e.message); }
 };
@@ -435,15 +460,20 @@ $("pstop").onclick = () => post("/api/policy/stop").catch(e => alert(e.message))
 
 function renderModel() {
   const p = st.policy || {}, m = p.loaded;
-  $("minfo").innerHTML = m ? `<b>${m.name}</b><br><span class="sub">${m.device} · ${SIDE_KO[m.side] || m.side} · 추론 ${m.infer_ms} ms · 에피소드 ${m.episodes ?? "-"} · 스텝 ${m.steps ?? "-"}</span>`
+  const FIT_KO = { crop: "자르기", pad: "검은 띠", stretch: "눌러 줄이기" };
+  $("minfo").innerHTML = m ? `<b>${m.name}</b> <span class="sub">${m.policy} · ${m.backend === "openvino" ? "OpenVINO" : "torch"} ${m.device} · 첫 추론 ${m.infer_ms} ms</span><br>` +
+      `<span class="sub">카메라 ${Object.entries(m.sizes || {}).map(([k, v]) => `${k} ${v}`).join(" · ")} · ${FIT_KO[m.fit] || m.fit}` +
+      `${m.dataset ? ` · ${m.dataset} ${m.episodes ?? "-"} 에피소드` : ""}${m.steps ? ` · ${m.steps} step` : ""}${m.task ? ` · 작업 "${m.task}"` : ""}</span>`
                            : ($("minfo").textContent.startsWith("올리는") || $("minfo").textContent.startsWith("불러오는") ? $("minfo").textContent : "불러온 모델 없음");
-  const bad = p.check || [];
-  $("mcheck").innerHTML = m && !p.running ? (bad.length ? bad.map(b => `<div class="warn">· ${b}</div>`).join("") : '<span class="ok">시작 조건 OK</span>') : "";
+  const bad = p.check || [], wn = p.warn || [];
+  $("mcheck").innerHTML = m && !p.running ? (bad.length ? bad.map(b => `<div class="bad">· ${b}</div>`).join("") : '<span class="ok">시작 조건 OK</span>') +
+      wn.map(b => `<div class="warn">· ${b}</div>`).join("") : "";
   const waitNext = !p.running && p.waiting_next && /다음 회/.test(p.phase || "");
   $("pstart").disabled = !m || p.running || waitNext || bad.length > 0;
   $("pstop").disabled = !p.running && !waitNext;
   const runNo = p.repeat ? `${p.run_no} 회째 · ` : "";
-  $("pstate").innerHTML = p.running ? `<span class="ok">● 실행 중</span> ${runNo}${p.phase || ""} · ${p.step} 스텝 · 추론 ${p.infer_ms ?? "-"} ms`
+  $("pstate").innerHTML = p.running ? `<span class="ok">● 실행 중</span> ${runNo}${p.phase || ""} · ${p.step} 스텝 · 추론 ${p.infer_ms ?? "-"} ms` +
+                          (p.wait_s > 0.3 ? ` · <span class="warn">추론 기다림 ${p.wait_s} 초 (제자리)</span>` : "")
                         : waitNext ? `<span class="warn">● ${p.phase}</span> <span class="sub">— 끝: ${p.why_end}</span>`
                         : (p.why_end ? `<span class="sub">끝: ${p.why_end}</span>` : "");
   $("pol-tag").textContent = p.running ? "실행 중" : m ? "준비" : "-";

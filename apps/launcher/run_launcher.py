@@ -999,19 +999,22 @@ def summary():
                 tot += 1
                 ok += bool(m.get("ok"))
                 last = max(last, str(m.get("created") or ""))
-            out["datasets"].append({"name": n, "ok": ok, "total": tot, "last": last})
+            h2 = _read_json(os.path.join(ds_dir, n, "lerobot", "meta", "h2.json")) or {}
+            out["datasets"].append({"name": n, "ok": ok, "total": tot, "last": last, "v3": len(h2.get("episodes", [])) if h2 else 0})
     if os.path.isdir(pol_dir):
         for n in sorted(os.listdir(pol_dir)):
-            m = _read_json(os.path.join(pol_dir, n, "meta.json"))
-            if m:
-                out["models"].append({"name": n, "dataset": m.get("dataset"), "steps": m.get("steps"),
-                                      "val_err_deg": m.get("val_err_deg"), "created": m.get("exported") or m.get("created")})
+            c = _read_json(os.path.join(pol_dir, n, "config.json"))
+            if c and os.path.isfile(os.path.join(pol_dir, n, "model.safetensors")):
+                h = _read_json(os.path.join(pol_dir, n, "h2_model.json")) or {}
+                out["models"].append({"name": n, "policy": c.get("type"), "dataset": h.get("dataset"), "step": h.get("step"),
+                                      "created": h.get("trained") or time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(
+                                          os.path.getmtime(os.path.join(pol_dir, n, "model.safetensors"))))})
     jd = os.path.join(tr_dir, "jobs")
     if os.path.isdir(jd):
         for n in sorted(os.listdir(jd), reverse=True)[:8]:
             j = _read_json(os.path.join(jd, n, "job.json"))
             if j:
-                out["jobs"].append({k: j.get(k) for k in ("id", "dataset", "status", "step", "total", "val_err_deg", "created")})
+                out["jobs"].append({k: j.get(k) for k in ("id", "dataset", "status", "step", "total", "loss", "created")})
     out["datasets"].sort(key=lambda d: d["last"], reverse=True)
     out["models"].sort(key=lambda d: str(d["created"] or ""), reverse=True)
     return out
@@ -1046,8 +1049,8 @@ def _queue_when_up():
         if _trainer_up():
             w = TRAIN["want"]
             try:
-                _tr("/api/jobs", {"dataset": w["dataset"], "params": {"steps": w["steps"]}})
-                TRAIN.update(want=None, msg=f"학습 시작: {w['dataset']} · {w['steps']} step")
+                _tr("/api/jobs", {"dataset": w["dataset"], "params": {"steps": w["steps"], "policy": w.get("policy", "act")}})
+                TRAIN.update(want=None, msg=f"학습 시작: {w['dataset']} · {w.get('policy', 'act')} · {w['steps']} step")
             except Exception as e:  # noqa: BLE001
                 TRAIN.update(want=None, msg=f"학습 시작 실패: {e}")
             return
@@ -1059,17 +1062,20 @@ def _queue_when_up():
 @app.post("/train/start")
 def train_start(body: dict, replace: bool = False):
     ds, steps = str(body.get("dataset") or ""), int(body.get("steps") or 40000)
+    policy = str(body.get("policy") or "act")
     if not ds:
         raise HTTPException(400, "데이터셋을 고르세요")
+    if not re.match(r"^[a-z0-9_]{1,32}$", policy):
+        raise HTTPException(400, "정책 종류")
     if _trainer_up():
         try:
-            _tr("/api/jobs", {"dataset": ds, "params": {"steps": steps}})
+            _tr("/api/jobs", {"dataset": ds, "params": {"steps": steps, "policy": policy}})
         except Exception as e:  # noqa: BLE001
             raise HTTPException(409, f"학습 시작 실패: {e}")
-        TRAIN["msg"] = f"학습 시작: {ds} · {steps} step"
+        TRAIN["msg"] = f"학습 시작: {ds} · {policy} · {steps} step"
         return {"ok": True}
     start_mode("train_local", replace)          # 떠 있는 것이 있으면 409 conflicts (화면이 확인 후 replace)
-    TRAIN.update(want={"dataset": ds, "steps": steps}, msg="학습 서버 켜는 중 …")
+    TRAIN.update(want={"dataset": ds, "steps": steps, "policy": policy}, msg="학습 서버 켜는 중 …")
     threading.Thread(target=_queue_when_up, daemon=True).start()
     return {"ok": True}
 
@@ -1123,94 +1129,35 @@ def infer_status():
 
 
 # ==========================================
-# LeRobot v3.0 내보내기 (tools/export_lerobot.py — lerobot 가상환경의 python 으로, 사용자 권한) → data/lerobot/<이름>
+# 데이터셋 LeRobot v3 zip (수집 PC 의 data/datasets/<이름>/lerobot — 수집하면 자동으로 만들어짐)
 # ==========================================
-EXPORT = {"proc": None, "dataset": "", "lines": deque(maxlen=200), "out": "", "rc": None}
-
-
-def lerobot_python():
-    home = USER_PW.pw_dir if USER_PW else os.path.expanduser("~")
-    return str(local_cfg().get("lerobot_python") or os.path.join(home, "miniconda3", "envs", "lerobot", "bin", "python"))
-
-
-def _export_pump(p):
-    for ln in p.stdout:
-        ln = ln.rstrip()
-        if ln and not ln.startswith(("Svt[", "[mp4 @")):
-            EXPORT["lines"].append(ln)
-    EXPORT["rc"] = p.wait()
-
-
-@app.post("/export/lerobot")
-def export_lerobot(body: dict):
-    ds, task = str(body.get("dataset") or ""), str(body.get("task") or "").strip()
-    if EXPORT["proc"] is not None and EXPORT["proc"].poll() is None:
-        raise HTTPException(409, f"내보내는 중: {EXPORT['dataset']}")
-    if not re.match(r"^[A-Za-z0-9_\-]{1,40}$", ds) or not task:
-        raise HTTPException(400, "데이터셋과 작업 설명 (영어 문장) 을 넣으세요")
-    src = os.path.join(paths.data_dir("datasets", legacy="gripper/data"), ds)
-    if not os.path.isfile(os.path.join(src, "info.json")):
-        raise HTTPException(404, f"데이터셋 없음: {ds}")
-    py = lerobot_python()
-    if not os.path.isfile(py):
-        raise HTTPException(409, f"lerobot 가상환경 없음: {py} — 한 번 설치: conda create -n lerobot python=3.10 → "
-                                 "pip install 'torch<2.11' 'torchvision<0.26' --index-url https://download.pytorch.org/whl/cpu → "
-                                 "pip install lerobot==0.4.4 (다른 위치면 config/local.yaml lerobot_python)")
-    base = os.path.join(paths.DATA_DIR, "lerobot")
-    os.makedirs(base, exist_ok=True)
-    _own(paths.DATA_DIR)
-    _own(base)
-    out, k = os.path.join(base, ds), 2
-    while os.path.exists(out):
-        out, k = os.path.join(base, f"{ds}_{k}"), k + 1
-    repo = f"{local_cfg().get('lerobot_repo_prefix') or 'local'}/{os.path.basename(out)}"
-    drop = USER_PW is not None
-    p = subprocess.Popen([py, "-u", os.path.join(ROOT, "tools", "export_lerobot.py"), src, "--out", out, "--repo-id", repo, "--task", task],
-                         cwd=ROOT, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1,
-                         preexec_fn=_as_user if drop else None,
-                         env={**(_user_env() if drop else os.environ), "HF_HUB_OFFLINE": "1"})
-    EXPORT.update(proc=p, dataset=ds, out=out, rc=None)
-    EXPORT["lines"].clear()
-    threading.Thread(target=_export_pump, args=(p,), daemon=True).start()
-    return {"ok": True, "out": out}
-
-
-@app.get("/export/status")
-def export_status():
-    p = EXPORT["proc"]
-    return {"running": p is not None and p.poll() is None, "dataset": EXPORT["dataset"], "out": EXPORT["out"], "rc": EXPORT["rc"],
-            "last": list(EXPORT["lines"])[-3:]}
-
-
-@app.post("/train/install/{jid}")
-def train_install(jid: str):
-    """학습이 끝난 model zip → data/policies/<이름> (추론 화면 모델 목록에 나옴)."""
-    import io
+@app.get("/dataset/zip")
+def dataset_zip(name: str):
     import zipfile
-    if not re.match(r"^[A-Za-z0-9_.\-]{1,64}$", jid):
-        raise HTTPException(400, "작업 이름")
-    try:
-        raw = _tr(f"/api/jobs/{jid}/model.zip", timeout=60)
-    except Exception as e:  # noqa: BLE001
-        raise HTTPException(409, f"model zip 을 못 받음: {e}")
-    from pitron.learning import formats
-    with zipfile.ZipFile(io.BytesIO(raw)) as z:
-        roots = {n.split("/", 1)[0] for n in z.namelist() if not n.endswith("/")}
-        if len(roots) != 1:
-            raise HTTPException(409, "model zip 구조 이상")
-        root = roots.pop()
-        meta = json.loads(z.read(f"{root}/meta.json"))
-        if meta.get("format") != formats.MODEL_FORMAT:
-            raise HTTPException(409, f"그리퍼 모델 아님 ({meta.get('format')})")
-        dst = os.path.join(paths.data_dir("policies", legacy="gripper/models"), root)
-        os.makedirs(dst, exist_ok=True)
-        for fn in formats.MODEL_FILES:
-            with open(os.path.join(dst, fn), "wb") as f:
-                f.write(z.read(f"{root}/{fn}"))
-            _own(os.path.join(dst, fn))
-        _own(dst)
-        _own(os.path.dirname(dst))
-    return {"ok": True, "name": root}
+    from fastapi.responses import StreamingResponse
+    if not re.match(r"^[A-Za-z0-9_\-]{1,40}$", name):
+        raise HTTPException(400, "데이터셋 이름")
+    src = os.path.join(paths.data_dir("datasets", legacy="gripper/data"), name, "lerobot")
+    if not os.path.isfile(os.path.join(src, "meta", "info.json")):
+        raise HTTPException(404, "LeRobot v3 없음 (성공 에피소드 0 또는 변환 전 — 수집 화면에서 확인)")
+    tmp = os.path.join(paths.DATA_DIR, f".{name}_lerobot.zip")
+    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_STORED) as z:
+        for r, _, fs in os.walk(src):
+            for fn in sorted(fs):
+                z.write(os.path.join(r, fn), os.path.join(name, os.path.relpath(os.path.join(r, fn), src)))
+
+    def gen():
+        try:
+            with open(tmp, "rb") as f:
+                while True:
+                    b = f.read(1 << 20)
+                    if not b:
+                        break
+                    yield b
+        finally:
+            os.remove(tmp)
+    return StreamingResponse(gen(), media_type="application/zip",
+                             headers={"Content-Disposition": f'attachment; filename="{name}_lerobot.zip"'})
 
 
 @app.post("/app/{mid}/start")
@@ -1384,15 +1331,15 @@ button.big{padding:16px 10px;font-size:15px}
       <div class="vh"><h2>모방학습</h2><span class="d">수집 → 데이터셋 저장소 · 학습 → 모델 저장소 · 추론 — 각자 따로 시작</span></div>
       <div class="flow">
         <div class="fc" id="fc-collect"><div class="ft">데이터 수집</div>
-          <div class="fx">저장: data/datasets/&lt;이름&gt;</div>
+          <div class="fx">저장: data/datasets/&lt;이름&gt; · LeRobot v3 는 자동 (&lt;이름&gt;/lerobot)</div>
           <div class="lst" id="col-list"></div>
-          <div class="exp"><input id="exp-task" placeholder="LeRobot 작업 설명 (영어) — 예: pick up the cube and put it in the bin">
-            <button class="ok2 sm" id="exp-b" onclick="exportLerobot()">LeRobot v3 로 내보내기</button></div>
-          <div class="fx" id="exp-st"></div>
+          <div class="exp"><span class="fx" id="exp-st" style="flex:1"></span>
+            <button class="ok2 sm" id="exp-b" onclick="dlDataset()">⬇ LeRobot v3 zip</button></div>
           <div id="col-b"></div>
           <div class="fh">수집 화면에서 데이터셋 이름 → [수집 켬] → Quest 로 시연 → 에피소드마다 저장. 같은 이름이면 이어서 쌓임</div></div>
         <div class="fc" id="fc-train"><div class="ft">학습</div>
           <label class="fl">데이터셋 (저장소에서)<select id="tr-ds"></select></label>
+          <label class="fl">정책 종류<select id="tr-pol"><option>act</option><option>diffusion</option><option>smolvla</option><option>pi0</option><option>pi05</option><option>vqbet</option><option>tdmpc</option></select></label>
           <label class="fl">학습 step<input id="tr-steps" type="number" value="40000" min="1000" step="1000"></label>
           <div id="tr-prog"></div><div id="tr-b"></div>
           <div class="lst" id="tr-list"></div>
@@ -1558,34 +1505,29 @@ function renderHome(){if(!ST)return;
   // 수집
   if(!SELDS&&dsets[0])SELDS=dsets[0].name;
   $('col-list').innerHTML=dsets.length?dsets.map(d=>`<div class="ds ${d.name===SELDS?'sel':''}" onclick="SELDS='${esc(d.name)}';renderHome()"><span>${esc(d.name)}</span><span>${d.ok}/${d.total} · ${esc((d.last||'').slice(5,16).replace('T',' '))}</span></div>`).join(''):'<div class="em">아직 없음</div>';
-  const ex=EXP;$('exp-b').disabled=!SELDS||(ex&&ex.running);
-  $('exp-st').textContent=ex&&ex.dataset?(ex.running?`내보내는 중: ${ex.dataset} — ${(ex.last||[]).slice(-1)[0]||''}`:
-    ex.rc===0?`✓ LeRobot v3: ${ex.out}`:ex.rc!==null?`❌ 실패 (rc ${ex.rc}): ${(ex.last||[]).slice(-1)[0]||''}`:''):(SELDS?`선택: ${SELDS} — 목록에서 다른 데이터셋을 누르면 바뀜`:'');
+  const sd=dsets.find(d=>d.name===SELDS);$('exp-b').disabled=!(sd&&sd.v3);
+  $('exp-st').textContent=sd?(sd.v3?`${sd.name} · LeRobot v3 ${sd.v3} 에피소드${sd.v3!==sd.ok?` (성공 ${sd.ok} — 맞추는 중)`:''}`:`${sd.name} · LeRobot v3 아직 없음`):'';
   $('col-b').innerHTML=isRun(['collect','pick_sim'])?btn('ok2','수집 화면 열기','',"go('collect')")+btn('st','끝내기','',"appStop()"):
     btn('go','VR 수집 시작','실제 로봇 · Quest'+robotTip,"appStart('collect')",nr)+btn('ok2','가상 연습','로봇 없이',"appStart('pick_sim')");
   // 학습
   const sel=$('tr-ds'),cur=sel.value,ok=dsets.filter(d=>d.ok>0);
-  const opts=ok.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${d.ok} 에피소드</option>`).join('')||'<option value="">데이터셋 없음</option>';
+  const okv=dsets.filter(d=>d.v3>0);
+  const opts=okv.map(d=>`<option value="${esc(d.name)}">${esc(d.name)} · ${d.v3} 에피소드</option>`).join('')||'<option value="">데이터셋 없음</option>';
   if(sel.dataset.h!==opts){sel.innerHTML=opts;sel.dataset.h=opts;if(cur)sel.value=cur;}
   const jr=TR&&TR.jobs.find(x=>x.status==='running'||x.status==='queued');
-  $('tr-prog').innerHTML=jr?`<div class="fx">${esc(jr.dataset)} · ${jr.step||0}/${jr.total} · loss ${jr.loss==null?'-':(+jr.loss).toFixed(3)} · val ${f2(jr.val_err_deg)} · 남은 ${jr.eta_s?Math.round(jr.eta_s/60)+'분':'-'}</div><div class="bar"><b style="width:${Math.round(100*(jr.step||0)/(jr.total||1))}%"></b></div>`:
+  $('tr-prog').innerHTML=jr?`<div class="fx">${esc(jr.dataset)} · ${esc((jr.params||{}).policy||'')} · ${jr.step||0}/${jr.total} · loss ${jr.loss==null?'-':(+jr.loss).toFixed(3)} · 남은 ${jr.eta_s?Math.round(jr.eta_s/60)+'분':'-'}</div><div class="bar"><b style="width:${Math.round(100*(jr.step||0)/(jr.total||1))}%"></b></div>`:
     (TR&&TR.msg?`<div class="fx">${esc(TR.msg)}</div>`:'');
-  $('tr-b').innerHTML=jr?btn('ok2','학습 화면 열기','',"go('train')"):TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로',"trainStart()",!ok.length);
-  $('tr-list').innerHTML=TR&&TR.up?(TR.jobs.length?TR.jobs.map(x=>`<div><span>${esc(x.dataset)} → ${esc(x.saved_model||x.status)}</span><span>${x.status==='running'?Math.round(100*(x.step||0)/(x.total||1))+'%':'val '+f2(x.val_err_deg)}</span></div>`).join(''):'<div class="em">학습 작업 없음</div>'):'';
+  $('tr-b').innerHTML=jr?btn('ok2','학습 화면 열기','',"go('train')"):TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로',"trainStart()",!okv.length);
+  $('tr-list').innerHTML=TR&&TR.up?(TR.jobs.length?TR.jobs.map(x=>`<div><span>${esc(x.dataset)} → ${esc(x.saved_model||x.status)}</span><span>${x.status==='running'?Math.round(100*(x.step||0)/(x.total||1))+'%':esc((x.params||{}).policy||'')}</span></div>`).join(''):'<div class="em">학습 작업 없음</div>'):'';
   // 추론
-  const ms2=$('inf-md'),mc=ms2.value,mo=ms.map(m=>`<option value="${esc(m.name)}">${esc(m.name)} · val ${f2(m.val_err_deg)}</option>`).join('')||'<option value="">모델 없음</option>';
+  const ms2=$('inf-md'),mc=ms2.value,mo=ms.map(m=>`<option value="${esc(m.name)}">${esc(m.name)} · ${esc(m.policy||'')}${m.step?' · '+m.step+' step':''}</option>`).join('')||'<option value="">모델 없음</option>';
   if(ms2.dataset.h!==mo){ms2.innerHTML=mo;ms2.dataset.h=mo;if(mc)ms2.value=mc;}
   $('inf-x').textContent=INF.msg||(ms.length?`모델 ${ms.length} 개 · 저장: data/policies/<이름>`:'학습하면 여기에 생김');
   $('inf-b').innerHTML=isRun(['infer','pick_sim'])?btn('ok2','추론 화면 열기','',"go('infer')")+btn('st','끝내기','',"appStop()"):
     btn('go','추론 시작','실제 로봇'+robotTip,"inferStart(true)",!ms.length||nr)+btn('ok2','가상으로 실행','로봇 없이',"inferStart(false)",!ms.length);
   for(const [k,ids] of [['collect',['collect','pick_sim']],['train',['train_local']],['infer',['infer','pick_sim']]])$('fc-'+k).classList.toggle('run',isRun(ids)||(k==='train'&&!!jr));}
-let INF={msg:'',loading:false},SELDS='',EXP=null;
-async function exportLerobot(){const task=$('exp-task').value.trim();if(!SELDS)return;
-  if(!task){alert('LeRobot 작업 설명 (영어 문장) 을 넣으세요 — 예: pick up the cube and put it in the bin');$('exp-task').focus();return;}
-  if(!await warn('LeRobot v3 로 내보내기',`${esc(SELDS)} → data/lerobot/${esc(SELDS)}`,'· 원본은 그대로, 새 폴더에 만듦 (성공 에피소드만)\n· 카메라 영상을 MP4 로 인코딩 — CPU 를 많이 씀 (수집 · 추론 중이면 끝난 뒤에)\n· 작업 설명: '+esc(task),'내보내기'))return;
-  try{await (async()=>{const r=await fetch('/export/lerobot',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:SELDS,task})});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||r.status);})();
-    toast('내보내기 시작');}catch(e){alert(e.message);}pollExport();}
-async function pollExport(){try{EXP=await(await fetch('/export/status')).json();renderHome();}catch(e){}}
+let INF={msg:'',loading:false},SELDS='';
+function dlDataset(){if(SELDS)location.href='/dataset/zip?name='+encodeURIComponent(SELDS);}
 async function inferStart(real){const md=$('inf-md').value,dev=$('inf-dev').value;if(!md)return;
   if(!await warn('추론 시작',`${esc(md)} (${dev})`+(real?' — 실제 로봇이 움직입니다':' — 로봇 없이'),real?'· 거치대 · FSM '+FSM.run+' 확인\n· 주변을 비우고 E-STOP 을 손에\n· 그리퍼 서비스를 켜고 카메라 숙임을 3 초 잽니다':'· 가짜 로봇 · 가짜 카메라','시작'))return;
   const body=JSON.stringify({model:md,device:dev,real});
@@ -1595,17 +1537,17 @@ async function inferStart(real){const md=$('inf-md').value,dev=$('inf-dev').valu
     r=await fetch('/infer/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body});d=await r.json().catch(()=>({}));}
   if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));pollInfer();}
 async function pollInfer(){try{INF=await(await fetch('/infer/status')).json();renderHome();}catch(e){}}
-async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value||40000;if(!ds)return;
-  if(!await warn('학습 시작',`${esc(ds)} · ${steps} step`,'· 이 PC 의 GPU 로 학습 (최대 클럭 제한)\n· 로봇 기능은 꺼집니다 (PC 멈춤 방지) — 떠 있으면 확인 후 정상 종료\n· 몇 시간 걸림 — 진행은 이 카드에','학습 시작'))return;
-  let r=await fetch('/train/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps})}),d=await r.json().catch(()=>({}));
+async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value||40000,policy=$('tr-pol').value;if(!ds)return;
+  if(!await warn('학습 시작',`${esc(ds)} · ${esc(policy)} · ${steps} step`,'· 이 PC 의 GPU 로 학습 (최대 클럭 제한)\n· 로봇 기능은 꺼집니다 (PC 멈춤 방지) — 떠 있으면 확인 후 정상 종료\n· 몇 시간 걸림 — 진행은 이 카드에','학습 시작'))return;
+  let r=await fetch('/train/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps,policy})}),d=await r.json().catch(()=>({}));
   if(r.status===409&&d.detail&&d.detail.conflicts){const cs=d.detail.conflicts;
     if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 학습을 시작할까요?`,cs.map(c=>`· ${esc(c.label)} — ${esc(c.what.join(', '))}`+c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n'),'끄고 시작'))return;
-    r=await fetch('/train/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps})});d=await r.json().catch(()=>({}));}
+    r=await fetch('/train/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps,policy})});d=await r.json().catch(()=>({}));}
   if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));else toast('학습 시작 — 학습 서버가 뜨면 작업이 들어갑니다');pollTrain();}
 async function pollTrain(){try{TR=await(await fetch('/train/status')).json();renderHome();}catch(e){}}
 async function pollSummary(){try{SUM=await(await fetch('/summary')).json();renderHome();}catch(e){}}
 fetch('/menu').then(r=>r.json()).then(m=>{MENU=m;buildMenu();go(location.hash.slice(1)||'home');poll();pollSummary();});
-setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();setInterval(pollInfer,2000);setInterval(pollExport,2000);
+setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();setInterval(pollInfer,2000);
 </script></body></html>"""
 
 

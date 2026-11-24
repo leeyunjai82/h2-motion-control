@@ -1056,7 +1056,7 @@ def make_app(r: Runner):
             async for chunk in request.stream():
                 f.write(chunk)
         try:
-            name = pol.install_zip(tmp)
+            name = pol.install_zip(tmp, filename)
         except (ValueError, KeyError, zipfile.BadZipFile) as e:
             raise HTTPException(400, f"모델 zip 이상: {e}")
         finally:
@@ -1070,10 +1070,10 @@ def make_app(r: Runner):
         if not pol.NAME_RE.match(name) or dev not in ("CPU", "GPU", "NPU", "AUTO"):
             raise HTTPException(400, "모델 이름 · 장치 (CPU/GPU/NPU/AUTO)")
         try:
-            info = r.pol.load(name, dev)
+            info = r.pol.load(name, dev, task=str(body.get("task") or ""), fit=body.get("fit") or None)
         except Exception as e:  # noqa: BLE001
             raise HTTPException(409, f"불러오기 실패: {type(e).__name__}: {e}")
-        r.say(f"모델 불러옴 {name} — {dev}, 컴파일 {info['compile_s']} 초, 추론 {info['infer_ms']} ms")
+        r.say(f"모델 불러옴 {name} — {info['policy']} · {info['backend']} {dev}, 준비 {info['load_s']} 초, 첫 추론 {info['infer_ms']} ms")
         return info
 
     @app.post("/api/policy/start")
@@ -1222,7 +1222,8 @@ def make_app(r: Runner):
                   "cam_pitch_err": r.cam_pitch.err if r.cam_pitch else None,
                   "cam_pitch_lim": [CAM_PITCH_OK, CAM_PITCH_MAX],
                   "policy": {"loaded": r.pol.info(), **r.pol.state,
-                             "check": r.pol.check() if r.pol.policy is not None and not r.pol.running() else []},
+                             "check": r.pol.check() if r.pol.policy is not None and not r.pol.running() else [],
+                             "warn": r.pol.warnings()},
                   "rec": {"on": r.rec_on, "name": r.rec_name, "active": r.rec.active, "n": r.rec.n, "last": r.rec.last,
                           "pending": None if r.rec.pending is None else {k: v for k, v in r.rec.pending.items()}}}
         g = r.grip.snapshot()
@@ -1416,7 +1417,7 @@ $('pyaw').onchange=async()=>{try{await post('/api/place_yaw',{yaw:$('pyaw').valu
 $('spd').onchange=async()=>{try{await post('/api/speed',{f:+$('spd').value});planOk=false;$('plan').textContent='속도를 바꿈 — 박스를 다시 클릭';}catch(e){alert(e.message);}};
 setInterval(async()=>{if(spdInit)return;try{const s=await (await fetch('/api/state')).json(); if(s.speed){$('spd').value=String(s.speed);spdInit=true;}}catch(e){}},800);
 async function modelList(){try{const j=await (await fetch('/api/models')).json();
- $('msel').innerHTML=j.models.map(m=>`<option value="${m.name}">${m.name} (${m.side}, ${m.episodes} 에피소드, 검증 ${m.val_err_deg==null?'-':m.val_err_deg.toFixed(1)+'°'})</option>`).join('');
+ $('msel').innerHTML=j.models.map(m=>`<option value="${m.name}">${m.name} (${m.policy}${m.step?', '+m.step+' step':''}${m.dataset?', '+m.dataset:''})</option>`).join('');
  if(j.loaded) $('msel').value=j.loaded.name;}catch(e){}}
 modelList();
 $('mup').onclick=async()=>{const f=$('mfile').files[0]; if(!f){alert('zip 파일을 고르세요');return;}
@@ -1424,15 +1425,15 @@ $('mup').onclick=async()=>{const f=$('mfile').files[0]; if(!f){alert('zip 파일
   if(!r.ok) throw new Error(j.detail||r.status); await modelList(); $('msel').value=j.name;}catch(e){alert(e.message);}};
 $('mload').onclick=async()=>{ $('minfo').textContent='불러오는 중 (컴파일)…';
  try{const i=await post('/api/model/load',{name:$('msel').value,device:$('mdev').value});
-  $('minfo').textContent=`${i.name} · ${i.side} · ${i.device} · 카메라 ${i.cameras.join(', ')} · 추론 ${i.infer_ms} ms (30 Hz 는 33 ms 안)`;}catch(e){$('minfo').textContent='';alert(e.message);}};
+  $('minfo').textContent=`${i.name} · ${i.policy} · ${i.backend} ${i.device} · 카메라 ${i.cameras.join(', ')} · 첫 추론 ${i.infer_ms} ms`;}catch(e){$('minfo').textContent='';alert(e.message);}};
 $('pstart').onclick=async()=>{if(!confirm('정책이 팔과 그리퍼를 움직입니다. 비상정지를 손에 쥐었습니까?\n멈춤: 빨간 [정지] 또는 Esc'))return;
  try{await post('/api/policy/start');}catch(e){alert(e.message);}};
 document.addEventListener('keydown',e=>{if(e.key==='Escape')post('/api/stop').catch(()=>{});});
 setInterval(async()=>{try{const s=await (await fetch('/api/state')).json(); const p=s.policy; if(!p)return;
- if(p.loaded&&!$('minfo').textContent) $('minfo').textContent=`${p.loaded.name} · ${p.loaded.side} · ${p.loaded.device} · 추론 ${p.loaded.infer_ms} ms`;
- $('pcheck').innerHTML=p.loaded&&!p.running?(p.check.length?p.check.map(x=>`<span class="bad">✗ ${x}</span>`).join('<br>'):'<span class="ok">시작 조건 OK</span>'):'';
+ if(p.loaded&&!$('minfo').textContent) $('minfo').textContent=`${p.loaded.name} · ${p.loaded.policy} · ${p.loaded.backend} ${p.loaded.device} · 첫 추론 ${p.loaded.infer_ms} ms`;
+ $('pcheck').innerHTML=p.loaded&&!p.running?(p.check.length?p.check.map(x=>`<span class="bad">✗ ${x}</span>`).join('<br>'):'<span class="ok">시작 조건 OK</span>')+(p.warn||[]).map(x=>`<br><span style="color:#fb4">· ${x}</span>`).join(''):'';
  $('pstart').disabled=!(p.loaded&&!p.running&&p.check.length===0);
- $('pstat').innerHTML=p.running?`<span style="color:#f55">● 정책 실행 중 — ${p.phase} · ${p.step} 스텝 · 추론 ${p.infer_ms??'-'} ms</span>`:(p.why_end?`마지막: ${p.why_end}`:'');}catch(e){}},500);
+ $('pstat').innerHTML=p.running?`<span style="color:#f55">● 정책 실행 중 — ${p.phase} · ${p.step} 스텝 · 추론 ${p.infer_ms??'-'} ms${p.wait_s>0.3?' · 추론 기다림 '+p.wait_s+' 초':''}</span>`:(p.why_end?`마지막: ${p.why_end}`:'');}catch(e){}},500);
 async function recDecide(keep){try{const r=await post('/api/rec/decide',{keep});dsList();}catch(e){alert(e.message);}}
 $('reckeep').onclick=()=>recDecide(true);
 $('recdrop').onclick=()=>{if(confirm('이 에피소드를 버립니다.'))recDecide(false);};
