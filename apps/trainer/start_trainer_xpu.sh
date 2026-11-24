@@ -29,7 +29,7 @@ if [ -n "$FREQ" ]; then
   echo "[trainer] GPU 최대 클럭 $OLD → $XPU_MAX_MHZ MHz 로 제한 (끌 때 되돌림, sudo 비밀번호를 물을 수 있음)"
   echo "$XPU_MAX_MHZ" | sudo tee "$FREQ" >/dev/null || { echo "❌ GPU 클럭 제한 실패 — Intel GPU 학습은 위험 (PC 멈춤). 웹에서 학습 장치 CPU 로" >&2; }
   echo "[trainer] 지금 GPU 최대 클럭: $(cat "$FREQ") MHz"
-else
+elif [ "${XPU_CAP_BY_LAUNCHER:-}" != "1" ]; then
   echo "⚠ GPU 클럭 설정 파일 (xe tile0/gt0/freq0/max_freq) 없음 — 제한 없이 띄움" >&2
 fi
 restore() {

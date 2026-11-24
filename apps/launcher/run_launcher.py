@@ -587,12 +587,17 @@ def xpu_cap(on):
         old = open(f).read().strip()
         with open(f, "w") as fh:
             fh.write(str(mhz))
-        XPU.update(file=f, old=old)
+        XPU.update(file=f, old=old, pre=set(_pgrep("apps/trainer/train_act.py")))
         job.lines.append(f"[launcher] GPU 최대 클럭 {old} → {open(f).read().strip()} MHz (학습 끝나면 되돌림)")
     elif XPU["file"]:
-        subprocess.run(["pkill", "-TERM", "-f", "apps/trainer/train_act.py"], check=False)   # 클럭을 풀기 전에 학습부터 끔
-        time.sleep(3)
-        subprocess.run(["pkill", "-KILL", "-f", "apps/trainer/train_act.py"], check=False)
+        mine = [p for p in _pgrep("apps/trainer/train_act.py") if p not in XPU.get("pre", set())]   # 런처가 띄운 학습만
+        for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 0)):    # 클럭을 풀기 전에 학습부터 끔
+            for p in mine:
+                try:
+                    os.kill(p, sig)
+                except ProcessLookupError:
+                    pass
+            time.sleep(wait)
         with open(XPU["file"], "w") as fh:
             fh.write(XPU["old"])
         job.lines.append(f"[launcher] GPU 최대 클럭 되돌림 → {XPU['old']} MHz")
@@ -608,14 +613,203 @@ def _watch_end(p, m):
         dex1_stop()          # 잡기 웹 · arm_server 가 먼저 끝난 뒤 (start_gripper.sh 와 같은 순서)
 
 
-def start_mode(mid):
+# ==========================================
+# 이미 떠 있는 것 (터미널에서 띄운 것 · 남은 프로그램) — 찾아서 보여 주고, 동의하면 Ctrl+C 와 같은 방식으로 끈 뒤 시작
+# ==========================================
+WATCH_PORTS = {p: n for n, p in ports.PORTS.items() if n != "launcher"}
+
+
+def _ppid(pid):
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return int(f.read().rsplit(")", 1)[1].split()[1])
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def _cmd(pid):
+    try:
+        with open(f"/proc/{pid}/cmdline", "rb") as f:
+            return f.read().replace(b"\0", b" ").decode(errors="replace").strip()
+    except OSError:
+        return ""
+
+
+def _descends(pid, top):
+    for _ in range(40):
+        if pid is None or pid <= 1:
+            return False
+        if pid == top:
+            return True
+        pid = _ppid(pid)
+    return False
+
+
+def _script_root(pid):
+    """그 프로세스를 띄운 start 스크립트 중 가장 위 (터미널 Ctrl+C 대상). 없으면 자기 자신."""
+    best, cur, me = pid, pid, os.getpid()
+    for _ in range(40):
+        pp = _ppid(cur)
+        if pp is None or pp <= 1 or pp == me:
+            break
+        if re.search(r"start_[a-z_]+\.sh", _cmd(pp)):
+            best = pp
+        cur = pp
+    return best
+
+
+def _pgrep(pat):
+    r = subprocess.run(["pgrep", "-f", pat], capture_output=True, text=True)
+    return [int(x) for x in r.stdout.split() if int(x) != os.getpid()]
+
+
+def _short(cmd):
+    m = re.search(r"(start_[a-z_]+\.sh|[A-Za-z0-9_]+\.py|dex1_1_gripper_server)(.*)", cmd)
+    return (m.group(1) + m.group(2)[:40]) if m else cmd[:60]
+
+
+def _listeners():
+    """듣고 있는 TCP 포트 → pid 집합 (/proc 에서 직접 — ss 가 없어도 됨, root 라 모든 프로세스가 보임)."""
+    inode_port = {}
+    for f in ("/proc/net/tcp", "/proc/net/tcp6"):
+        try:
+            with open(f) as fh:
+                next(fh)
+                for ln in fh:
+                    c = ln.split()
+                    if len(c) > 9 and c[3] == "0A":                     # LISTEN
+                        inode_port[c[9]] = int(c[1].rsplit(":", 1)[1], 16)
+        except OSError:
+            pass
+    out = {}
+    for d in os.listdir("/proc"):
+        if not d.isdigit():
+            continue
+        try:
+            for fd in os.listdir(f"/proc/{d}/fd"):
+                t = os.readlink(f"/proc/{d}/fd/{fd}")
+                if t.startswith("socket:["):
+                    port = inode_port.get(t[8:-1])
+                    if port is not None:
+                        out.setdefault(port, set()).add(int(d))
+        except OSError:
+            continue
+    return out
+
+
+def find_conflicts():
+    """→ [{pid, label, what: [...], notes: [...], own}] — 런처가 띄운 것(own)도 포함."""
+    own = job.proc.pid if job.running() else None
+    out = {}
+
+    def add(pid, what, note=None):
+        if own is not None and _descends(pid, own):
+            e = out.setdefault(-1, {"pid": own, "label": job.label, "what": [], "notes": [], "own": True})
+        else:
+            t = _script_root(pid)
+            e = out.setdefault(t, {"pid": t, "label": _short(_cmd(t)), "what": [], "notes": [], "own": False})
+        if what not in e["what"]:
+            e["what"].append(what)
+        if note and note not in e["notes"]:
+            e["notes"].append(note)
+
+    for port, pids in _listeners().items():
+        if port in WATCH_PORTS:
+            for pid in pids:
+                add(pid, f"{WATCH_PORTS[port]} :{port}",
+                    "팔이 기본 자세로 돌아간 뒤 제어권을 반납함 (팔이 움직임)" if WATCH_PORTS[port] == "arm_server" else None)
+    for pid in _pgrep("apps/trainer/train_act.py"):
+        add(pid, "학습 (train_act)", "학습이 중단됨 — 마지막 체크포인트 (5000 step 마다) 에서 이어 학습 가능")
+    for pid in _pgrep("dex1_1_gripper_server"):
+        if not (DEX1["proc"] is not None and DEX1["proc"].pid == pid):
+            add(pid, "그리퍼 서비스", "그리퍼 힘이 풀림 — 잡고 있는 물건은 먼저 내려놓기")
+    if own is not None and -1 not in out:
+        out[-1] = {"pid": own, "label": job.label, "what": ["런처가 띄운 것"], "notes": [], "own": True}
+    return list(out.values())
+
+
+def stop_conflicts(cs):
+    """Ctrl+C 와 같게: 스크립트면 그 프로세스 그룹에 SIGINT (각 스크립트의 정상 종료 순서), 아니면 SIGTERM. 45 초 뒤에도 남으면 강제."""
+    for c in cs:
+        if c["own"]:
+            _say(f"정지: {c['label']}")
+            stop_job(in_prep=True)
+            time.sleep(1.0)            # 그 실행의 뒷정리 (그리퍼 서비스 · 클럭 복원) 가 끝나게
+            continue
+        pid = c["pid"]
+        _say(f"정지: {c['label']} (pid {pid}) — {', '.join(c['what'])}")
+        try:
+            pg = os.getpgid(pid)
+            if ".sh" in _cmd(pid) and pg != os.getpgid(0):
+                os.killpg(pg, signal.SIGINT)
+            else:
+                os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    t0 = time.time()
+    while time.time() - t0 < 45:
+        if not [c for c in find_conflicts() if not c["own"]]:
+            _say("떠 있던 것 정지 완료")
+            return True
+        time.sleep(1)
+    left = [c for c in find_conflicts() if not c["own"]]
+    for c in left:
+        _say(f"⚠ 45 초 안에 안 꺼짐 — 강제 종료: {c['label']} (pid {c['pid']})")
+        try:
+            os.kill(c["pid"], signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    time.sleep(2)
+    left = [c for c in find_conflicts() if not c["own"]]
+    if left:
+        _say("❌ 아직 남아 있음: " + ", ".join(c["label"] for c in left))
+        return False
+    return True
+
+
+def _launch(m):
+    """실제 시작 (검사 · 정지가 끝난 뒤)."""
+    if m.get("gripper") and m["real"]:
+        _prep_and_start(m, [os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], {})
+        return
+    if m.get("xpu_cap"):
+        xpu_cap(True)
+    job.start(["bash", os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], f"{m['app_title']} · {m['label']}",
+              as_user=True, env_extra={"XPU_CAP_BY_LAUNCHER": "1"} if m.get("xpu_cap") else None, keep_lines=True)
+    if m["real"] and fsm.cur is None:
+        _say(f"⚠️ FSM 확인 불가({fsm.cur_err}) — {FSM_RUN} 상태인지 직접 확인할 것")
+    threading.Thread(target=_watch_end, args=(job.proc, m), daemon=True).start()
+
+
+def _replace_and_launch(m, cs):
+    try:
+        if cs and not stop_conflicts(cs):
+            _say("❌ 떠 있던 것을 다 끄지 못해 시작 안 함")
+            return
+        if PREP["cancel"]:
+            _say("취소")
+            return
+        if m["real"]:
+            cur = fsm.read_fsm()
+            if cur is not None and cur != FSM_RUN:
+                _say(f"❌ FSM {cur} — {FSM_RUN} 에서만 시작 (정지 중 FSM 이 바뀜?)")
+                return
+        _launch(m)
+    except Exception as e:  # noqa: BLE001
+        _say(f"❌ 시작 못 함: {e}")
+    finally:
+        if not (m.get("gripper") and m["real"]):
+            PREP.update(on=False, cancel=False)
+
+
+def start_mode(mid, replace=False):
     m = MODES.get(mid)
     if m is None:
         raise HTTPException(404, f"모드 없음: {mid}")
     if m.get("todo"):
         raise HTTPException(409, f"아직 웹에서 시작 못 함 — {m['todo']}")
-    if busy():
-        raise HTTPException(409, f"실행 중: {CUR_MODE['m']['app_title']} · {CUR_MODE['m']['label']} — 먼저 정지")
+    if PREP["on"]:
+        raise HTTPException(409, "시작 준비 중 — 기다리거나 정지")
     if SEQ["busy"]:
         raise HTTPException(409, "종료 진행 중")
     if m["real"]:
@@ -624,29 +818,22 @@ def start_mode(mid):
         cur = fsm.read_fsm()
         if cur is not None and cur != FSM_RUN:
             raise HTTPException(409, f"FSM {cur} ({FSM_NAME.get(cur, '')}) — {FSM_DAMP} → {FSM_LOCK} → {FSM_RUN} 로 {_LBL['run_enter']} 진입 후 시작")
+        if m.get("gripper") and USER_PW is None:
+            raise HTTPException(409, "런처가 sudo 로 실행되지 않음 — ./launcher.sh 로 띄울 것")
+    cs = find_conflicts()
+    if cs and not replace:
+        raise HTTPException(409, {"conflicts": cs, "msg": "이미 떠 있는 것이 있음 — 끄고 시작할지 확인"})
     CUR_MODE["m"] = m
     SEQ.update(msg="", ok=None)
-    if m.get("gripper") and m["real"]:
-        if USER_PW is None:
-            raise HTTPException(409, "런처가 sudo 로 실행되지 않음 — ./launcher.sh 로 띄울 것")
-        job.lines.clear()
-        job.label, job.rc, job.started, job.ended = f"{m['app_title']} · {m['label']} (준비 중)", None, time.time(), 0.0
-        PREP.update(on=True, cancel=False)
-        threading.Thread(target=_prep_and_start, args=(m, [os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], {}),
-                         daemon=True).start()
-        return
-    if m.get("xpu_cap"):
-        xpu_cap(True)
-    job.start(["bash", os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], f"{m['app_title']} · {m['label']}",
-              as_user=True, env_extra={"XPU_CAP_BY_LAUNCHER": "1"} if m.get("xpu_cap") else None)
-    if m["real"] and fsm.cur is None:
-        job.lines.append(f"[launcher] ⚠️ FSM 확인 불가({fsm.cur_err}) — {FSM_RUN} 상태인지 직접 확인할 것")
-    threading.Thread(target=_watch_end, args=(job.proc, m), daemon=True).start()
+    job.lines.clear()
+    job.label, job.rc, job.started, job.ended = f"{m['app_title']} · {m['label']} (준비 중)", None, time.time(), 0.0
+    PREP.update(on=True, cancel=False)
+    threading.Thread(target=_replace_and_launch, args=(m, cs), daemon=True).start()
 
 
-def stop_job():
+def stop_job(in_prep=False):
     """bash 에만 SIGTERM → 각 start 스크립트의 trap cleanup (Ctrl+C 와 같은 종료 순서). → 정상 종료 여부"""
-    if PREP["on"]:
+    if PREP["on"] and not in_prep:
         PREP["cancel"] = True
         for _ in range(200):
             if not PREP["on"]:
@@ -760,8 +947,8 @@ def apps_list():
 
 
 @app.post("/app/{mid}/start")
-def app_start(mid: str):
-    start_mode(mid)
+def app_start(mid: str, replace: bool = False):
+    start_mode(mid, replace)
     return {"ok": True}
 
 
@@ -968,7 +1155,15 @@ async function appStart(id){const m=APPS.flatMap(a=>a.modes).find(x=>x.id===id);
   const msg=m.real?`${m.label} — 실제 로봇이 움직입니다.\n\n· 거치대 · FSM ${FSM.run} 확인\n· 주변을 비우고 E-STOP 을 손에`+
     (m.gripper?`\n· 그리퍼 서비스를 켜고 카메라 숙임을 3 초 잽니다 — 그동안 로봇을 건드리지 마세요`:''):`${m.label} — 로봇 없이 (가상)`;
   if(!confirm(msg))return;
-  try{await post('/app/'+id+'/start');}catch(e){alert(e.message);}poll();}
+  let r=await fetch('/app/'+id+'/start',{method:'POST'}),d=await r.json().catch(()=>({}));
+  if(r.status===409&&d.detail&&d.detail.conflicts){
+    const cs=d.detail.conflicts;
+    const body=cs.map(c=>`· ${esc(c.label)}${c.own?' (홈에서 실행)':' (터미널 · 남은 프로그램)'} — ${esc(c.what.join(', '))}`+
+      c.notes.map(n=>`\n   ⚠ ${esc(n)}`).join('')).join('\n')+'\n\nCtrl+C 와 같은 방식으로 정상 종료한 뒤 시작합니다 (45 초 안에 안 꺼지면 강제).';
+    if(!await warn('이미 떠 있는 것',`${cs.length} 개를 끄고 '${esc(m.label)}' 을 시작할까요?`,body))return;
+    r=await fetch('/app/'+id+'/start?replace=true',{method:'POST'});d=await r.json().catch(()=>({}));}
+  if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));
+  poll();}
 async function appStop(){if(!confirm('실행 중인 것을 정지합니다 (팔 기본 자세 · 제어권 반납 후 종료).'))return;
   try{await post('/app/stop');}catch(e){alert(e.message);}poll();}
 async function shutdownAll(){
@@ -1018,7 +1213,7 @@ async function poll(){try{const d=await(await fetch('/status')).json();
   document.getElementById('b-shut').disabled=sq.busy;
   document.getElementById('job-mode').textContent=j.label||'';
   if(sq.busy)setState('rb-s','run','종료: '+sq.msg);
-  else if(j.prep)setState('rb-s','run',`${j.label} — 그리퍼 서비스 · 카메라 확인 중`);
+  else if(j.prep)setState('rb-s','run',`${j.label} — 떠 있던 것 정지 · 시작 준비 중`);
   else if(j.running)setState('rb-s','on',`${j.label} — 실행 중 (${Math.floor(j.elapsed/60)}분 ${Math.floor(j.elapsed%60)}초)`);
   else if(sq.msg&&sq.ok!==null)setState('rb-s',sq.ok?'':'err','종료: '+sq.msg);
   else if(j.label)setState('rb-s',j.rc===0?'':'err',`${j.label} — 정지됨 (rc=${j.rc})`);
