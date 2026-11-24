@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="ko"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>pitron · act viewer</title>
+<title>pitron · viewer</title>
 <style>
 :root{
   --bg:#0e1116; --panel:#161b22; --panel2:#1c232d; --line:#2a3340;
@@ -91,7 +91,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 .cams{flex:1;min-height:0;display:grid;grid-template-rows:3fr 2fr;gap:8px}
 .cams .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;min-height:0}
 .cam{position:relative;background:#05080c;border:1px solid var(--line);border-radius:8px;overflow:hidden;min-height:0}
-.cam canvas{position:absolute;inset:0;width:100%;height:100%}
+.cam video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#05080c}
 .cam .lb{position:absolute;left:8px;top:6px;font-size:12px;letter-spacing:1px;color:var(--accent);background:#000a;padding:2px 7px;border-radius:5px}
 /* 관절 그래프 */
 .plots{display:grid;grid-template-columns:1fr 1fr .8fr;gap:8px;flex:1;min-height:0}
@@ -121,15 +121,15 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 <body>
 <div class="topbar">
   <span class="dot" id="livedot"></span>
-  <span class="logo">pitron<b>·act</b></span>
-  <span style="color:var(--dim);font-size:11px">dataset · model viewer</span>
+  <span class="logo">pitron<b>·viewer</b></span>
+  <span style="color:var(--dim);font-size:11px">LeRobot v3 데이터셋 · 모델</span>
   <div class="chips">
-    <span class="chip" id="chip-ds">Dataset <b>-</b></span>
-    <span class="chip" id="chip-md">Model <b>-</b></span>
-    <span class="chip" id="chip-ep">Episode <b>-</b></span>
+    <span class="chip" id="chip-ds">데이터셋 <b>-</b></span>
+    <span class="chip" id="chip-md">모델 <b>-</b></span>
+    <span class="chip" id="chip-ep">에피소드 <b>-</b></span>
   </div>
   <div class="right">
-    <button class="btn primary" id="play" onclick="togglePlay()">▶ Play</button>
+    <button class="btn primary" id="play" onclick="togglePlay()">▶ 재생</button>
     <select class="in" id="speed" onchange="P.speed=+this.value"><option value="0.5">0.5×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
     <select class="in" id="rep" title="에피소드가 끝나면"><option value="all">전체 반복</option><option value="one">이 에피소드 반복</option><option value="off">반복 끔</option></select>
     <button class="btn" onclick="$('pick').click()">zip 열기</button>
@@ -138,18 +138,18 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 </div>
 
 <div class="kpis">
-  <div class="ttl"><h1>ACT <b>imitation learning</b></h1><p>시연 데이터 → ACT 학습 → OpenVINO 모델</p></div>
-  <div class="k"><span>DEMONSTRATIONS</span><b id="k-demo">-</b><small id="k-demo-s">시연 (성공 에피소드)</small></div>
-  <div class="k"><span>DEMO TIME</span><b id="k-time">-</b><small id="k-time-s">-</small></div>
-  <div class="k"><span>CAMERAS</span><b id="k-cam">-</b><small id="k-cam-s">-</small></div>
-  <div class="k"><span>TRAINING STEPS</span><b id="k-step">-</b><small id="k-step-s">-</small></div>
-  <div class="k hl"><span>VALIDATION ERROR</span><b id="k-err">-</b><small id="k-err-s">검증 에피소드 관절 오차</small></div>
+  <div class="ttl"><h1>Imitation <b>Learning</b></h1><p>시연 데이터 (LeRobot v3) → lerobot 학습 → 정책</p></div>
+  <div class="k"><span>시연</span><b id="k-demo">-</b><small id="k-demo-s">에피소드</small></div>
+  <div class="k"><span>시연 시간</span><b id="k-time">-</b><small id="k-time-s">-</small></div>
+  <div class="k"><span>카메라</span><b id="k-cam">-</b><small id="k-cam-s">-</small></div>
+  <div class="k"><span>학습 step</span><b id="k-step">-</b><small id="k-step-s">-</small></div>
+  <div class="k hl"><span>정책</span><b id="k-pol">-</b><small id="k-pol-s">-</small></div>
 </div>
 
 <div class="grid">
   <div class="col">
     <div class="card fill">
-      <div class="card-h">Robot <span class="tag">Unitree H2 · Dex1-1 · URDF</span></div>
+      <div class="card-h">로봇 <span class="tag">Unitree H2 · Dex1-1 · URDF</span></div>
       <div id="view">
         <div id="load3d"></div>
         <div class="ov" id="ov"></div>
@@ -159,11 +159,11 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 
   <div class="col">
     <div class="card fill" style="flex-grow:1.7">
-      <div class="card-h">Cameras <span class="tag" id="cam-tag">-</span></div>
+      <div class="card-h">카메라 <span class="tag" id="cam-tag">-</span></div>
       <div class="card-b"><div class="cams" id="cams"><div class="empty">데이터셋을 열면 에피소드 영상이 나옵니다</div></div></div>
     </div>
     <div class="card fill">
-      <div class="card-h">Joints <span class="tag">실선 = 실측 state · 점선 = 지령 action</span></div>
+      <div class="card-h">관절 <span class="tag">실선 = 실측 state · 점선 = 지령 action</span></div>
       <div class="card-b">
         <div class="plots"><div class="plot"><canvas id="pl-l"></canvas></div><div class="plot"><canvas id="pl-r"></canvas></div><div class="plot"><canvas id="pl-g"></canvas></div></div>
         <div class="tl"><input type="range" id="slider" min="0" max="0" value="0"><span class="tm" id="tm">0.0 / 0.0 s</span></div>
@@ -174,20 +174,20 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 
   <div class="col">
     <div class="card">
-      <div class="card-h">Dataset <select class="in" id="sel-ds" style="display:none"></select><span class="tag" id="ds-tag">-</span></div>
-      <div class="card-b" id="ds-b"><div class="hint">수집 페이지 (/collect) <b>[Dataset zip]</b> 으로 받은 파일</div></div>
+      <div class="card-h">데이터셋 <select class="in" id="sel-ds" style="display:none"></select><span class="tag" id="ds-tag">-</span></div>
+      <div class="card-b" id="ds-b"><div class="hint">수집 화면 · 홈의 <b>[LeRobot v3 zip]</b> 으로 받은 파일</div></div>
     </div>
     <div class="card">
-      <div class="card-h">Model <select class="in" id="sel-md" style="display:none"></select><span class="tag" id="md-tag">-</span></div>
-      <div class="card-b" id="md-b"><div class="hint">학습 웹 (:50100) 에서 받은 <b>model zip</b> — 실행하지 않고 정보만 봅니다</div></div>
+      <div class="card-h">모델 <select class="in" id="sel-md" style="display:none"></select><span class="tag" id="md-tag">-</span></div>
+      <div class="card-b" id="md-b"><div class="hint">학습 웹 (:50100) 에서 받은 <b>model zip</b> (lerobot 모델) — 실행하지 않고 정보만 봅니다</div></div>
     </div>
     <div class="card">
-      <div class="card-h">Check <span class="tag">dataset ↔ model</span></div>
+      <div class="card-h">확인 <span class="tag">데이터셋 ↔ 모델</span></div>
       <div class="card-b"><div class="checks" id="checks"><div class="hint">데이터셋과 모델을 둘 다 열면 서로 맞는지 봅니다</div></div></div>
     </div>
     <div class="card fill">
-      <div class="card-h">Episodes <span class="tag" id="ep-tag">-</span></div>
-      <div class="card-b" style="padding:6px 8px"><div class="scroll"><table class="tbl"><thead><tr><th>#</th><th></th><th>hand</th><th class="num">time</th><th class="num">frames</th><th>result</th></tr></thead><tbody id="ep-list"></tbody></table></div></div>
+      <div class="card-h">에피소드 <span class="tag" id="ep-tag">-</span></div>
+      <div class="card-b" style="padding:6px 8px"><div class="scroll"><table class="tbl"><thead><tr><th>#</th><th>손</th><th class="num">시간</th><th class="num">프레임</th><th>결과</th></tr></thead><tbody id="ep-list"></tbody></table></div></div>
     </div>
   </div>
 </div>
@@ -199,189 +199,110 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 <script>
 "use strict";
 const $=id=>document.getElementById(id);
-const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let toastT=null;
 function toast(msg,err){const t=$('toast');t.textContent=msg;t.className='show'+(err?' err':'');clearTimeout(toastT);toastT=setTimeout(()=>t.className='',err?6000:2500);}
 const fmtT=s=>s==null?'-':s>=60?`${Math.floor(s/60)}:${String(Math.round(s%60)).padStart(2,'0')}`:`${(+s).toFixed(1)} s`;
 const num=(v,k=2)=>v==null||!isFinite(v)?'-':(+v).toFixed(k);
+const big=v=>v==null?'-':v>=1e9?(v/1e9).toFixed(1)+'B':v>=1e6?(v/1e6).toFixed(0)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':String(v);
 const DEG=180/Math.PI;
+const SIDE_KO={left:'왼손',right:'오른손',both:'양손'};
+const FIT_KO={crop:'자르기',pad:'검은 띠',stretch:'눌러 줄이기'};
+async function getJSON(u){const r=await fetch(u);const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.detail||`HTTP ${r.status}`);return d;}
 
-// ================= zip (필요한 부분만 읽음 — 파일 · HTTP Range · 메모리) =================
-class Src{constructor(size,read){this.size=size;this.read=read;}}
-const fileSrc=f=>new Src(f.size,(s,e)=>f.slice(s,e).arrayBuffer());
-const memSrc=b=>new Src(b.byteLength,async(s,e)=>b.slice(s,e));
-function urlSrc(url,size){
-  return new Src(size,async(s,e)=>{
-    if(e<=s)return new ArrayBuffer(0);
-    const r=await fetch(url,{headers:{Range:`bytes=${s}-${e-1}`}});
-    if(!r.ok)throw new Error(`${url} HTTP ${r.status}`);
-    const b=await r.arrayBuffer();
-    return r.status===206?b:b.slice(s,e);
-  });
-}
-const u16=(d,o)=>d.getUint16(o,true),u32=(d,o)=>d.getUint32(o,true),u64=(d,o)=>u32(d,o)+u32(d,o+4)*4294967296;
-async function zipDir(src){
-  const tail=Math.min(src.size,65557),tb=await src.read(src.size-tail,src.size),d=new DataView(tb);
-  let p=-1;for(let i=tail-22;i>=0;i--)if(u32(d,i)===0x06054b50){p=i;break;}
-  if(p<0)throw new Error('zip 이 아님');
-  let n=u16(d,p+10),cs=u32(d,p+12),co=u32(d,p+16);
-  if(n===0xffff||cs===0xffffffff||co===0xffffffff){             // zip64
-    const lb=new DataView(await src.read(src.size-tail+p-20,src.size-tail+p));
-    if(u32(lb,0)!==0x07064b50)throw new Error('zip64 끝 정보 없음');
-    const eo=u64(lb,8),e=new DataView(await src.read(eo,eo+56));
-    n=u64(e,32);cs=u64(e,40);co=u64(e,48);
-  }
-  const cd=new DataView(await src.read(co,co+cs)),out={},td=new TextDecoder();
-  let q=0;
-  for(let k=0;k<n;k++){
-    if(u32(cd,q)!==0x02014b50)throw new Error('zip 목록 깨짐');
-    let method=u16(cd,q+10),csize=u32(cd,q+20),usize=u32(cd,q+24),lho=u32(cd,q+42);
-    const nl=u16(cd,q+28),el=u16(cd,q+30),cl=u16(cd,q+32);
-    const name=td.decode(new Uint8Array(cd.buffer,cd.byteOffset+q+46,nl));
-    for(let x=q+46+nl;x<q+46+nl+el;){                           // zip64 추가 정보 (0xFFFFFFFF 인 칸만 순서대로)
-      const id=u16(cd,x),sz=u16(cd,x+2);let y=x+4;
-      if(id===1){if(usize===0xffffffff){usize=u64(cd,y);y+=8;}if(csize===0xffffffff){csize=u64(cd,y);y+=8;}if(lho===0xffffffff){lho=u64(cd,y);}}
-      x+=4+sz;
-    }
-    out[name]={name,method,csize,usize,lho};
-    q+=46+nl+el+cl;
-  }
-  return out;
-}
-async function entryStart(src,e){const h=new DataView(await src.read(e.lho,e.lho+30));return e.lho+30+u16(h,26)+u16(h,28);}
-async function entryBytes(src,e){
-  const s=await entryStart(src,e);let b=await src.read(s,s+e.csize);
-  if(e.method===8)b=await new Response(new Blob([b]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
-  else if(e.method!==0)throw new Error(`압축 방식 ${e.method} 못 읽음: ${e.name}`);
-  return b;
-}
-const parseJSON=t=>JSON.parse(t.replace(/\bNaN\b|-?\bInfinity\b/g,'null'));
-async function entryJSON(src,e){return parseJSON(new TextDecoder().decode(await entryBytes(src,e)));}
-// .npy → {shape, data} (jpeg 는 복사 없이 Uint8Array)
-function npy(b){
-  const d=new DataView(b),ver=new Uint8Array(b,6,1)[0],hl=ver===1?u16(d,8):u32(d,8),st=ver===1?10:12;
-  const h=new TextDecoder().decode(new Uint8Array(b,st,hl));
-  const ds=/'descr':\s*'([^']+)'/.exec(h)[1].replace('|','<'),shape=/'shape':\s*\(([^)]*)\)/.exec(h)[1].split(',').map(s=>s.trim()).filter(Boolean).map(Number);
-  if(/'fortran_order':\s*True/.test(h))throw new Error('fortran_order 배열 못 읽음');
-  const o=st+hl,T={'<f4':Float32Array,'<f8':Float64Array,'<i2':Int16Array,'<i4':Int32Array,'<i8':BigInt64Array,'<u1':Uint8Array,'<b1':Uint8Array}[ds];
-  if(!T)throw new Error('npy 형식 '+ds);
-  if(T===Uint8Array)return{shape,data:new Uint8Array(b,o)};
-  let a=new T(b.slice(o));
-  if(T===BigInt64Array)a=Float64Array.from(a,Number);
-  return{shape,data:a};
-}
-
-// ================= 데이터셋 · 모델 =================
+// ================= 데이터셋 · 모델 (서버가 zip 을 읽음) =================
 const DS=[],MD=[];let curDs=null,curMd=null;
-async function openZip(label,src){
-  const dir=await zipDir(src),names=Object.keys(dir);
-  const info=names.find(n=>/^[^/]+\/info\.json$/.test(n));
-  if(info){
-    const pre=info.split('/')[0],inf=await entryJSON(src,dir[info]);
-    const ids=names.map(n=>(n.match(new RegExp(`^${pre}/episodes/(ep_\\d+)/meta\\.json$`))||[])[1]).filter(Boolean).sort();
-    const eps=[];let k=0;
-    await Promise.all(Array.from({length:8},async()=>{while(k<ids.length){const id=ids[k++];
-      const npz=dir[`${pre}/episodes/${id}/episode.npz`];if(!npz)continue;
-      eps.push({id,meta:await entryJSON(src,dir[`${pre}/episodes/${id}/meta.json`]),npz});}}));
-    eps.sort((a,b)=>a.id<b.id?-1:1);
-    const ds={label,name:pre,info:inf,eps,src,cache:new Map()};
-    DS.push(ds);return ds;
-  }
-  const meta=names.find(n=>/^[^/]+\/meta\.json$/.test(n));
-  if(meta&&names.some(n=>n.endsWith('/policy.xml'))){
-    const pre=meta.split('/')[0],m=await entryJSON(src,dir[meta]);
-    const md={label,name:m.name||pre,meta:m,bin:(dir[`${pre}/policy.bin`]||{}).usize,xml:(dir[`${pre}/policy.xml`]||{}).usize};
-    MD.push(md);return md;
-  }
-  throw new Error('ACT 데이터셋 · 모델 zip 이 아님 (info.json · meta.json 없음)');
+function addItem(x){
+  if(x.kind==='dataset'){const i=DS.findIndex(d=>d.file===x.file);x.cache=new Map();if(i>=0)DS[i]=x;else DS.push(x);return true;}
+  if(x.kind==='model'){const i=MD.findIndex(d=>d.file===x.file);if(i>=0)MD[i]=x;else MD.push(x);return true;}
+  toast(`${x.file}: ${x.err||'모르는 zip'}`,true);return false;
 }
-async function addZip(label,src){
-  try{const r=await openZip(label,src);toast(`${r.eps?'데이터셋':'모델'} ${r.name} 열림`);refreshSel();}
-  catch(e){toast(`${label}: ${e.message}`,true);}
+async function upload(f){
+  try{const r=await fetch('/api/upload?name='+encodeURIComponent(f.name),{method:'PUT',body:f});const d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(d.detail||r.status);if(addItem(d)){toast(`${d.kind==='dataset'?'데이터셋':'모델'} ${d.name} 열림`);refreshSel(d);}}
+  catch(e){toast(`${f.name}: ${e.message}`,true);}
 }
-function refreshSel(){
+function refreshSel(last){
   for(const [id,arr,cur] of [['sel-ds',DS,curDs],['sel-md',MD,curMd]]){
     const s=$(id);s.innerHTML=arr.map((x,i)=>`<option value="${i}">${esc(x.name)}</option>`).join('');
     s.style.display=arr.length>1?'':'none';if(cur)s.value=arr.indexOf(cur);
   }
-  if(!curMd&&MD.length)selMd(MD[0]);
-  if(!curDs&&DS.length)selDs(DS.find(d=>curMd&&d.name===curMd.meta.dataset)||DS[0]);
+  if(last&&last.kind==='model')selMd(last);else if(!curMd&&MD.length)selMd(MD[0]);
+  if(last&&last.kind==='dataset')selDs(last);
+  else if(!curDs&&DS.length)selDs(DS.find(d=>curMd&&d.name===(curMd.h2||{}).dataset)||DS[0]);
   renderChecks();
 }
 $('sel-ds').onchange=e=>selDs(DS[+e.target.value]);
 $('sel-md').onchange=e=>selMd(MD[+e.target.value]);
 
-const okEps=ds=>ds.eps.filter(e=>e.meta.ok);
+const epsOf=ds=>ds.eps;
 function selDs(ds){
   curDs=ds;P.ep=null;
-  const eps=ds.eps,ok=okEps(ds),inf=ds.info;
-  const dur=eps.reduce((s,e)=>s+(+e.meta.duration_s||0),0),okDur=ok.reduce((s,e)=>s+(+e.meta.duration_s||0),0);
-  const frames=ok.reduce((s,e)=>s+(+e.meta.n||0),0);
-  const cnt=(k)=>{const c={};for(const e of ok){const v=e.meta[k]??'-';c[v]=(c[v]||0)+1;}return Object.entries(c).map(([a,b])=>`${a} ${b}`).join(' · ');};
-  const cams=Object.entries(inf.cameras||{}).map(([n,c])=>`${n} ${c.w}×${c.h}`).join(' · ');
-  $('chip-ds').className='chip ok';$('chip-ds').innerHTML=`Dataset <b>${esc(ds.name)}</b>`;
-  $('ds-tag').textContent=ds.name;
-  $('ds-b').innerHTML=`<div class="kv"><span>episodes</span><b>성공 ${ok.length} / 전체 ${eps.length}</b>
-      <span>frames</span><b>${frames.toLocaleString()} · ${num(inf.fps,0)} fps</b><span>format</span><b>${esc(inf.format)}</b><span>cameras</span><b title="${esc(cams)}">${esc(cams)}</b>
-      <span>state</span><b>${(inf.state_names||[]).length} (팔 7 + 그리퍼) × 2</b><span>hand</span><b>${esc(cnt('side'))}</b>
-      <span>result</span><b>${esc(cnt('result'))}</b><span>created</span><b>${esc(inf.created||'-')}</b>
-      <span>all eps</span><b>${eps.length} (${fmtT(dur)}) · 실패 ${eps.length-ok.length}</b></div>`;
-  $('ep-tag').textContent=`${ok.length} ok / ${eps.length}`;
-  $('ep-list').innerHTML=eps.map(e=>`<tr class="ep" id="row-${e.id}" onclick="openEp('${e.id}',true)"><td>${e.id.replace('ep_','')}</td>
-    <td><span class="st ${e.meta.ok?'ok':'no'}">${e.meta.ok?'ok':'fail'}</span></td><td>${esc(e.meta.side||'-')}</td>
-    <td class="num">${num(e.meta.duration_s,1)}</td><td class="num">${e.meta.n??'-'}</td><td>${esc(e.meta.result||'')}</td></tr>`).join('');
-  buildCams(Object.keys(inf.cameras||{}));
+  const eps=ds.episodes,fps=ds.fps||30,frames=eps.reduce((s,e)=>s+e.n,0);
+  ds.eps=eps.map(e=>({...e,id:e.index,dur:e.n/fps}));
+  const cnt=k=>{const c={};for(const e of ds.eps){const v=e[k]??'-';c[v]=(c[v]||0)+1;}return Object.entries(c).map(([a,b])=>`${SIDE_KO[a]||a} ${b}`).join(' · ');};
+  const cams=Object.entries(ds.cameras).map(([n,c])=>`${n} ${c.w}×${c.h}`).join(' · ');
+  $('chip-ds').className='chip ok';$('chip-ds').innerHTML=`데이터셋 <b>${esc(ds.name)}</b>`;
+  $('ds-tag').textContent='LeRobot v3';
+  $('ds-b').innerHTML=`<div class="kv"><span>에피소드</span><b>${eps.length}</b>
+      <span>프레임</span><b>${frames.toLocaleString()} · ${num(fps,0)} fps</b><span>카메라</span><b title="${esc(cams)}">${esc(cams)}</b>
+      <span>맞춤</span><b>${esc(FIT_KO[ds.fit]||ds.fit||'-')}</b><span>state</span><b>${ds.state_names.length}</b>
+      <span>손</span><b>${esc(cnt('side'))}</b><span>작업</span><b title="${esc(ds.task||'')}">${esc(ds.task||'-')}</b>
+      <span>로봇</span><b>${esc(ds.robot||'-')}</b><span>파일</span><b title="${esc(ds.file)}">${esc(ds.file)} · ${(ds.size/1e6).toFixed(1)} MB</b></div>`;
+  $('ep-tag').textContent=`${eps.length}개`;
+  $('ep-list').innerHTML=ds.eps.map(e=>`<tr class="ep" id="row-${e.id}" onclick="openEp(${e.id},true)"><td>${e.id+1}</td>
+    <td>${esc(SIDE_KO[e.side]||e.side||'-')}</td><td class="num">${num(e.dur,1)}</td><td class="num">${e.n}</td><td>${esc(e.result||'')}</td></tr>`).join('');
+  buildCams(ds);
   updateHero();renderChecks();
-  const first=ok[0]||eps[0];if(first)openEp(first.id,false).then(()=>{if(REP()!=='off')play(true);});
+  const first=ds.eps[0];if(first)openEp(first.id,false).then(()=>{if(REP()!=='off')play(true);});
 }
 function selMd(md){
-  curMd=md;const m=md.meta,tr=m.train||{},cf=m.config||{};
-  $('chip-md').className='chip info';$('chip-md').innerHTML=`Model <b>${esc(md.name)}</b>`;
-  $('md-tag').textContent=m.format||'-';
-  const cams=(m.cameras||[]).map(c=>`${c.name} ${c.w}×${c.h}`).join(' · ');
-  const arch=`d${cf.dim_model??tr.dim_model??'-'} · heads ${cf.n_heads??'-'} · enc ${cf.n_encoder_layers??'-'} · dec ${cf.n_decoder_layers??'-'}`;
-  const trn=['batch_size','lr','kl_weight','augment','val_frac','amp'].filter(k=>k in tr).map(k=>`${k} ${tr[k]}`).join(' · ');
-  $('md-b').innerHTML=`<div class="kv"><span>val L1</span><b>${num(m.val_l1,4)} · chunk ${m.chunk_size??'-'}</b><span>name</span><b title="${esc(m.name)}">${esc(m.name)}</b><span>dataset</span><b>${esc(m.dataset)}</b>
-      <span>episodes</span><b>${m.episodes??'-'} (검증 ${m.val_episodes??'-'}) · ${m.frames!=null?(+m.frames).toLocaleString():'-'} frames</b>
-      <span>hand</span><b>${esc(m.side||'-')} · state ${m.state_dim??'-'} → action ${m.action_dim??'-'}</b>
-      <span>cameras</span><b title="${esc(cams)}">${esc(cams||'-')}</b><span>network</span><b>ACT · ${esc(arch)}</b>
-      <span>train</span><b title="${esc(trn)}">${esc(trn||'-')}</b>
-      <span>OpenVINO</span><b>${esc(m.openvino||'-')} · 변환 오차 ${num(m.export_max_abs_diff_deg,3)}°</b>
-      <span>file</span><b>policy.bin ${md.bin?(md.bin/1e6).toFixed(1)+' MB':'-'}</b>
-      <span>created</span><b>${esc(m.exported||m.created||'-')}</b></div>`;
+  curMd=md;const h=md.h2||{},c=md.config||{},tr=md.train||{};
+  $('chip-md').className='chip info';$('chip-md').innerHTML=`모델 <b>${esc(md.name)}</b>`;
+  $('md-tag').textContent=md.policy||'-';
+  const cams=Object.entries(md.cameras).map(([n,v])=>`${n} ${v.w}×${v.h}`).join(' · ');
+  const arch=Object.entries(c).map(([k,v])=>`${k} ${v}`).join(' · ');
+  $('md-b').innerHTML=`<div class="kv"><span>정책</span><b>${esc(md.policy)} · 파라미터 ${big(md.params)}</b><span>이름</span><b title="${esc(md.name)}">${esc(md.name)}</b>
+      <span>데이터셋</span><b>${esc(h.dataset||tr.dataset||'-')}${h.dataset_episodes!=null?` · ${h.dataset_episodes} 에피소드`:''}</b>
+      <span>step</span><b>${h.step!=null?(+h.step).toLocaleString():'-'} / ${tr.steps!=null?(+tr.steps).toLocaleString():'-'} · batch ${tr.batch_size??'-'}</b>
+      <span>입출력</span><b>state ${md.state_dim??'-'} → action ${md.action_dim??'-'}</b>
+      <span>카메라</span><b title="${esc(cams)}">${esc(cams||'-')}</b><span>설정</span><b title="${esc(arch)}">${esc(arch||'-')}</b>
+      <span>loss</span><b>${num(h.loss,4)}</b><span>가중치</span><b>${md.weights_mb} MB</b>
+      <span>학습</span><b>${esc(h.trained||'-')}${h.device?' · '+esc(h.device):''}</b></div>`;
   updateHero();renderChecks();
 }
 function updateHero(){                                  // 위쪽 큰 숫자
   if(curDs){
-    const ok=okEps(curDs),cams=Object.keys(curDs.info.cameras||{});
-    $('k-demo').textContent=ok.length;
-    $('k-time').textContent=fmtT(ok.reduce((s,e)=>s+(+e.meta.duration_s||0),0));
-    $('k-time-s').textContent=`${ok.reduce((s,e)=>s+(+e.meta.n||0),0).toLocaleString()} frames · ${num(curDs.info.fps,0)} fps`;
+    const eps=curDs.eps,cams=Object.keys(curDs.cameras);
+    $('k-demo').textContent=eps.length;
+    $('k-time').textContent=fmtT(eps.reduce((s,e)=>s+e.dur,0));
+    $('k-time-s').textContent=`${eps.reduce((s,e)=>s+e.n,0).toLocaleString()} 프레임 · ${num(curDs.fps,0)} fps`;
     $('k-cam').textContent=cams.length;$('k-cam-s').textContent=cams.join(' · ');
   }
   if(curMd){
-    const m=curMd.meta;
-    $('k-step').textContent=m.steps!=null?(+m.steps).toLocaleString():'-';
-    $('k-step-s').textContent=`ACT · chunk ${m.chunk_size??'-'} · ${m.episodes??'-'} episodes`;
-    $('k-err').textContent=m.val_err_deg!=null?`${num(m.val_err_deg,2)}°`:'-';
+    const h=curMd.h2||{},tr=curMd.train||{};
+    $('k-step').textContent=h.step!=null?(+h.step).toLocaleString():tr.steps!=null?(+tr.steps).toLocaleString():'-';
+    $('k-step-s').textContent=`batch ${tr.batch_size??'-'} · ${h.dataset_episodes??'-'} 에피소드`;
+    $('k-pol').textContent=(curMd.policy||'-').toUpperCase();
+    $('k-pol-s').textContent=`파라미터 ${big(curMd.params)} · chunk ${(curMd.config||{}).chunk_size??(curMd.config||{}).n_action_steps??'-'}`;
   }
 }
-// 손별 state 자리 — pitron/learning/formats.py SIDE_IDX 와 같음
-const SIDE_IDX={left:[...Array(8).keys()],right:[...Array(8).keys()].map(i=>i+8),both:[...Array(16).keys()]};
 function renderChecks(){
   if(!curDs||!curMd){return;}
-  const m=curMd.meta,inf=curDs.info,rows=[];
+  const h=curMd.h2||{},rows=[];
   const add=(lv,txt,sub)=>rows.push(`<div class="${lv}"><i>${lv==='ok'?'✓':lv==='warn'?'!':'✗'}</i><span>${txt}${sub?`<small>${sub}</small>`:''}</span></div>`);
-  add(m.dataset===curDs.name?'ok':'warn','학습 데이터셋 이름',m.dataset===curDs.name?esc(m.dataset):`모델 ${esc(m.dataset)} ↔ 연 데이터셋 ${esc(curDs.name)}`);
-  const dc=inf.cameras||{},mc=m.cameras||[];
-  const camBad=mc.filter(c=>!dc[c.name]||+dc[c.name].w!==+c.w||+dc[c.name].h!==+c.h).map(c=>c.name);
-  add(!camBad.length&&mc.length===Object.keys(dc).length?'ok':'bad','카메라 이름 · 크기',camBad.length?`다름: ${esc(camBad.join(', '))}`:mc.map(c=>c.name).join(' · '));
-  const idx=SIDE_IDX[m.side]||SIDE_IDX.both,sn=inf.state_names||[],jn=m.joint_names||[];
-  const jBad=idx.filter((k,i)=>sn[k]!==jn[i]).length;
-  add(!jBad&&jn.length===idx.length?'ok':'bad','관절 순서',jBad?`${jBad} 개 다름`:`${jn.length} 개 (${esc(m.side||'both')})`);
-  const nok=okEps(curDs).length;
-  add(m.episodes===nok?'ok':'warn','에피소드 수',m.episodes===nok?`${nok}`:`학습 ${m.episodes} ↔ 데이터셋 성공 ${nok} (그 뒤 추가 · 삭제)`);
-  add(+m.fps===+inf.fps?'ok':'warn','fps',`${m.fps} / ${inf.fps}`);
+  const dn=h.dataset||((curMd.train||{}).dataset||'').split('/').pop();
+  add(dn===curDs.name?'ok':'warn','학습 데이터셋 이름',dn===curDs.name?esc(dn):`모델 ${esc(dn||'-')} ↔ 연 데이터셋 ${esc(curDs.name)}`);
+  const dc=curDs.cameras,mc=curMd.cameras,mk=Object.keys(mc);
+  const camBad=mk.filter(n=>!dc[n]||+dc[n].w!==+mc[n].w||+dc[n].h!==+mc[n].h);
+  add(!camBad.length&&mk.length===Object.keys(dc).length?'ok':'bad','카메라 이름 · 크기',camBad.length?`다름: ${esc(camBad.join(', '))}`:mk.join(' · '));
+  const sn=curDs.state_names,jn=h.state_names||[];
+  const jBad=jn.length?jn.filter((n,i)=>sn[i]!==n).length:null;
+  add(jBad===0&&jn.length===sn.length?'ok':jBad===null?'warn':'bad','관절 순서',jBad===null?'모델에 관절 이름 정보 없음 (h2_model.json)':jBad?`${jBad} 개 다름`:`${jn.length} 개`);
+  add(+curMd.state_dim===sn.length?'ok':'bad','state 크기',`모델 ${curMd.state_dim} · 데이터셋 ${sn.length}`);
+  const ne=curDs.eps.length;
+  add(h.dataset_episodes==null||h.dataset_episodes===ne?'ok':'warn','에피소드 수',h.dataset_episodes==null?`${ne}`:h.dataset_episodes===ne?`${ne}`:`학습 ${h.dataset_episodes} ↔ 데이터셋 ${ne} (그 뒤 추가 · 삭제)`);
+  if(h.fit||curDs.fit)add(h.fit===curDs.fit?'ok':'warn','영상 맞춤 방식',`모델 ${esc(FIT_KO[h.fit]||h.fit||'-')} · 데이터셋 ${esc(FIT_KO[curDs.fit]||curDs.fit||'-')}`);
   $('checks').innerHTML=rows.join('');
 }
 
@@ -389,21 +310,15 @@ function renderChecks(){
 async function loadEp(ds,id){
   if(ds.cache.has(id))return ds.cache.get(id);
   const p=(async()=>{
-    const e=ds.eps.find(x=>x.id===id),s=await entryStart(ds.src,e.npz);
-    const buf=await ds.src.read(s,s+e.npz.csize),mem=memSrc(buf),dir=await zipDir(mem);
-    const get=async k=>dir[k+'.npy']?npy(await entryBytes(mem,dir[k+'.npy'])):null;
-    const t=await get('t'),st=await get('state'),ac=await get('action'),sg=await get('stage');
-    const cams={};
-    for(const c of Object.keys(ds.info.cameras||{})){const j=await get('jpeg_'+c),o=await get('jpeg_off_'+c);if(j&&o)cams[c]={j:j.data,o:o.data};}
-    const n=st.shape[0],D=st.shape[1];
-    return{id,meta:e.meta,n,D,t:t.data,t0:t.data[0],state:st.data,action:ac.data,stage:sg?sg.data:null,cams};
+    const d=await getJSON(`/api/episode?f=${encodeURIComponent(ds.file)}&i=${id}`),e=ds.eps.find(x=>x.id===id);
+    return{id,meta:e,n:d.n,D:d.D,t:d.t,t0:0,state:Float32Array.from(d.state),action:Float32Array.from(d.action),stage:d.stage||null};
   })();
   ds.cache.set(id,p);
-  while(ds.cache.size>4)ds.cache.delete(ds.cache.keys().next().value);
+  while(ds.cache.size>6)ds.cache.delete(ds.cache.keys().next().value);
   p.catch(()=>ds.cache.delete(id));
   return p;
 }
-// 반복: 전체 (성공 에피소드 차례로, 끝나면 처음부터) · 이 에피소드 · 끔 — 이 브라우저에 기억 (전시 PC 다시 켜도 그대로)
+// 반복: 전체 (에피소드 차례로, 끝나면 처음부터) · 이 에피소드 · 끔 — 이 브라우저에 기억 (전시 PC 다시 켜도 그대로)
 const REP=()=>$('rep').value;
 try{const v=localStorage.getItem('act_viewer_rep');if(v)$('rep').value=v;}catch(e){}
 $('rep').onchange=()=>{try{localStorage.setItem('act_viewer_rep',REP());}catch(e){}if(REP()!=='off'&&P.ep&&!P.playing)play(true);};
@@ -417,17 +332,18 @@ async function openEp(id,user){
     const row=$('row-'+id),sc=row&&row.closest('.scroll');           // 목록 안에서만 스크롤 (열 전체가 움직이지 않게)
     if(sc){const rb=row.getBoundingClientRect(),sb=sc.getBoundingClientRect();if(rb.top<sb.top+22||rb.bottom>sb.bottom)sc.scrollTop+=rb.top-sb.top-24;}
     $('slider').max=ep.n-1;
-    const okl=okEps(curDs),k=okl.findIndex(e=>e.id===id);
-    $('chip-ep').className='chip busy';$('chip-ep').innerHTML=`Episode <b>${id}</b> ${k>=0?`${k+1}/${okl.length}`:''}`;
-    $('cam-tag').textContent=`${id} · ${ep.meta.side||'-'} · ${ep.meta.result||''}`;
+    const k=curDs.eps.findIndex(e=>e.id===id);
+    $('chip-ep').className='chip busy';$('chip-ep').innerHTML=`에피소드 <b>${k+1}</b> / ${curDs.eps.length}`;
+    $('cam-tag').textContent=`${k+1} · ${SIDE_KO[ep.meta.side]||ep.meta.side||'-'} · ${ep.meta.result||''}`;
     $('stages').innerHTML=(ep.meta.stages||[]).map((s,i)=>`<span id="sg-${i}">${esc(s)}</span>`).join('');
+    setVideos(ep.meta);
     drawPlots(ep);setFrame(0);
-    const nx=nextOk(id);if(nx)loadEp(curDs,nx.id).catch(()=>{});      // 다음 에피소드 미리 읽기
+    const nx=nextEp(id);if(nx)loadEp(curDs,nx.id).catch(()=>{});      // 다음 에피소드 미리 읽기
     if(user)play(true);
-  }catch(e){toast(`${id}: ${e.message}`,true);}
+  }catch(e){toast(`에피소드 ${id+1}: ${e.message}`,true);}
 }
-function nextOk(id){const l=okEps(curDs);if(!l.length)return null;const k=l.findIndex(e=>e.id===id);return l[(k+1)%l.length];}
-function play(on){P.playing=on;$('play').textContent=on?'❚❚ Pause':'▶ Play';$('livedot').className='dot'+(on?' live':'');}
+function nextEp(id){const l=curDs.eps;if(!l.length)return null;const k=l.findIndex(e=>e.id===id);return l[(k+1)%l.length];}
+function play(on){P.playing=on;$('play').textContent=on?'❚❚ 멈춤':'▶ 재생';$('livedot').className='dot'+(on?' live':'');}
 function togglePlay(){if(P.ep&&P.i>=P.ep.n-1)P.clock=0;play(!P.playing);}
 $('slider').oninput=e=>{play(false);if(P.ep){P.clock=P.ep.t[+e.target.value]-P.ep.t0;setFrame(+e.target.value);}};
 
@@ -441,45 +357,35 @@ function setFrame(i){
   poseRobot(st);
   const sn=(ep.meta.stages||[])[sg];
   const g=st.length>=16&&GRIP?[st[7],st[15]].map(q=>(q*GRIP.mm_per_rad).toFixed(0)):null;
-  const okl=okEps(curDs),k=okl.findIndex(e=>e.id===ep.id);
-  $('ov').innerHTML=`<div class="ep">EP<b>${k>=0?k+1:ep.id.replace('ep_','')}</b>/ ${okl.length}</div>`+(sn?`<div class="stg">${esc(sn)}</div>`:'')+
-    (g?`<div class="grp">GRIPPER L<b>${g[0]}</b>R<b>${g[1]}</b>mm</div>`:'');
-  drawCams(ep,i);overlayPlots(ep,i);
+  const k=curDs.eps.findIndex(e=>e.id===ep.id);
+  $('ov').innerHTML=`<div class="ep">에피소드<b>${k+1}</b>/ ${curDs.eps.length}</div>`+(sn?`<div class="stg">${esc(sn)}</div>`:'')+
+    (g?`<div class="grp">그리퍼 L<b>${g[0]}</b>R<b>${g[1]}</b>mm</div>`:'');
+  seekVideos(ep.t[i]);overlayPlots(ep,i);
 }
 
-// ================= 카메라 =================
+// ================= 카메라 (mp4 — LeRobot 은 키프레임 간격이 짧아 프레임마다 옮겨도 가벼움) =================
 const CAMV={};
-function buildCams(names){
-  const box=$('cams');
+function buildCams(ds){
+  const box=$('cams'),names=Object.keys(ds.cameras);
   if(!names.length){box.innerHTML='<div class="empty">카메라 없음</div>';return;}
   const main=names.includes('body')?'body':names[0],rest=names.filter(n=>n!==main);
-  box.innerHTML=`<div class="cam" id="cv-${main}"><canvas></canvas><span class="lb">${esc(main)}</span></div>`+
-    (rest.length?`<div class="row2" style="grid-template-columns:repeat(${rest.length},1fr)">${rest.map(n=>`<div class="cam" id="cv-${n}"><canvas></canvas><span class="lb">${esc(n)}</span></div>`).join('')}</div>`:'');
-  if(!rest.length)box.style.gridTemplateRows='1fr';else box.style.gridTemplateRows='';
+  const cell=n=>`<div class="cam" id="cv-${n}"><video muted playsinline preload="auto"></video><span class="lb">${esc(n)}</span></div>`;
+  box.innerHTML=cell(main)+(rest.length?`<div class="row2" style="grid-template-columns:repeat(${rest.length},1fr)">${rest.map(cell).join('')}</div>`:'');
+  box.style.gridTemplateRows=rest.length?'':'1fr';
   for(const k in CAMV)delete CAMV[k];
-  for(const n of names)CAMV[n]={cv:$('cv-'+n).querySelector('canvas'),busy:false,want:-1};
+  for(const n of names){const v=$('cv-'+n).querySelector('video'),c={v,key:ds.cameras[n].key,src:'',base:0,want:null,busy:false};
+    v.addEventListener('seeked',()=>{c.busy=false;if(c.want!==null){const t=c.want;c.want=null;seekOne(c,t);}});CAMV[n]=c;}
 }
-function drawCams(ep,i){
-  for(const [n,c] of Object.entries(CAMV)){
-    const src=ep.cams[n];if(!src)continue;c.want=i;
-    if(c.busy)continue;c.busy=true;
-    const go=async()=>{
-      while(c.want>=0){
-        const k=c.want;c.want=-1;
-        try{
-          const bm=await createImageBitmap(new Blob([src.j.subarray(src.o[k],src.o[k+1])],{type:'image/jpeg'}));
-          const cv=c.cv,w=cv.clientWidth,h=cv.clientHeight,dpr=devicePixelRatio||1;
-          if(cv.width!==Math.round(w*dpr)||cv.height!==Math.round(h*dpr)){cv.width=Math.round(w*dpr);cv.height=Math.round(h*dpr);}
-          const ctx=cv.getContext('2d'),s=Math.min(cv.width/bm.width,cv.height/bm.height),dw=bm.width*s,dh=bm.height*s;
-          ctx.fillStyle='#05080c';ctx.fillRect(0,0,cv.width,cv.height);
-          ctx.drawImage(bm,(cv.width-dw)/2,(cv.height-dh)/2,dw,dh);bm.close();
-        }catch(e){}
-      }
-      c.busy=false;
-    };
-    go();
+function setVideos(e){
+  for(const c of Object.values(CAMV)){
+    const vi=e.video[c.key];if(!vi)continue;
+    const src=`/api/video?f=${encodeURIComponent(curDs.file)}&key=${encodeURIComponent(c.key)}&c=${vi[0]}&n=${vi[1]}`;
+    c.base=vi[2];
+    if(c.src!==src){c.src=src;c.busy=false;c.want=null;c.v.src=src;}
   }
 }
+function seekOne(c,t){if(c.busy){c.want=t;return;}c.busy=true;try{c.v.currentTime=c.base+t+0.001;}catch(e){c.busy=false;}}
+function seekVideos(t){for(const c of Object.values(CAMV))if(c.src)seekOne(c,t);}
 
 // ================= 관절 그래프 =================
 const PAL=['#00b7eb','#3ddc97','#ffb454','#ff6b6b','#b18cff','#7fd8f5','#f5d76e'];
@@ -521,6 +427,7 @@ function overlayPlots(ep,i){
 }
 let rsT=null;
 window.addEventListener('resize',()=>{clearTimeout(rsT);rsT=setTimeout(()=>{if(P.ep){drawPlots(P.ep);const i=P.i;P.i=-1;setFrame(i);}resize3d();},150);});
+
 
 // ================= 3D 로봇 (URDF) =================
 const view=$('view');
@@ -628,7 +535,7 @@ function setFinger(side,q){                              // 그리퍼 q → 집�
   for(const f of FINGERS[side]){const dd=Math.min(f.upper,half);f.m.position.set(f.xyz[0]+f.axis[0]*dd,f.xyz[1]+f.axis[1]*dd,f.xyz[2]+f.axis[2]*dd);}
 }
 function poseRobot(st){
-  const names=curDs?curDs.info.state_names||[]:[];
+  const names=curDs?curDs.state_names||[]:[];
   names.forEach((n,k)=>{if(k>=st.length)return;
     if(n==='left_gripper_q')setFinger('left',st[k]);else if(n==='right_gripper_q')setFinger('right',st[k]);else setJoint(n,st[k]);});
 }
@@ -642,7 +549,7 @@ function loop(now){
   if(ep&&P.playing){
     if(P.wait>0){P.wait-=dt;if(P.wait<=0){
       if(REP()==='one'){P.clock=0;P.i=-1;setFrame(0);}               // 같은 에피소드 처음부터
-      else{const nx=nextOk(ep.id);if(nx)openEp(nx.id,false);}}}      // 다음 성공 에피소드 (마지막 다음은 처음)
+      else{const nx=nextEp(ep.id);if(nx)openEp(nx.id,false);}}}       // 다음 에피소드 (마지막 다음은 처음)
     else{
       P.clock+=dt*P.speed;const tt=ep.t0+P.clock;let i=Math.max(0,P.i);
       while(i<ep.n-1&&ep.t[i+1]<=tt)i++;
@@ -655,22 +562,23 @@ function loop(now){
 }
 
 // ================= 파일 =================
-$('pick').onchange=e=>{for(const f of e.target.files)addZip(f.name,fileSrc(f));e.target.value='';};
+$('pick').onchange=e=>{for(const f of e.target.files)upload(f);e.target.value='';};
 let dragN=0;
 window.addEventListener('dragenter',e=>{e.preventDefault();dragN++;$('drop').classList.add('on');});
 window.addEventListener('dragleave',()=>{if(--dragN<=0){dragN=0;$('drop').classList.remove('on');}});
 window.addEventListener('dragover',e=>e.preventDefault());
 window.addEventListener('drop',e=>{e.preventDefault();dragN=0;$('drop').classList.remove('on');
-  for(const f of e.dataTransfer.files)if(/\.zip$/i.test(f.name))addZip(f.name,fileSrc(f));});
+  for(const f of e.dataTransfer.files)if(/\.zip$/i.test(f.name))upload(f);});
 document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!=='SELECT'){e.preventDefault();togglePlay();}
-  if(e.key==='ArrowRight'&&curDs&&P.ep){const nx=nextOk(P.ep.id);if(nx)openEp(nx.id,true);}});
+  if(e.key==='ArrowRight'&&curDs&&P.ep){const nx=nextEp(P.ep.id);if(nx)openEp(nx.id,true);}});
 
 (async()=>{
   resize3d();requestAnimationFrame(loop);
   buildRobot().catch(e=>{$('load3d').textContent='로봇 불러오기 실패: '+e.message;});
   try{
-    const r=await (await fetch('/api/files')).json();
-    for(const f of r.files)await addZip(f.name,urlSrc('/data/'+encodeURIComponent(f.name),f.size));
+    const r=await getJSON('/api/files');
+    for(const f of r.files)addItem(f);
+    refreshSel();
     if(!r.files.length)toast(`zip 없음 — ${r.dir} 에 넣거나 화면에 끌어다 놓으세요`);
   }catch(e){toast('서버 응답 없음: '+e.message,true);}
 })();

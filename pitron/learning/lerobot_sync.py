@@ -107,7 +107,7 @@ def add_episode(ds, root, e, info, task):
 
 def ep_row(idx, e, m, n):
     return {"index": idx, "raw": e, "side": m.get("side"), "ok": bool(m.get("ok")), "result": m.get("result"),
-            "frames": int(n), "created": m.get("created")}
+            "frames": int(n), "created": m.get("created"), "stages": m.get("stages")}
 
 
 def write_h2(out, h2):

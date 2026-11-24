@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-act_viewer.py — ACT 데이터셋 · 모델 보기 (전시용, 로봇 · GPU 필요 없음)
+act_viewer.py — LeRobot v3 데이터셋 · lerobot 모델 보기 (전시용, 로봇 · GPU · lerobot 필요 없음)
 
-  Windows: apps/act_viewer/start_viewer.bat 더블클릭 — 처음 한 번 apps/act_viewer/.venv 가상환경을 만들고 requirements.txt 설치 (Python 3.8+ 필요)
+  Windows: apps/act_viewer/start_viewer.bat 더블클릭 — 처음 한 번 apps/act_viewer/.venv 가상환경을 만들고 requirements.txt 설치 (Python 3.9+)
   Linux  : python3 -m venv apps/act_viewer/.venv && apps/act_viewer/.venv/bin/pip install -r apps/act_viewer/requirements.txt
            apps/act_viewer/.venv/bin/python apps/act_viewer/act_viewer.py [--data <폴더>] [--port 8800] [--no-browser]
 
-  viewer/data/ 에 zip 을 넣어 두면 켤 때 자동으로 읽음 (화면에 끌어다 놓아도 됨)
-    데이터셋 zip : 수집 페이지 (/collect) [Dataset zip]   — info.json format h2-gripper-episodes-v1
-    모델 zip     : 학습 웹 (:50100) model zip            — meta.json format h2-gripper-act-v1
-  zip 은 브라우저가 필요한 부분만 읽음 (HTTP Range) — 서버는 파일만 내줌, 모델 실행 안 함
+  data/viewer/ 에 zip 을 넣어 두면 켤 때 자동으로 읽음 (화면에 끌어다 놓으면 이 폴더에 저장)
+    데이터셋 zip : 수집 화면 · 홈의 [LeRobot v3 zip]           — <이름>/meta/info.json (codebase_version v3.0)
+    모델 zip     : 학습 웹 (:50100) model zip (lerobot 모델)     — <이름>/config.json · model.safetensors (정책 종류 상관없음)
+  parquet 는 pyarrow 로 읽고, 영상 (mp4) 은 캐시 폴더 (data/viewer/.cache) 에 꺼내 브라우저 <video> 로 보여 줌. 모델은 실행 안 함
   3D 로봇 = robots/h2/H2.urdf + 메시, 손 = robots/h2/hands/dex1 (Unitree Dex1-1) + 어댑터 (apps/gripper_pick/gripper.yaml xr_view.dex1_view)
 """
 import argparse
@@ -17,9 +17,12 @@ import json
 import mimetypes
 import os
 import re
+import shutil
+import struct
 import sys
 import threading
 import webbrowser
+import zipfile
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
@@ -40,6 +43,8 @@ MESH_DIRS = {"h2": os.path.join(REPO, "robots", "h2", "meshes"),
              "dex1": os.path.join(REPO, "robots", "h2", "hands", "dex1", "meshes"),
              "adapter": os.path.join(REPO, "robots", "h2", "hands", "dex1")}
 CHUNK = 1 << 20
+NAME_RE = re.compile(r"^[^/\\:*?\"<>|]{1,120}\.zip$", re.I)
+VIDEO_RE = re.compile(r"^videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4$")
 
 
 def robot_info():
@@ -73,6 +78,164 @@ def robot_info():
     return out
 
 
+# ---------------- zip 읽기 ----------------
+_lk = threading.Lock()
+_cache = {}          # (경로, mtime) → 요약
+
+
+def _root(z):
+    roots = {n.split("/", 1)[0] for n in z.namelist() if "/" in n}
+    return roots.pop() if len(roots) == 1 else None
+
+
+def _json(z, name):
+    with z.open(name) as f:
+        return json.loads(f.read().decode("utf-8").replace("NaN", "null"))
+
+
+def _parquet(z, name, columns=None):
+    import pyarrow.parquet as pq
+    with z.open(name) as f:
+        return pq.read_table(f, columns=columns)
+
+
+def _safetensors_params(z, name):
+    """safetensors 헤더만 읽어 파라미터 수 (torch 없이)."""
+    with z.open(name) as f:
+        n = struct.unpack("<Q", f.read(8))[0]
+        if n > 64 << 20:
+            return None
+        h = json.loads(f.read(n))
+    tot = 0
+    for k, v in h.items():
+        if k != "__metadata__":
+            c = 1
+            for s in v.get("shape", []):
+                c *= int(s)
+            tot += c
+    return tot
+
+
+def summarize(path):
+    """zip → {kind: dataset|model|unknown, ...} (zip 이 바뀌지 않으면 캐시)."""
+    key = (path, os.path.getmtime(path))
+    with _lk:
+        if key in _cache:
+            return _cache[key]
+    out = {"file": os.path.basename(path), "size": os.path.getsize(path)}
+    try:
+        with zipfile.ZipFile(path) as z:
+            root, names = _root(z), set(z.namelist())
+            if root and f"{root}/meta/info.json" in names:
+                out.update(dataset(z, root, names))
+            elif root and f"{root}/config.json" in names and f"{root}/model.safetensors" in names:
+                out.update(model(z, root, names))
+            elif root and f"{root}/info.json" in names:
+                out.update(kind="unknown", name=root, err="예전 수집 형식 — LeRobot v3 로 바꿔서 넣으세요 (python tools/export_lerobot.py <zip> --out <폴더>)")
+            else:
+                out.update(kind="unknown", name=root or out["file"], err="LeRobot v3 데이터셋 · lerobot 모델 zip 이 아님")
+    except Exception as e:  # noqa: BLE001
+        out.update(kind="unknown", name=out["file"], err=f"{type(e).__name__}: {e}")
+    with _lk:
+        _cache[key] = out
+    return out
+
+
+def dataset(z, root, names):
+    info = _json(z, f"{root}/meta/info.json")
+    if info.get("codebase_version") != "v3.0":
+        return {"kind": "unknown", "name": root, "err": f"LeRobot 데이터셋 {info.get('codebase_version')} — v3.0 만"}
+    h2 = _json(z, f"{root}/meta/h2.json") if f"{root}/meta/h2.json" in names else {}
+    feats = info.get("features", {})
+    vkeys = [k for k, v in feats.items() if v.get("dtype") == "video"]
+    cams = {k.split(".", 2)[-1]: {"key": k, "w": int(feats[k]["shape"][1]), "h": int(feats[k]["shape"][0]),
+                                  "codec": (feats[k].get("info") or {}).get("video.codec")} for k in vkeys}
+    cols = ["episode_index", "length", "dataset_from_index", "dataset_to_index", "data/chunk_index", "data/file_index"]
+    for k in vkeys:
+        cols += [f"videos/{k}/chunk_index", f"videos/{k}/file_index", f"videos/{k}/from_timestamp", f"videos/{k}/to_timestamp"]
+    rows = []
+    for n in sorted(x for x in names if x.startswith(f"{root}/meta/episodes/") and x.endswith(".parquet")):
+        t = _parquet(z, n)
+        rows += t.select([c for c in cols if c in t.column_names] + (["tasks"] if "tasks" in t.column_names else [])).to_pylist()
+    rows.sort(key=lambda r: r["episode_index"])
+    h2e = {int(e["index"]): e for e in h2.get("episodes", [])}
+    eps = []
+    for r in rows:
+        i = int(r["episode_index"])
+        e = h2e.get(i, {})
+        eps.append({"index": i, "n": int(r["length"]), "from": int(r["dataset_from_index"]), "to": int(r["dataset_to_index"]),
+                    "data": [int(r.get("data/chunk_index") or 0), int(r.get("data/file_index") or 0)],
+                    "video": {k: [int(r[f"videos/{k}/chunk_index"]), int(r[f"videos/{k}/file_index"]),
+                                  float(r[f"videos/{k}/from_timestamp"])] for k in vkeys if f"videos/{k}/chunk_index" in r},
+                    "tasks": r.get("tasks"), "side": e.get("side"), "result": e.get("result"), "raw": e.get("raw"),
+                    "created": e.get("created"), "stages": e.get("stages")})
+    sn = (feats.get("observation.state") or {}).get("names") or h2.get("state_names") or []
+    return {"kind": "dataset", "name": root, "fps": info.get("fps"), "robot": info.get("robot_type"), "cameras": cams,
+            "state_names": sn, "has_tcp": "tcp" in feats, "has_stage": "stage" in feats, "task": h2.get("task"), "fit": h2.get("fit"),
+            "total_frames": info.get("total_frames"), "episodes": eps, "chunks_size": info.get("chunks_size"),
+            "data_path": info.get("data_path"), "video_path": info.get("video_path"), "updated": h2.get("updated")}
+
+
+def model(z, root, names):
+    cfg = _json(z, f"{root}/config.json")
+    h2 = _json(z, f"{root}/h2_model.json") if f"{root}/h2_model.json" in names else {}
+    tc = _json(z, f"{root}/train_config.json") if f"{root}/train_config.json" in names else {}
+    feats = cfg.get("input_features") or {}
+    cams = {k.split(".", 2)[-1]: {"w": int(v["shape"][2]), "h": int(v["shape"][1])} for k, v in feats.items()
+            if k.startswith("observation.images.") and len(v.get("shape", [])) == 3}
+    keep = ("chunk_size", "n_action_steps", "n_obs_steps", "horizon", "dim_model", "n_heads", "n_encoder_layers", "n_decoder_layers",
+            "vision_backbone", "use_vae", "kl_weight", "temporal_ensemble_coeff", "num_inference_steps", "noise_scheduler_type",
+            "optimizer_lr", "vlm_model_name")
+    info = z.getinfo(f"{root}/model.safetensors")
+    return {"kind": "model", "name": h2.get("name") or root, "policy": cfg.get("type"), "cameras": cams,
+            "state_dim": ((feats.get("observation.state") or {}).get("shape") or [None])[0],
+            "action_dim": (((cfg.get("output_features") or {}).get("action") or {}).get("shape") or [None])[0],
+            "config": {k: cfg[k] for k in keep if k in cfg}, "h2": h2,
+            "train": {"steps": tc.get("steps"), "batch_size": tc.get("batch_size"), "seed": tc.get("seed"),
+                      "dataset": (tc.get("dataset") or {}).get("repo_id")},
+            "params": _safetensors_params(z, f"{root}/model.safetensors"), "weights_mb": round(info.file_size / 1e6, 1)}
+
+
+def episode(path, ei):
+    """에피소드 ei → state · action (· tcp · stage) · timestamp (프레임 순서)."""
+    import pyarrow.compute as pc
+    s = summarize(path)
+    e = next((x for x in s.get("episodes", []) if x["index"] == ei), None)
+    if e is None:
+        raise KeyError(f"에피소드 {ei} 없음")
+    fn = s["data_path"].format(chunk_index=e["data"][0], file_index=e["data"][1])
+    with zipfile.ZipFile(path) as z:
+        cols = ["episode_index", "timestamp", "observation.state", "action"] + (["tcp"] if s["has_tcp"] else []) + (["stage"] if s["has_stage"] else [])
+        t = _parquet(z, f"{s['name']}/{fn}", columns=cols)
+    t = t.filter(pc.equal(t["episode_index"], ei))
+    out = {"index": ei, "n": t.num_rows, "t": t["timestamp"].to_pylist()}
+    for k, col in (("state", "observation.state"), ("action", "action"), ("tcp", "tcp")):
+        if col in t.column_names:
+            out[k] = [round(float(v), 5) for row in t[col].to_pylist() for v in row]
+    if "stage" in t.column_names:
+        out["stage"] = [int(v[0]) if isinstance(v, list) else int(v) for v in t["stage"].to_pylist()]
+    out["D"] = len(out["state"]) // max(1, out["n"])
+    return out
+
+
+def video_file(data_dir, path, key, chunk, file):
+    """zip 안 mp4 → 캐시 폴더 파일 경로 (한 번만 꺼냄)."""
+    s = summarize(path)
+    rel = s["video_path"].format(video_key=key, chunk_index=int(chunk), file_index=int(file))
+    if not VIDEO_RE.match(rel):
+        raise KeyError(rel)
+    cdir = os.path.join(data_dir, ".cache", f"{os.path.splitext(s['file'])[0]}_{int(os.path.getmtime(path))}")
+    dst = os.path.join(cdir, rel)
+    if not os.path.isfile(dst):
+        with _lk:
+            if not os.path.isfile(dst):
+                os.makedirs(os.path.dirname(dst), exist_ok=True)
+                with zipfile.ZipFile(path) as z, z.open(f"{s['name']}/{rel}") as src, open(dst + ".tmp", "wb") as out:
+                    shutil.copyfileobj(src, out, CHUNK)
+                os.replace(dst + ".tmp", dst)
+    return dst
+
+
 class Handler(BaseHTTPRequestHandler):
     data_dir = paths.data_dir("viewer", legacy="viewer/data")
 
@@ -87,11 +250,11 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _json(self, obj):
-        self._send(json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
+    def _json(self, obj, code=200):
+        self._send(json.dumps(obj, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8", code)
 
     def _file(self, path, ctype=None):
-        """파일 (Range 지원 — 브라우저가 zip 의 필요한 부분만 읽음)"""
+        """파일 (Range 지원 — 브라우저 <video> 가 필요한 부분만 읽음)"""
         if not os.path.isfile(path):
             return self.send_error(HTTPStatus.NOT_FOUND)
         size = os.path.getsize(path)
@@ -117,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(n))
         self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Cache-Control", "max-age=3600")
         self.end_headers()
         with open(path, "rb") as f:
             f.seek(start)
@@ -128,9 +291,16 @@ class Handler(BaseHTTPRequestHandler):
                 self.wfile.write(b)
                 n -= len(b)
 
+    def _zip(self, q):
+        name = os.path.basename((q.get("f") or [""])[0])
+        p = os.path.join(self.data_dir, name)
+        if not NAME_RE.match(name) or not os.path.isfile(p):
+            raise FileNotFoundError(name)
+        return p
+
     def do_GET(self):
         u = urlparse(self.path)
-        p = unquote(u.path)
+        p, q = unquote(u.path), parse_qs(u.query)
         try:
             if p in ("/", "/index.html"):
                 return self._file(PAGE, "text/html; charset=utf-8")
@@ -143,12 +313,13 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/files":
                 d = self.data_dir
                 fs = sorted(f for f in os.listdir(d) if f.lower().endswith(".zip")) if os.path.isdir(d) else []
-                return self._json({"dir": d, "files": [{"name": f, "size": os.path.getsize(os.path.join(d, f))} for f in fs]})
-            if p.startswith("/data/"):
-                name = os.path.basename(p[len("/data/"):])
-                return self._file(os.path.join(self.data_dir, name), "application/zip")
+                return self._json({"dir": d, "files": [summarize(os.path.join(d, f)) for f in fs]})
+            if p == "/api/episode":
+                return self._json(episode(self._zip(q), int((q.get("i") or ["0"])[0])))
+            if p == "/api/video":
+                f = video_file(self.data_dir, self._zip(q), (q.get("key") or [""])[0], (q.get("c") or ["0"])[0], (q.get("n") or ["0"])[0])
+                return self._file(f, "video/mp4")
             if p == "/api/mesh":
-                q = parse_qs(u.query)
                 d = MESH_DIRS.get((q.get("d") or [""])[0])
                 name = os.path.basename((q.get("f") or [""])[0])
                 if not d or not name:
@@ -161,10 +332,32 @@ class Handler(BaseHTTPRequestHandler):
             self.send_error(HTTPStatus.NOT_FOUND)
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
             pass
+        except (FileNotFoundError, KeyError, ValueError) as e:
+            self._json({"detail": f"{type(e).__name__}: {e}"}, 404)
+
+    def do_PUT(self):
+        """화면에 끌어다 놓은 zip → data 폴더에 저장."""
+        u = urlparse(self.path)
+        if unquote(u.path) != "/api/upload":
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        name = os.path.basename(unquote((parse_qs(u.query).get("name") or [""])[0]))
+        n = int(self.headers.get("Content-Length") or 0)
+        if not NAME_RE.match(name) or n <= 0:
+            return self._json({"detail": "zip 파일 이름 · 크기"}, 400)
+        dst = os.path.join(self.data_dir, name)
+        with open(dst + ".tmp", "wb") as f:
+            while n > 0:
+                b = self.rfile.read(min(CHUNK, n))
+                if not b:
+                    break
+                f.write(b)
+                n -= len(b)
+        os.replace(dst + ".tmp", dst)
+        self._json(summarize(dst))
 
 
 def main():
-    ap = argparse.ArgumentParser(description="ACT 데이터셋 · 모델 보기")
+    ap = argparse.ArgumentParser(description="LeRobot v3 데이터셋 · lerobot 모델 보기")
     ap.add_argument("--data", default=Handler.data_dir, help="zip 을 둔 폴더 (기본 data/viewer)")
     ap.add_argument("--port", type=int, default=ports.PORTS["act_viewer"])
     ap.add_argument("--host", default="127.0.0.1", help="다른 PC 에서 보려면 0.0.0.0")
@@ -175,6 +368,10 @@ def main():
     for need in (PAGE, THREE, URDF):
         if not os.path.isfile(need):
             sys.exit(f"❌ 파일 없음: {need} (저장소를 통째로 clone 했는지 확인)")
+    try:
+        import pyarrow  # noqa: F401
+    except ImportError:
+        sys.exit("❌ pyarrow 없음 — apps/act_viewer/requirements.txt 설치 (start_viewer.bat 은 .venv 를 지우고 다시 실행)")
     srv = ThreadingHTTPServer((a.host, a.port), Handler)
     url = f"http://127.0.0.1:{a.port}/"
     zips = [f for f in os.listdir(a.data) if f.lower().endswith(".zip")]

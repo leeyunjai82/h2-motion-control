@@ -1,5 +1,5 @@
 @echo off
-rem ACT 데이터셋 · 모델 보기 — 더블클릭 (처음 한 번 viewer\.venv 가상환경 설치). zip 은 저장소의 data\viewer 에 넣어 둠
+rem LeRobot v3 데이터셋 · 모델 보기 — 더블클릭 (처음 한 번 viewer\.venv 가상환경 설치). zip 은 저장소의 data\viewer 에 넣어 둠
 chcp 65001 >nul
 cd /d "%~dp0"
 set VENV=%~dp0.venv
