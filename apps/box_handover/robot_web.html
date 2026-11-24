@@ -247,6 +247,8 @@ body.demo .pc .ps{font-size:12.5px}
 body.demo .statusline{font-size:15px}
 body.demo .stages .sg{font-size:12px;padding:5px 8px}
 
+/* 홈 앱 안: 다른 탭에 있는 화면으로 가는 링크 숨김 (3D · 박스 인식 · 머리 카메라는 앱 탭) */
+.in-app #link-dash,.in-app #link-box,.in-app #link-vision{display:none!important}
 /* buttons */
 .seg{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px}
 .seg.two{grid-template-columns:1fr 1fr}
@@ -389,7 +391,7 @@ pre.evlog .t{color:var(--dim)}pre.evlog .ok{color:var(--ok)}pre.evlog .ng{color:
 <div class="topbar">
   <span class="dot live" id="livedot"></span>
   <span class="logo">pitron<b>·manipulation</b></span>
-  <span style="color:var(--dim);font-size:11px">control · 50000</span>
+  <span class="port-label" style="color:var(--dim);font-size:11px">control · 50000</span>
   <div class="right">
     <div class="chips">
       <span class="chip" id="chip-conn">연결 <b>-</b></span>

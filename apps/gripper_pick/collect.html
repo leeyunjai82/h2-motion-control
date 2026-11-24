@@ -106,7 +106,7 @@ input[type=file].in{width:100%}
 <div class="topbar">
   <span class="dot" id="livedot"></span>
   <span class="logo">pitron<b>·collect</b></span>
-  <span style="color:var(--dim);font-size:11px">VR 수집 · 추론 · 50030</span>
+  <span class="port-label" style="color:var(--dim);font-size:11px">VR 수집 · 추론 · 50030</span>
   <div class="dsbar">
     <span class="mini" style="margin:0">데이터셋</span><input class="in" id="ds" size="16">
     <label class="sw"><input type="checkbox" id="recon"><span class="tr"></span><span>수집 켬</span></label>
@@ -192,14 +192,14 @@ input[type=file].in{width:100%}
       <div class="card-h">Dataset → 학습 PC</div>
       <div class="card-b">
         <a id="dl" class="btn primary" href="#" style="display:block">⬇ 데이터셋 zip (저장한 성공 에피소드만)</a>
-        <div class="hint">받은 zip 을 학습 화면 (<b>:50100</b>, <b>./apps/trainer/start_trainer.sh</b> · <b>start_trainer_xpu.sh</b>) 에 올리면 됨</div>
+        <div class="hint">이 PC 에서 학습하면 zip 필요 없음 (홈 · 학습에서 데이터셋을 고름). 다른 PC (5090) 에서 학습할 때만 이 zip 을 그 학습 웹에 올림</div>
       </div>
     </div>
 
     <div class="card">
       <div class="card-h">Policy · 추론 <span class="tag" id="pol-tag">-</span></div>
       <div class="card-b">
-        <span class="mini">model zip (학습 화면에서 받은 파일)</span>
+        <span class="mini">model zip (다른 PC 에서 학습한 모델 — 이 PC 학습은 자동으로 목록에 들어옴)</span>
         <input class="in" type="file" id="mfile" accept=".zip">
         <div class="row" style="margin-top:8px">
           <span class="mini" style="margin:0">장치</span>

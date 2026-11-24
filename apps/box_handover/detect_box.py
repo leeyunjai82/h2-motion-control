@@ -679,7 +679,7 @@ button{background:#FF9800;border:none;color:#000;padding:8px;border-radius:5px;c
 .bar{height:6px;background:#333;border-radius:3px;overflow:hidden;margin-top:8px}
 .bar-fill{height:100%;width:0;background:#FF9800;transition:width .15s}
 </style></head><body>
-<h1>📦 Detect Box (__PORT_DETECT_BOX__)</h1>
+<h1>📦 Detect Box <span class="port-label">(__PORT_DETECT_BOX__)</span></h1>
 <div id="wrap">
   <img src="/video_feed" style="width:100%;max-width:848px;height:auto">
   <div class="panel">

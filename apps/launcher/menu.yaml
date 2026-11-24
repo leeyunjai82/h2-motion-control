@@ -25,12 +25,12 @@ sections:
         title: 시뮬레이터 (모션 에디터)
         desc: 관절 · IK 로 팔 모션 만들기 · 모터 번호 확인
         modes: [editor_virtual, editor_real]
-        tabs: [{title: 에디터, page: "editor:/"}, {title: 모터 번호 확인, page: "editor:/check"}, {title: 3D, page: "dashboard:/dashboard"}]
+        tabs: [{title: 에디터, page: "editor:/"}, {title: 모터 번호 확인, page: "editor:/check"}, {title: 3D, page: "dashboard:/robot-only"}]
       - id: box
         title: 박스 핸드오버
         desc: 박스를 양손으로 잡아 건네기 · 내려놓기
         modes: [box_sim, box_real]
-        tabs: [{title: 제어, page: "robot_server:/"}, {title: 박스 인식, page: "detect_box:/"}, {title: 3D, page: "dashboard:/dashboard"}]
+        tabs: [{title: 제어, page: "robot_server:/"}, {title: 박스 인식, page: "detect_box:/"}, {title: 3D, page: "dashboard:/robot-only"}]
   - title: 시스템
     items:
       - id: robot

@@ -380,19 +380,32 @@ def index():
 HTML = r"""<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>__ROBOT__ Sim</title>
 <style>
-:root{--bg:#14171c;--card:#1d2229;--fg:#e6e9ee;--dim:#8a94a3;--ok:#4cc38a;--bad:#ef6b6b;--acc:#5aa9ff}
-body{margin:0;background:var(--bg);color:var(--fg);font:14px system-ui,sans-serif}
-.top{padding:10px 16px;border-bottom:1px solid #2a313b}.top b{font-size:16px}.warn{color:#f5b84d;margin-left:12px}
-.wrap{display:grid;grid-template-columns:360px 1fr;gap:12px;padding:12px}
+:root{--bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--line:#2a3340;--ink:#c9d4e0;--dim:#6b7785;--accent:#00b7eb;--accent2:#7fd8f5;--deep:#08465a;--ok:#3ddc97;--warn:#ff6b6b;--amber:#ffb454}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
+  background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%)}
+button{font:inherit;font-size:12.5px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:8px 11px;margin:3px 2px;border-radius:7px;cursor:pointer;transition:.12s}
+button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}button:disabled{opacity:.35;cursor:not-allowed}
+input[type=number],input[type=text],select{font:inherit;font-size:12.5px;background:#0c1117!important;color:var(--ink)!important;border:1px solid var(--line);border-radius:6px;padding:5px 6px}
+input[type=number]:focus,select:focus{outline:none;border-color:var(--accent2)}
+input[type=radio],input[type=checkbox],input[type=range]{accent-color:var(--accent)}
+pre{white-space:pre-wrap;font-size:11.5px;background:#0a0d12;border:1px solid var(--line);border-radius:8px;padding:8px;max-height:300px;overflow:auto}
+.ok{color:var(--ok)}.bad{color:var(--warn)}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+.top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-bottom:1px solid var(--line);background:linear-gradient(90deg,#11161d,#0e1116);box-shadow:inset 0 -1px 0 rgba(0,183,235,.45)}
+.top b{font-size:15px;color:var(--accent)}.warn{color:var(--amber);font-size:11px}
+.wrap{display:grid;grid-template-columns:380px 1fr;gap:14px;padding:14px}
 @media(max-width:900px){.wrap{grid-template-columns:1fr}}
-.card{background:var(--card);border-radius:8px;padding:12px;margin-bottom:12px}
-.card h3{margin:0 0 8px;font-size:14px;color:var(--dim)}
-label{display:grid;grid-template-columns:120px 1fr 56px;align-items:center;gap:6px;margin:4px 0}
-input[type=range]{width:100%}button{background:#2b3440;color:var(--fg);border:0;border-radius:6px;padding:8px 10px;margin:3px;cursor:pointer}
-button.go{background:#1f6f4a}button.st{background:#7a2e2e}
-table{width:100%;border-collapse:collapse}td{padding:3px 4px;border-bottom:1px solid #2a313b}td:first-child{color:var(--dim);width:42%}
-.ok{color:var(--ok)}.bad{color:var(--bad)}img{width:100%;border-radius:6px;background:#000}
-iframe{width:100%;height:560px;border:0;border-radius:6px;background:#000}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-bottom:12px;overflow:hidden;padding:0 13px 12px}
+.card h3{margin:0 -13px 10px;font-size:10px;font-weight:400;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);background:var(--panel2);
+  padding:9px 13px;border-bottom:1px solid var(--line);box-shadow:inset 3px 0 0 var(--accent)}
+label{display:grid;grid-template-columns:120px 1fr 52px;align-items:center;gap:8px;margin:5px 0;font-size:12px;color:var(--dim)}
+label span{color:var(--ink);text-align:right}
+input[type=range]{width:100%}
+button.go{border-color:#1f5a43;color:var(--ok)}button.st{border-color:#5a2b2b;color:var(--warn)}
+table{width:100%;border-collapse:collapse;font-size:12px}td{padding:5px 4px;border-bottom:1px solid var(--line)}td:first-child{color:var(--dim);width:42%}
+img{width:100%;border-radius:8px;background:#05080c;display:block}
+iframe{width:100%;height:520px;border:1px solid var(--line);border-radius:8px;background:#05080c}
 </style></head><body>
 <div class="top"><b>__ROBOT__ 시뮬레이터</b><span class="warn">ROBOT_SIM=1 · DDS 도메인 1 (실기와 분리) · 물리/접촉 없음 · 로봇 가상</span></div>
 <div class="wrap"><div>
@@ -417,10 +430,10 @@ iframe{width:100%;height:560px;border:0;border-radius:6px;background:#000}
  <div class="card"><h3>상태</h3><table id="st"></table></div>
 </div><div>
  <div class="card"><h3>__CAMTITLE__</h3><img id="cam"></div>
- <div class="card"><h3>3D (dashboard :__PORT_DASHBOARD__)</h3><iframe id="dash"></iframe></div>
+ <div class="card"><h3>3D</h3><iframe id="dash"></iframe></div>
 </div></div>
 <script>
-const host=location.hostname;document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/dashboard`;
+const host=location.hostname;document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${(window.G1I18N&&G1I18N.lang)||'ko'}`;
 const REALCAM=__REALCAM__;
 document.getElementById('cam').src=REALCAM?`http://${host}:__PORT_DETECT_BOX__/video_feed`:'/video_feed';
 if(REALCAM)document.getElementById('boxcard').style.display='none';

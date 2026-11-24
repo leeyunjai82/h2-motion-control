@@ -1367,6 +1367,8 @@ const FSM=@@FSM_JS@@;
 const host=location.hostname,$=id=>document.getElementById(id);
 const esc=t=>String(t??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const pageUrl=t=>`http://${host}:${t.port}${t.path}`;
+// 앱 안에 넣는 주소: embed=1 (그 화면의 언어 버튼 · 머리글 숨김) + 지금 언어 (포트가 달라 언어 설정을 공유 못 함 — 바꾸면 i18n.js 가 postMessage 로 맞춤)
+const embedUrl=t=>{const u=pageUrl(t);return u+(u.includes('?')?'&':'?')+'embed=1&lang='+((window.G1I18N&&G1I18N.lang)||'ko');};
 let MENU=null,ITEMS={},CUR=null,ST=null,VIEW='home',TAB={};
 function warn(title,big,body,yes){return new Promise(res=>{const m=$('modal');$('m-t').textContent='⚠️ '+title;
   $('m-m').innerHTML=(big?`<span class="big">${big}</span>`:'')+body;$('m-yes').textContent=yes||'실행';
@@ -1398,7 +1400,7 @@ function renderItem(it){
     (mine&&!prep&&tabs.length?`<button class="tab" onclick="window.open('${pageUrl(tabs[ti])}','_blank')">새 창 ↗</button>`:'');
   const fr=$('fr-'+it.id),sp=$('sp-'+it.id);
   if(mine&&!prep&&tabs.length){
-    const url=pageUrl(tabs[ti]);
+    const url=embedUrl(tabs[ti]);
     if(fr.dataset.url!==url||!fr.querySelector('iframe')){
       if(fr.dataset.probe===url)return;fr.dataset.probe=url;                 // 화면이 뜰 때까지 확인 후 넣음
       fetch(url,{mode:'no-cors',cache:'no-store'}).then(()=>{fr.innerHTML=`<iframe src="${url}"></iframe>`;fr.dataset.url=url;fr.classList.add('on');sp.classList.remove('on');})

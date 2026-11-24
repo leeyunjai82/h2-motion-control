@@ -93,7 +93,7 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
 <div class="topbar">
   <span class="dot" id="livedot"></span>
   <span class="logo">pitron<b>·trainer</b></span>
-  <span style="color:var(--dim);font-size:11px">ACT · 50100</span>
+  <span class="port-label" style="color:var(--dim);font-size:11px">ACT · 50100</span>
   <div class="right">
     <div class="chips">
       <span class="chip" id="chip-gpu">GPU <b>-</b></span>
@@ -112,15 +112,15 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
         <div class="row"><input class="in grow" type="file" id="ds-file" accept=".zip">
           <button class="btn sm" onclick="uploadDs()">업로드</button></div>
         <div class="prog" id="up-prog" style="display:none"><b id="up-bar"></b></div>
-        <div class="hint" id="up-text">수집 화면(:50030/collect) 의 <b>데이터셋 zip</b> 을 그대로 올리세요.</div>
+        <div class="hint" id="up-text">이 PC 에서 수집한 데이터셋은 목록에 바로 보임 (<b>수집</b>). 다른 PC 에서 받은 <b>데이터셋 zip</b> 만 여기에 올리세요.</div>
         <div class="scroll" style="margin-top:8px"><table class="tbl" id="ds-tbl"></table></div>
       </div>
     </div>
     <div class="card">
       <div class="card-h">System</div>
       <div class="card-b"><table class="tbl" id="sys-tbl" style="cursor:default"></table>
-        <div class="hint">순서: ① 수집 화면(:50030/collect)에서 데이터셋 zip 받기 → ② 여기 업로드 → ③ 학습 큐 →
-          ④ 끝나면 model zip → 수집 화면 [모델 올려서 추론] → 정책 시작.<br>
+        <div class="hint">데이터셋 고르기 → 학습 큐 → 끝나면 이 PC 에서는 모델 저장소에 자동 저장 (추론에서 고름).
+          다른 PC 에서 학습했으면 model zip 을 받아 추론 화면에 올림.<br>
           OpenVINO 는 로봇 PC 와 같은 버전으로 (apps/trainer/README.md).</div></div>
     </div>
   </div>

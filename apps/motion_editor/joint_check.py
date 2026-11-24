@@ -360,7 +360,7 @@ iframe{width:100%;height:640px;border:0;border-radius:6px;background:#000}.note{
 <script>
 const REAL=__REAL__, host=location.hostname;
 document.getElementById('mb').className='badge '+(REAL?'real':'sim');
-document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/dashboard`;
+document.getElementById('dash').src=`http://${host}:__PORT_DASHBOARD__/robot-only?embed=1&lang=${(window.G1I18N&&G1I18N.lang)||'ko'}`;
 const res={};let built=false;
 async function api(u){try{const r=await fetch(u,{method:'POST'});const d=await r.json();
   document.getElementById('msg').textContent=u+' → '+(r.ok?'OK':JSON.stringify(d.detail||d));}catch(e){document.getElementById('msg').textContent=u+' 실패 '+e;}}

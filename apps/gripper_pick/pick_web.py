@@ -1189,16 +1189,32 @@ def make_app(r: Runner):
 
 PAGE = r"""<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>그리퍼 잡기</title><style>
-body{font-family:system-ui,sans-serif;margin:0;background:#111;color:#ddd}
-.wrap{display:flex;flex-wrap:wrap;gap:12px;padding:12px}
-#img{max-width:100%;cursor:crosshair;border:1px solid #444;display:block}
-.panel{min-width:320px;max-width:440px;flex:1}
-fieldset{border:1px solid #444;margin:0 0 10px;padding:8px}
-label{margin-right:10px}input[type=number]{width:70px;background:#222;color:#eee;border:1px solid #555}
-button{padding:8px 12px;margin:3px 2px;background:#2a2a2a;color:#eee;border:1px solid #666;border-radius:4px;cursor:pointer}
-button:disabled{opacity:.35;cursor:default}#stop{background:#a00;border-color:#f44;font-weight:bold;width:100%;font-size:18px}
-#next{background:#064;border-color:#3c8}pre{white-space:pre-wrap;font-size:12px;background:#1a1a1a;padding:6px;max-height:300px;overflow:auto}
-.bad{color:#f88}.ok{color:#8f8}.sim{background:#553;padding:4px 8px}
+:root{--bg:#0e1116;--panel:#161b22;--panel2:#1c232d;--line:#2a3340;--ink:#c9d4e0;--dim:#6b7785;--accent:#00b7eb;--accent2:#7fd8f5;--deep:#08465a;--ok:#3ddc97;--warn:#ff6b6b;--amber:#ffb454}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:13px/1.5 'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;
+  background-image:radial-gradient(circle at 20% 0%,#16202c 0%,var(--bg) 55%)}
+button{font:inherit;font-size:12.5px;background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:8px 11px;margin:3px 2px;border-radius:7px;cursor:pointer;transition:.12s}
+button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}button:disabled{opacity:.35;cursor:not-allowed}
+input[type=number],input[type=text],select{font:inherit;font-size:12.5px;background:#0c1117!important;color:var(--ink)!important;border:1px solid var(--line);border-radius:6px;padding:5px 6px}
+input[type=number]:focus,select:focus{outline:none;border-color:var(--accent2)}
+input[type=radio],input[type=checkbox],input[type=range]{accent-color:var(--accent)}
+pre{white-space:pre-wrap;font-size:11.5px;background:#0a0d12;border:1px solid var(--line);border-radius:8px;padding:8px;max-height:300px;overflow:auto}
+.ok{color:var(--ok)}.bad{color:var(--warn)}
+::-webkit-scrollbar{width:5px;height:5px}::-webkit-scrollbar-thumb{background:var(--line);border-radius:3px}
+.wrap{display:flex;flex-wrap:wrap;gap:14px;padding:14px}
+#img{max-width:100%;cursor:crosshair;border:1px solid var(--line);border-radius:10px;display:block;background:#05080c}
+#wristimgs img{border:1px solid var(--line);border-radius:8px}
+.panel{min-width:340px;max-width:470px;flex:1}
+fieldset{background:var(--panel);border:1px solid var(--line);border-radius:10px;margin:0 0 12px;padding:12px 13px 10px;line-height:2}
+legend{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);background:var(--panel2);border:1px solid var(--line);
+  border-radius:6px;padding:3px 10px;box-shadow:inset 3px 0 0 var(--accent);line-height:1.4}
+label{margin-right:10px;white-space:nowrap}input[type=number]{width:72px}
+#stop{background:#2e1515;border-color:#5a2b2b;color:var(--warn);font-weight:700;width:100%;font-size:17px;padding:13px;margin:0 0 12px}
+#stop:hover{border-color:var(--warn);color:#fff;background:#5a1f1f}
+#next{border-color:#1f5a43;color:var(--ok)}#run{border-color:#0b5a70;color:var(--accent)}
+.sim{background:#3a2e12;color:var(--amber);border:1px solid #6a4a1f;border-radius:6px;padding:3px 9px}
+#clickhint{color:var(--amber)!important}
+div[style*="font-size:12px"],span[style*="font-size:12px"]{color:var(--dim)}
 </style></head><body>
 <div class="wrap"><div style="position:relative"><img id="img" src="/video" width="__W__" height="__H__"><div id="tblbox" style="position:absolute;border:2px solid #0f0;pointer-events:none;display:none"></div><div id="simnote"></div>
 <div id="wristimgs" style="display:flex;gap:6px;margin-top:6px"></div>
