@@ -577,18 +577,25 @@ XPU = {"file": None, "old": None}
 
 
 def xpu_cap(on):
+    """on: 제한하고 됐으면 True (안 되면 start_trainer_xpu.sh 가 스스로 해 보고, 그것도 안 되면 학습 웹을 안 띄움)."""
     import glob
     if on:
         fs = sorted(glob.glob("/sys/class/drm/card*/device/tile0/gt0/freq0/max_freq"))
         if not fs:
-            job.lines.append("[launcher] ⚠️ GPU 클럭 파일 없음 — 제한 없이 학습 (Intel xe 드라이버가 아님?)")
-            return
+            job.lines.append("[launcher] ⚠️ GPU 클럭 파일 없음 (Intel xe 드라이버가 아님?)")
+            return False
         f, mhz = fs[0], int(os.environ.get("XPU_MAX_MHZ", "1200"))
-        old = open(f).read().strip()
-        with open(f, "w") as fh:
-            fh.write(str(mhz))
+        try:
+            old = open(f).read().strip()
+            with open(f, "w") as fh:
+                fh.write(str(mhz))
+            now = int(open(f).read().strip())
+        except (OSError, ValueError) as e:
+            job.lines.append(f"[launcher] ⚠️ GPU 클럭 제한 실패: {e}")
+            return False
         XPU.update(file=f, old=old, pre=set(_pgrep(TRAIN_PAT)))
-        job.lines.append(f"[launcher] GPU 최대 클럭 {old} → {open(f).read().strip()} MHz (학습 끝나면 되돌림)")
+        job.lines.append(f"[launcher] GPU 최대 클럭 {old} → {now} MHz (학습 끝나면 되돌림)")
+        return now <= mhz
     elif XPU["file"]:
         mine = [p for p in _pgrep(TRAIN_PAT) if p not in XPU.get("pre", set())]   # 런처가 띄운 학습만
         for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 0)):    # 클럭을 풀기 전에 학습부터 끔
@@ -775,10 +782,9 @@ def _launch(m):
     if m.get("gripper") and m["real"]:
         _prep_and_start(m, [os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], {})
         return
-    if m.get("xpu_cap"):
-        xpu_cap(True)
+    capped = bool(m.get("xpu_cap")) and xpu_cap(True)
     job.start(["bash", os.path.join(ROOT, m["cmd"][0])] + m["cmd"][1:], f"{m['app_title']} · {m['label']}",
-              as_user=True, env_extra={"XPU_CAP_BY_LAUNCHER": "1"} if m.get("xpu_cap") else None, keep_lines=True)
+              as_user=True, env_extra={"XPU_CAP_BY_LAUNCHER": "1"} if capped else None, keep_lines=True)
     if m["real"] and fsm.cur is None:
         _say(f"⚠️ FSM 확인 불가({fsm.cur_err}) — {FSM_RUN} 상태인지 직접 확인할 것")
     threading.Thread(target=_watch_end, args=(job.proc, m), daemon=True).start()

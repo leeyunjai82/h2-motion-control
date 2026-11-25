@@ -16,8 +16,11 @@ XPU_MAX_MHZ="${XPU_MAX_MHZ:-1200}"
 FREQ=$(ls /sys/class/drm/card*/device/tile0/gt0/freq0/max_freq 2>/dev/null | head -1)
 OLD=""
 if [ "${XPU_CAP_BY_LAUNCHER:-}" = "1" ]; then
-  echo "[trainer] GPU 최대 클럭 제한은 런처가 함 (지금 $(cat "$FREQ" 2>/dev/null) MHz)"
+  NOW=$(cat "$FREQ" 2>/dev/null)
+  echo "[trainer] GPU 최대 클럭 제한은 런처가 함 (지금 $NOW MHz)"
+  [ -n "$NOW" ] && [ "$NOW" -le "$XPU_MAX_MHZ" ] || { echo "❌ GPU 최대 클럭이 ${NOW:-?} MHz (제한 $XPU_MAX_MHZ) — 학습 웹을 띄우지 않음" >&2; exit 1; }
   FREQ=""
+  CAPPED=1
 fi
 if [ -n "$FREQ" ]; then
   OLD=$(cat "$FREQ")
@@ -26,10 +29,14 @@ if [ -n "$FREQ" ]; then
     echo "❌ XPU_MAX_MHZ $XPU_MAX_MHZ 가 GPU 최소 클럭 $MINF 보다 작음" >&2; exit 1
   fi
   echo "[trainer] GPU 최대 클럭 $OLD → $XPU_MAX_MHZ MHz 로 제한 (끌 때 되돌림, sudo 비밀번호를 물을 수 있음)"
-  echo "$XPU_MAX_MHZ" | sudo tee "$FREQ" >/dev/null || { echo "❌ GPU 클럭 제한 실패 — Intel GPU 학습은 위험 (PC 멈춤). 웹에서 학습 장치 CPU 로" >&2; }
-  echo "[trainer] 지금 GPU 최대 클럭: $(cat "$FREQ") MHz"
+  echo "$XPU_MAX_MHZ" | sudo tee "$FREQ" >/dev/null || { echo "❌ GPU 클럭 제한 실패 — 제한 없이 Intel GPU 학습은 PC 멈춤. 학습 웹을 띄우지 않음" >&2; exit 1; }
+  NOW=$(cat "$FREQ")
+  echo "[trainer] 지금 GPU 최대 클럭: $NOW MHz"
+  [ "$NOW" -le "$XPU_MAX_MHZ" ] || { echo "❌ GPU 최대 클럭이 $NOW MHz 로 남음 (제한 $XPU_MAX_MHZ) — 학습 웹을 띄우지 않음" >&2; exit 1; }
+  CAPPED=1
 elif [ "${XPU_CAP_BY_LAUNCHER:-}" != "1" ]; then
-  echo "⚠ GPU 클럭 설정 파일 (xe tile0/gt0/freq0/max_freq) 없음 — 제한 없이 띄움" >&2
+  echo "❌ GPU 클럭 설정 파일 (xe tile0/gt0/freq0/max_freq) 없음 — 클럭 제한을 못 해서 학습 웹을 띄우지 않음" >&2
+  exit 1
 fi
 restore() {
   # 학습 프로세스는 서버와 따로 (start_new_session) 라 서버를 꺼도 남음 → 클럭을 되돌리기 전에 먼저 끔 (제한 없이 계속 돌면 PC 멈춤)
@@ -44,4 +51,5 @@ restore() {
 trap restore EXIT
 trap 'exit 130' INT TERM
 
-"$HERE/start_trainer.sh" "$@"
+[ "${CAPPED:-}" = "1" ] || { echo "❌ GPU 클럭 제한 안 됨 — 학습 웹을 띄우지 않음" >&2; exit 1; }
+TRAINER_XPU_CAPPED=1 "$HERE/start_trainer.sh" "$@"

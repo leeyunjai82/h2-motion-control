@@ -7,7 +7,7 @@
 #
 # 버전: lerobot 0.4.4 (데이터셋 v3.0) — torch <2.11 을 요구함 → torch 2.10.0 · torchvision 0.25.0
 #   ⚠ 미니 PC 의 예전 학습 환경 act_xpu 는 torch 2.11.0+xpu — lerobot 과 같이 못 씀 (그래서 env 를 따로 만듦)
-#   ⚠ Arc B390 (Panther Lake) 가 torch 2.10.0+xpu 에서 잡히는지는 확인 필요 — ⑤ 에서 처음 확인됨
+#   Arc B390 (Panther Lake) · torch 2.10.0+xpu: 잡힘 · 2048² 행렬곱 4.9 ms (2026-11-25 미니 PC). 긴 학습은 확인 필요
 #   ⚠ Intel GPU 학습은 런처가 GPU 최대 클럭을 1200 MHz 로 제한한 상태에서만 (제한 없이 돌리면 PC 멈춤, 2026-11-10)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -121,5 +121,9 @@ echo
 if [ "$DEV" = cpu ]; then
   echo "✓ 끝 (로봇: 수집 · 추론). 학습 환경은 따로: $HERE/install_lerobot.sh train-xpu (미니 PC) · train-cuda (5090)"
 else
-  echo "✓ 끝 (학습 환경). 학습 웹: $HERE/start_trainer.sh   (미니 PC 는 홈 화면 → 학습)"
+  if [ "$DEV" = xpu ]; then
+    echo "✓ 끝 (학습 환경). 학습 웹: 홈 화면 → 학습 또는 $HERE/start_trainer_xpu.sh   (GPU 클럭 제한을 거침 — start_trainer.sh 직접은 막힘)"
+  else
+    echo "✓ 끝 (학습 환경). 학습 웹: $HERE/start_trainer.sh"
+  fi
 fi
