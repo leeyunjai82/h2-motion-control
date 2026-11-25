@@ -46,8 +46,11 @@ stamp() {
 }
 
 _find_conda_base() {
-  local c
-  for c in "${CONDA_BASE:-}" "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" "/opt/conda"; do
+  local c uh=""
+  # sudo 로 실행하면 HOME 이 /root 라서 사용자 conda 를 못 찾음 → 원래 사용자 (SUDO_USER) 홈도 봄
+  [ -n "${SUDO_USER:-}" ] && uh="$(getent passwd "$SUDO_USER" | cut -d: -f6)"
+  for c in "${CONDA_BASE:-}" "$HOME/miniconda3" "$HOME/anaconda3" "$HOME/miniforge3" \
+           ${uh:+"$uh/miniconda3" "$uh/anaconda3" "$uh/miniforge3"} "/opt/conda"; do
     [ -n "$c" ] && [ -f "$c/bin/activate" ] && { echo "$c"; return 0; }
   done
   return 1
