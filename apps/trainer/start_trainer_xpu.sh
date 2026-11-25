@@ -8,6 +8,9 @@
 #   최대 클럭을 1200 MHz 로 제한하니 와이파이 · PC 가 버팀 (tools/legacy_act/xpu_check.py --augment --iters 1000, tools/sys_watch.sh 로 확인)
 #   → 이 스크립트가 띄울 때 GPU 최대 클럭을 XPU_MAX_MHZ (기본 1200) 로 제한하고, 끌 때 원래 값으로 되돌림 (sudo 필요)
 HERE="$(cd "$(dirname "$0")" && pwd)"
+if [ -n "${SSH_CONNECTION:-}" ] && [ -z "${TMUX:-}${STY:-}" ] && [ "${XPU_CAP_BY_LAUNCHER:-}" != "1" ]; then
+  echo "⚠ SSH 터미널에서 바로 띄움 — SSH 가 끊기면 학습도 꺼짐 (2026-11-25). 긴 학습은 홈 → 학습 또는 tmux 안에서" >&2
+fi
 export TRAINER_DEVICE="${TRAINER_DEVICE:-xpu}"           # 웹 '학습 장치' 기본값 (CPU 로 바꿀 수 있음)
 export TRAINER_NUM_WORKERS="${TRAINER_NUM_WORKERS:-2}"   # 데이터 로더 (로봇 PC: 학습이 PC 를 다 차지하지 않게)
 export TRAINER_THREADS="${TRAINER_THREADS:-$(( $(nproc) > 6 ? $(nproc) - 4 : 2 ))}"     # 코어 몇 개는 SSH · 웹 몫으로 남김

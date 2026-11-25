@@ -232,14 +232,27 @@ def safetensors_ok(path):
         return False
 
 
-def last_checkpoint(out):
-    """out/checkpoints/<step>/pretrained_model 중 끝까지 저장된 마지막 → (경로, step) 또는 (None, 0)."""
+def _state_ok(ckdir, p):
+    """이어서 학습용: training_state 까지 끝까지 저장됐는지 (모델 다음에 저장되므로 저장 도중 끊기면 빠짐)."""
+    ts = os.path.join(ckdir, "training_state")
+    cfg = _read(os.path.join(p, "train_config.json"))
+    if not cfg or _read(os.path.join(ts, "training_step.json")) is None or _read(os.path.join(ts, "optimizer_param_groups.json")) is None:
+        return False
+    if not safetensors_ok(os.path.join(ts, "optimizer_state.safetensors")):
+        return False
+    return not cfg.get("scheduler") or _read(os.path.join(ts, "scheduler_state.json")) is not None
+
+
+def last_checkpoint(out, resume=False):
+    """out/checkpoints/<step>/pretrained_model 중 끝까지 저장된 마지막 → (경로, step) 또는 (None, 0).
+    resume=True: 학습 상태 (optimizer · scheduler) 까지 성한 것만."""
     ck = os.path.join(out, "checkpoints")
     steps = sorted((int(n), n) for n in os.listdir(ck) if n.isdigit()) if os.path.isdir(ck) else []
     for st, n in reversed(steps):
         p = os.path.join(ck, n, "pretrained_model")
         if (os.path.isfile(os.path.join(p, "config.json")) and _read(os.path.join(p, "config.json"))
-                and safetensors_ok(os.path.join(p, "model.safetensors"))):
+                and safetensors_ok(os.path.join(p, "model.safetensors"))
+                and (not resume or _state_ok(os.path.join(ck, n), p))):
             return p, st
     return None, 0
 
@@ -375,6 +388,12 @@ class Jobs:
         dev = best_device() if p["device"] == "auto" else p["device"]
         j["device"] = dev
         out = os.path.join(JOB_DIR, j["id"], "out")
+        if j.get("resume_from"):                                   # 끊긴 작업 이어서: 마지막 성한 체크포인트의 설정 · 학습 상태 그대로 (lerobot --resume)
+            src, _ = last_checkpoint(out, resume=True)
+            if src is None:
+                raise RuntimeError("이어 갈 체크포인트 없음 (학습 상태까지 저장된 것)")
+            return [LEROBOT_PY, "-u", "-m", "lerobot.scripts.lerobot_train",
+                    f"--config_path={os.path.join(src, 'train_config.json')}", "--resume=true"]
         shutil.rmtree(out, ignore_errors=True)                     # lerobot-train 은 out 이 없어야 새로 시작
         c = [LEROBOT_PY, "-u", "-m", "lerobot.scripts.lerobot_train",
              f"--dataset.repo_id=local/{j['dataset']}", f"--dataset.root={ds_root(j['dataset'])}",
@@ -429,7 +448,8 @@ class Jobs:
             bar, rest = (line[:k], line[k:]) if k > 0 else ((line, "") if "Training" in line else ("", line))
             m = TQDM_RE.search(bar) if bar else None
             if m:
-                j["step"], j["total"] = int(m.group(1)), int(m.group(2))
+                off = j.get("resume_from") or 0                  # 이어서 학습: 진행 막대는 남은 step 만 셈
+                j["step"], j["total"] = off + int(m.group(1)), off + int(m.group(2))
                 j["eta_s"] = _sec(m.group(4)) if "?" not in m.group(4) else None
                 if m.group(5):
                     v = float(m.group(5))
@@ -494,8 +514,45 @@ class Jobs:
         return self._stop(jid, "canceling")
 
     def finish(self, jid):
-        """지금 마치기 = 학습을 멈추고 마지막 체크포인트로 모델을 만듦."""
-        return self._stop(jid, "finishing")
+        """지금 마치기 = 학습을 멈추고 마지막 체크포인트로 모델을 만듦. 중단 · 실패한 작업은 남은 체크포인트로 바로 만듦."""
+        with self.lk:
+            j = self.jobs.get(jid)
+            if not j:
+                raise HTTPException(404, "작업 없음")
+            prev = j["status"]
+            if prev not in ("interrupted", "failed"):
+                j = None
+            else:
+                j["status"] = "finishing"                       # 두 번 눌러도 한 번만
+        if j is None:
+            return self._stop(jid, "finishing")
+        try:
+            package(j)
+            j["status"], j["error"] = "done", ""
+        except Exception as e:  # noqa: BLE001
+            j["status"] = prev
+            raise HTTPException(409, f"모델 만들기 실패: {e}")
+        finally:
+            with self.lk:
+                self._save(j)
+        log(f"작업 {jid} → 남은 체크포인트 step {j['model_step']} 로 모델")
+        return j
+
+    def resume(self, jid):
+        """끊긴 (중단 · 실패) 작업을 마지막 체크포인트에서 이어서 학습 — 큐에 다시 넣음."""
+        with self.lk:
+            j = self.jobs.get(jid)
+            if not j:
+                raise HTTPException(404, "작업 없음")
+            if j["status"] not in ("interrupted", "failed"):
+                raise HTTPException(409, f"상태 {j['status']} — 중단 · 실패한 작업만 이어서 학습")
+            _, step = last_checkpoint(os.path.join(JOB_DIR, jid, "out"), resume=True)
+            if not step:
+                raise HTTPException(409, "이어 갈 체크포인트 없음 (학습 상태까지 저장된 것) — 처음부터 새로 학습")
+            j.update(status="queued", error="", resume_from=step, step=step, eta_s=None, created=time.time())
+            self._save(j)
+        log(f"작업 {jid} 이어서 학습 — step {step} 부터")
+        return j
 
     def delete(self, jid):
         with self.lk:
@@ -608,6 +665,9 @@ def api_job(jid: str):
     j = jobs.jobs.get(jid)
     if not j:
         raise HTTPException(404, "작업 없음")
+    if j["status"] in ("interrupted", "failed"):              # 끊긴 작업: 디스크에 남은 체크포인트로 판단 (기록된 ckpt_step 은 늦을 수 있음)
+        out = os.path.join(JOB_DIR, jid, "out")
+        return {**j, "can_package": last_checkpoint(out)[1], "can_resume": last_checkpoint(out, resume=True)[1]}
     return j
 
 
@@ -630,6 +690,11 @@ def api_job_cancel(jid: str):
 @app.post("/api/jobs/{jid}/finish")
 def api_job_finish(jid: str):
     return _brief(jobs.finish(jid))
+
+
+@app.post("/api/jobs/{jid}/resume")
+def api_job_resume(jid: str):
+    return _brief(jobs.resume(jid))
 
 
 @app.delete("/api/jobs/{jid}")

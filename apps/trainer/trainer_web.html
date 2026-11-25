@@ -159,7 +159,8 @@ pre.log{flex:1;min-height:120px;overflow:auto;background:#05080c;border:1px soli
       <div class="card-b">
         <div class="row">
           <button class="btn primary grow" id="jd-dl" onclick="dlZip()">⬇ 모델 zip</button>
-          <button class="btn sm" id="jd-finish" onclick="jobAct('finish')" title="학습을 멈추고 마지막 체크포인트로 모델을 만듦">지금 마치기</button>
+          <button class="btn sm" id="jd-resume" onclick="jobAct('resume')" title="끊긴 작업을 마지막 체크포인트에서 이어서 학습">이어서 학습</button>
+          <button class="btn sm" id="jd-finish" onclick="jobAct('finish')" title="학습을 멈추고 (중단된 작업은 바로) 마지막 체크포인트로 모델을 만듦">지금 마치기</button>
           <button class="btn warn sm" id="jd-cancel" onclick="jobAct('cancel')">취소</button>
         </div>
         <div class="prog"><b id="jd-bar"></b></div>
@@ -286,7 +287,8 @@ async function jobAct(a){
   if(!selJob) return;
   if(a === 'cancel' && !confirm('학습을 취소합니다 (model zip 안 만듦). 계속?')) return;
   if(a === 'finish' && !confirm('학습을 멈추고 마지막 체크포인트로 모델을 만듭니다. 계속?')) return;
-  if(await api('POST', `/api/jobs/${selJob}/${a}`)) toast(a === 'finish' ? '마지막 체크포인트로 모델을 만듭니다' : '취소 요청');
+  if(a === 'resume' && !confirm('마지막 체크포인트에서 이어서 학습합니다 (같은 설정). 계속?')) return;
+  if(await api('POST', `/api/jobs/${selJob}/${a}`)) toast(a === 'finish' ? '마지막 체크포인트로 모델을 만듭니다' : a === 'resume' ? '이어서 학습 — 큐에 넣음' : '취소 요청');
   loadJobs();
 }
 function dlZip(){ if(selJob) location.href = `/api/jobs/${selJob}/model.zip`; }
@@ -315,7 +317,8 @@ async function loadJob(){
   $('jd-ckpt').textContent = j.model_step ? `모델 ${j.model_step}` : (j.ckpt_step ? `${j.ckpt_step}` : '-');
   $('jd-eta').textContent = j.status === 'running' ? hms(j.eta_s) :
     (j.status === 'done' && j.finished && j.started ? '걸림 ' + hms(Math.round(j.finished - j.started)) : (ST_KO[j.status] || j.status));
-  $('jd-dl').disabled = !j.zip; $('jd-finish').disabled = j.status !== 'running' || !j.ckpt_step; $('jd-cancel').disabled = !['running','queued'].includes(j.status);
+  $('jd-dl').disabled = !j.zip; $('jd-finish').disabled = j.status === 'running' ? !j.ckpt_step : !j.can_package;
+  $('jd-resume').style.display = j.can_resume ? '' : 'none'; $('jd-cancel').disabled = !['running','queued'].includes(j.status);
   $('jd-err').textContent = j.error ? '오류: ' + j.error : (j.saved_model ? `모델 저장소에 저장됨: ${j.saved_model} (추론에서 고름)` : '');
   $('jd-err').style.color = j.error ? '' : 'var(--ok)';
   draw(j);
