@@ -4,7 +4,7 @@ lerobot_env.py — lerobot 가상환경 찾기 (표준 라이브러리만). 환�
   lerobot        수집 v3 변환 · 추론 — CPU torch + OpenVINO (ACT 는 OpenVINO 로 Intel GPU). XPU 필요 없음
   lerobot_train  학습 — XPU (미니 PC) · CUDA (5090) torch
 
-  config/local.yaml (없으면 ~/miniconda3/envs/<이름>/bin/python)
+  config/local.yaml (없으면 conda 위치에서 찾음: ~/miniconda3 · ~/miniforge3 · ~/anaconda3 · /opt/conda 의 envs/<이름>)
     lerobot_python:        수집 · 추론 환경
     lerobot_train_python:  학습 환경
     lerobot_repo_prefix:   데이터셋 repo_id 앞부분 (기본 local)
@@ -39,7 +39,16 @@ def _home():
 
 
 def _env_py(name):
-    return os.path.join(_home(), "miniconda3", "envs", name, "bin", "python")
+    """conda env python — install_lerobot.sh 와 같은 순서로 찾음. 어디에도 없으면 ~/miniconda3 경로 (안내 문구용)."""
+    h = _home()
+    exe = os.environ.get("CONDA_EXE")
+    bases = ([os.path.dirname(os.path.dirname(exe))] if exe else []) + [
+        os.path.join(h, "miniconda3"), os.path.join(h, "miniforge3"), os.path.join(h, "anaconda3"), "/opt/conda"]
+    for b in bases:
+        p = os.path.join(b, "envs", name, "bin", "python")
+        if os.path.isfile(p):
+            return p
+    return os.path.join(h, "miniconda3", "envs", name, "bin", "python")
 
 
 def python():

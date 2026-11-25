@@ -111,11 +111,12 @@ PY
 
 # ---------------------------------------------------------------- ⑥ config
 step "⑥ config/local.yaml $CFG_KEY"
-if [ "$PY" != "$HOME/miniconda3/envs/$ENV_NAME/bin/python" ]; then
-  echo "기본 위치가 아님 → config/local.yaml 에 넣으세요:"
+FOUND="$(cd "$REPO" && python3 -c "from pitron.learning import lerobot_env as e; print(e.python() if '$DEV' == 'cpu' else e.train_python())" 2>/dev/null)"
+if [ "$FOUND" != "$PY" ]; then
+  echo "자동으로 못 찾는 위치 (지금 찾는 곳: ${FOUND:-?}) → config/local.yaml 에 넣으세요:"
   echo "  $CFG_KEY: $PY"
 else
-  echo "기본 위치 ($PY) — 설정 필요 없음"
+  echo "자동으로 찾음 ($PY) — 설정 필요 없음"
 fi
 echo
 if [ "$DEV" = cpu ]; then
