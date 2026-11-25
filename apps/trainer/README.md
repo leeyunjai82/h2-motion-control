@@ -20,7 +20,7 @@ LeRobot v3 zip (다른 PC)      ──▶  마지막 체크포인트 → model z
 
 - 둘 다 python 3.10 · ffmpeg · torch 2.10.0 · torchvision 0.25.0 · lerobot 0.4.4 · fastapi · uvicorn · openvino
 - 수집 · 추론은 GPU torch 가 필요 없음 → XPU 문제가 학습에만 걸림. 학습 PC (5090) 는 `lerobot_train` 만 있으면 됨
-- `lerobot_train` 이 없으면 학습은 `lerobot` 환경으로 (CPU, 느림)
+- 환경 이름은 고정 (`lerobot` · `lerobot_train`). 없으면 학습 웹 · 추론이 설치 명령을 띄우고 멈춤
 - lerobot 0.4.4 는 `torch<2.11` 을 요구 → 예전 학습 환경 (act · act_xpu, torch 2.11) 과 따로 만듦
 - ⚠ Arc B390 이 torch 2.10.0+xpu 에서 잡히는지는 **확인 필요** — `install_lerobot.sh xpu` ⑤ 에서 행렬곱으로 확인
 - 다른 위치에 만들었으면 `config/local.yaml` 에 `lerobot_python:` · `lerobot_train_python:`

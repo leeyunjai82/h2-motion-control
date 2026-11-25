@@ -52,7 +52,7 @@ COLLECT_DIR = os.environ.get("TRAINER_COLLECT") or paths.data_dir("datasets", le
 if not os.path.isdir(COLLECT_DIR):
     COLLECT_DIR = None
 MODEL_STORE = paths.data_dir("policies", legacy="gripper/models")
-LEROBOT_PY = os.environ.get("LEROBOT_PY") or lerobot_env.train_python()     # 학습 환경 (XPU · CUDA, 없으면 CPU 환경)
+LEROBOT_PY = os.environ.get("LEROBOT_PY") or lerobot_env.train_python()     # 학습 환경 lerobot_train (XPU · CUDA)
 NAME_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9_.\-]{1,64}$")          # "." · ".." 같은 점만 있는 이름은 안 됨
 V3_FILE_RE = re.compile(r"^(meta/[A-Za-z0-9_./\-]+\.(json|jsonl|parquet)|data/chunk-\d+/file-\d+\.parquet|"
                         r"videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4)$")

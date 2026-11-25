@@ -3,8 +3,7 @@
 #   ./apps/trainer/install_lerobot.sh            수집 · 추론 환경 'lerobot'       — CPU torch + OpenVINO (ACT 추론은 OpenVINO 로 Intel GPU)
 #   ./apps/trainer/install_lerobot.sh xpu        학습 환경 'lerobot_train'       — 미니 PC (Intel Arc)
 #   ./apps/trainer/install_lerobot.sh cuda       학습 환경 'lerobot_train'       — 학습 PC (RTX 5090, CUDA 12.8 이상 드라이버)
-#   학습 환경이 없으면 학습은 수집 · 추론 환경으로 (CPU, 느림)
-#   env 이름 바꾸기: LEROBOT_ENV=이름 · 다른 곳이면 config/local.yaml lerobot_python / lerobot_train_python
+#   conda 가 ~/miniconda3 가 아니면 끝에 나오는 경로를 config/local.yaml lerobot_python / lerobot_train_python 에
 #
 # 버전: lerobot 0.4.4 (데이터셋 v3.0) — torch <2.11 을 요구함 → torch 2.10.0 · torchvision 0.25.0
 #   ⚠ 미니 PC 의 예전 학습 환경 act_xpu 는 torch 2.11.0+xpu — lerobot 과 같이 못 씀 (그래서 env 를 따로 만듦)
@@ -15,15 +14,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
 PYVER="3.10"
 LEROBOT_VER="0.4.4"
-TORCH_PKGS="${TORCH_PKGS:-torch==2.10.0 torchvision==0.25.0}"
+TORCH_PKGS="torch==2.10.0 torchvision==0.25.0"
 step() { echo; echo "==== $* ===="; }
 die() { echo "❌ $*" >&2; exit 1; }
 
 DEV="${1:-cpu}"
 case "$DEV" in
-  cpu)  TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}";   ENV_NAME="${LEROBOT_ENV:-lerobot}";       CFG_KEY=lerobot_python ;;
-  xpu)  TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/xpu}";   ENV_NAME="${LEROBOT_ENV:-lerobot_train}"; CFG_KEY=lerobot_train_python ;;
-  cuda) TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"; ENV_NAME="${LEROBOT_ENV:-lerobot_train}"; CFG_KEY=lerobot_train_python ;;
+  cpu)  TORCH_INDEX=https://download.pytorch.org/whl/cpu;   ENV_NAME=lerobot;       CFG_KEY=lerobot_python ;;
+  xpu)  TORCH_INDEX=https://download.pytorch.org/whl/xpu;   ENV_NAME=lerobot_train; CFG_KEY=lerobot_train_python ;;
+  cuda) TORCH_INDEX=https://download.pytorch.org/whl/cu128; ENV_NAME=lerobot_train; CFG_KEY=lerobot_train_python ;;
   *) die "인자: (없음) 수집 · 추론 환경 · xpu / cuda 학습 환경" ;;
 esac
 echo "env: $ENV_NAME  장치: $DEV  ($TORCH_PKGS from $TORCH_INDEX)"
@@ -69,7 +68,7 @@ WANT="$WANT" "$PY" - <<'PY'
 import os, torch, lerobot
 print(f"torch {torch.__version__} · lerobot {lerobot.__version__}")
 if not torch.__version__.startswith("2.10") or os.environ["WANT"] not in torch.__version__:
-    raise SystemExit("❌ lerobot 설치가 torch 를 바꿨음 (" + torch.__version__ + ") — TORCH_PKGS 확인")
+    raise SystemExit("❌ lerobot 설치가 torch 를 바꿨음 (" + torch.__version__ + ") — 설치 로그 확인")
 PY
 
 # ---------------------------------------------------------------- ⑤ 장치 확인
@@ -104,8 +103,7 @@ PY
 
 # ---------------------------------------------------------------- ⑥ config
 step "⑥ config/local.yaml $CFG_KEY"
-DEF_NAME=lerobot; [ "$DEV" = cpu ] || DEF_NAME=lerobot_train
-if [ "$PY" != "$HOME/miniconda3/envs/$DEF_NAME/bin/python" ]; then
+if [ "$PY" != "$HOME/miniconda3/envs/$ENV_NAME/bin/python" ]; then
   echo "기본 위치가 아님 → config/local.yaml 에 넣으세요:"
   echo "  $CFG_KEY: $PY"
 else

@@ -2,7 +2,7 @@
 lerobot_env.py — lerobot 가상환경 찾기 (표준 라이브러리만). 환경 둘:
 
   lerobot        수집 v3 변환 · 추론 — CPU torch + OpenVINO (ACT 는 OpenVINO 로 Intel GPU). XPU 필요 없음
-  lerobot_train  학습 — XPU (미니 PC) · CUDA (5090) torch. 없으면 lerobot 환경으로 (CPU 학습)
+  lerobot_train  학습 — XPU (미니 PC) · CUDA (5090) torch
 
   config/local.yaml (없으면 ~/miniconda3/envs/<이름>/bin/python)
     lerobot_python:        수집 · 추론 환경
@@ -48,11 +48,8 @@ def python():
 
 
 def train_python():
-    """학습 환경 (XPU · CUDA torch). 없으면 수집 · 추론 환경 (CPU 학습)."""
-    p = local_cfg().get("lerobot_train_python")
-    if p:
-        return str(p)
-    return _env_py("lerobot_train") if os.path.isfile(_env_py("lerobot_train")) else python()
+    """학습 환경 (XPU · CUDA torch)."""
+    return str(local_cfg().get("lerobot_train_python") or _env_py("lerobot_train"))
 
 
 def repo_prefix():

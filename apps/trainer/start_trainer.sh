@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # LeRobot 학습 웹 → http://<PC>:50100/
 # 사용: ./apps/trainer/start_trainer.sh        (처음이면 먼저 ./apps/trainer/install_lerobot.sh)
-#   python: LEROBOT_PY=<경로> → config/local.yaml lerobot_train_python → ~/miniconda3/envs/lerobot_train → 없으면 수집 · 추론 환경 lerobot (CPU 학습)
+#   python: LEROBOT_PY=<경로> → config/local.yaml lerobot_train_python → ~/miniconda3/envs/lerobot_train
 #   데이터 위치 바꾸기: TRAINER_DATA=/mnt/ssd/trainer ./apps/trainer/start_trainer.sh
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
