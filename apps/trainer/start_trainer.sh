@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # LeRobot 학습 웹 → http://<PC>:50100/
-# 사용: ./apps/trainer/start_trainer.sh        (처음이면 먼저 ./apps/trainer/install_lerobot.sh)
+# 사용: ./apps/trainer/start_trainer.sh        (처음이면 먼저 ./apps/trainer/install_lerobot.sh train-xpu 또는 train-cuda)
 #   python: LEROBOT_PY=<경로> → config/local.yaml lerobot_train_python → ~/miniconda3/envs/lerobot_train
 #   데이터 위치 바꾸기: TRAINER_DATA=/mnt/ssd/trainer ./apps/trainer/start_trainer.sh
 set -u
@@ -10,7 +10,7 @@ PY="${LEROBOT_PY:-$(cd "$REPO" && python3 -c "from pitron.learning import lerobo
 [ -n "$PY" ] || PY="$HOME/miniconda3/envs/lerobot_train/bin/python"
 echo "[trainer] python: $PY"
 if [ ! -x "$PY" ] || ! "$PY" -c "import lerobot, fastapi, uvicorn" 2>/dev/null; then
-  echo "❌ lerobot 학습 환경 없음 — 먼저 설치: ./apps/trainer/install_lerobot.sh xpu (미니 PC) · cuda (5090) (다른 위치면 config/local.yaml lerobot_train_python)" >&2
+  echo "❌ lerobot 학습 환경 없음 — 먼저 설치: ./apps/trainer/install_lerobot.sh train-xpu (미니 PC) · train-cuda (5090) (다른 위치면 config/local.yaml lerobot_train_python)" >&2
   exit 1
 fi
 export LEROBOT_PY="$PY"

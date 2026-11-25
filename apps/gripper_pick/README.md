@@ -59,7 +59,7 @@ data/datasets/<데이터셋>/lerobot/                        LeRobot v3.0 (성�
 수집 화면 추론 칸: 모델 고르기 (이 PC 에서 학습한 모델은 자동으로 목록에, 다른 PC 모델은 zip 올리기) · 장치 → [불러오기] → 시작 조건 OK → [▶ 정책 시작].
 모델 = lerobot `pretrained_model` 폴더 (+ `h2_model.json`). 정책 종류 상관없음 — lerobot 표준대로 (`config.json` type → 정책 클래스 · 정규화 · `select_action`).
 ACT 는 OpenVINO 로 (CPU · GPU · NPU, 변환 결과는 `<모델>/openvino/` 캐시), 나머지는 torch CPU (Intel GPU torch 추론은 확인 전이라 막아 둠). 데이터셋은 안 씀.
-추론 · v3 변환은 수집 · 추론 환경 `lerobot` (CPU torch + OpenVINO, `./apps/trainer/install_lerobot.sh`) 으로 돎 — XPU torch 필요 없음. 학습 환경은 따로 (`apps/trainer/README.md`).
+추론 · v3 변환은 수집 · 추론 환경 `lerobot` (CPU torch + OpenVINO, `./apps/trainer/install_lerobot.sh robot`) 으로 돎 — XPU torch 필요 없음. 학습 환경은 따로 (`apps/trainer/README.md`).
 
 - 시작 조건: 양팔 준비 자세 (수집과 같은 시작) · 카메라 (모델이 쓰는 것 전부) · 팔 실측 · 그리퍼 상태 · 카메라 숙임 ±1° · 관절 순서 (h2_model.json)
 - 제어 30 Hz: 한 틱에 추론 요청 하나. 정책이 chunk 를 새로 계산하는 동안은 마지막 목표를 다시 보내 제자리에서 기다림 (arm_server 세션 유지)

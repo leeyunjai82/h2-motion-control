@@ -15,14 +15,14 @@ LeRobot v3 zip (다른 PC)      ──▶  마지막 체크포인트 → model z
 
 | 환경 | 쓰는 곳 | torch | 설치 |
 |---|---|---|---|
-| `lerobot` | 수집 v3 변환 · 추론 (수집 PC) | CPU + OpenVINO (ACT 추론은 OpenVINO 로 Intel GPU) | `./apps/trainer/install_lerobot.sh` |
-| `lerobot_train` | 학습 (이 웹) | 미니 PC: XPU · 5090: CUDA | `./apps/trainer/install_lerobot.sh xpu` · `./apps/trainer/install_lerobot.sh cuda` |
+| `lerobot` | 로봇: 수집 v3 변환 · 추론 | CPU + OpenVINO (ACT 추론은 OpenVINO 로 Intel GPU) | `./apps/trainer/install_lerobot.sh robot` |
+| `lerobot_train` | 학습 (이 웹) | 미니 PC: XPU · 5090: CUDA | `./apps/trainer/install_lerobot.sh train-xpu` · `./apps/trainer/install_lerobot.sh train-cuda` |
 
 - 둘 다 python 3.10 · ffmpeg · torch 2.10.0 · torchvision 0.25.0 · lerobot 0.4.4 · fastapi · uvicorn · openvino
 - 수집 · 추론은 GPU torch 가 필요 없음 → XPU 문제가 학습에만 걸림. 학습 PC (5090) 는 `lerobot_train` 만 있으면 됨
 - 환경 이름은 고정 (`lerobot` · `lerobot_train`). 없으면 학습 웹 · 추론이 설치 명령을 띄우고 멈춤
 - lerobot 0.4.4 는 `torch<2.11` 을 요구 → 예전 학습 환경 (act · act_xpu, torch 2.11) 과 따로 만듦
-- ⚠ Arc B390 이 torch 2.10.0+xpu 에서 잡히는지는 **확인 필요** — `install_lerobot.sh xpu` ⑤ 에서 행렬곱으로 확인
+- ⚠ Arc B390 이 torch 2.10.0+xpu 에서 잡히는지는 **확인 필요** — `install_lerobot.sh train-xpu` ⑤ 에서 행렬곱으로 확인
 - 다른 위치에 만들었으면 `config/local.yaml` 에 `lerobot_python:` · `lerobot_train_python:`
 
 ## 실행

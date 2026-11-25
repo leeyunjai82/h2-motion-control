@@ -295,7 +295,7 @@ def main():
 def list_models(asked):
     """모델 이름이 없거나 틀렸을 때: lerobot 환경 · 모델 목록."""
     py = pol.lerobot_env.python()
-    print(f"lerobot 환경 (추론): {py} — {'있음' if os.path.isfile(py) else '없음 → 먼저 ./apps/trainer/install_lerobot.sh'}")
+    print(f"lerobot 환경 (추론): {py} — {'있음' if os.path.isfile(py) else '없음 → 먼저 ./apps/trainer/install_lerobot.sh robot'}")
     if asked:
         print(f"❌ 모델 없음: {asked} (data/policies/{asked}/config.json)")
     ms = pol.models()

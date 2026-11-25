@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # lerobot 가상환경 둘 (로봇 tv 환경과 별개)
-#   ./apps/trainer/install_lerobot.sh            수집 · 추론 환경 'lerobot'       — CPU torch + OpenVINO (ACT 추론은 OpenVINO 로 Intel GPU)
-#   ./apps/trainer/install_lerobot.sh xpu        학습 환경 'lerobot_train'       — 미니 PC (Intel Arc)
-#   ./apps/trainer/install_lerobot.sh cuda       학습 환경 'lerobot_train'       — 학습 PC (RTX 5090, CUDA 12.8 이상 드라이버)
+#   ./apps/trainer/install_lerobot.sh robot        로봇 (수집 · 추론) 환경 'lerobot'  — CPU torch + OpenVINO (ACT 추론은 OpenVINO 로 Intel GPU)
+#   ./apps/trainer/install_lerobot.sh train-xpu    학습 환경 'lerobot_train'         — 미니 PC (Intel Arc)
+#   ./apps/trainer/install_lerobot.sh train-cuda   학습 환경 'lerobot_train'         — 학습 PC (RTX 5090, CUDA 12.8 이상 드라이버)
 #   conda 가 ~/miniconda3 가 아니면 끝에 나오는 경로를 config/local.yaml lerobot_python / lerobot_train_python 에
 #
 # 버전: lerobot 0.4.4 (데이터셋 v3.0) — torch <2.11 을 요구함 → torch 2.10.0 · torchvision 0.25.0
@@ -18,12 +18,20 @@ TORCH_PKGS="torch==2.10.0 torchvision==0.25.0"
 step() { echo; echo "==== $* ===="; }
 die() { echo "❌ $*" >&2; exit 1; }
 
-DEV="${1:-cpu}"
+case "${1:-}" in
+  robot)      DEV=cpu ;;
+  train-xpu)  DEV=xpu ;;
+  train-cuda) DEV=cuda ;;
+  *) echo "사용: $0 robot | train-xpu | train-cuda"
+     echo "  robot       로봇 (수집 · 추론) 환경 'lerobot' — CPU torch + OpenVINO"
+     echo "  train-xpu   학습 환경 'lerobot_train' — 미니 PC (Intel Arc)"
+     echo "  train-cuda  학습 환경 'lerobot_train' — 학습 PC (RTX 5090)"
+     exit 1 ;;
+esac
 case "$DEV" in
   cpu)  TORCH_INDEX=https://download.pytorch.org/whl/cpu;   ENV_NAME=lerobot;       CFG_KEY=lerobot_python ;;
   xpu)  TORCH_INDEX=https://download.pytorch.org/whl/xpu;   ENV_NAME=lerobot_train; CFG_KEY=lerobot_train_python ;;
   cuda) TORCH_INDEX=https://download.pytorch.org/whl/cu128; ENV_NAME=lerobot_train; CFG_KEY=lerobot_train_python ;;
-  *) die "인자: (없음) 수집 · 추론 환경 · xpu / cuda 학습 환경" ;;
 esac
 echo "env: $ENV_NAME  장치: $DEV  ($TORCH_PKGS from $TORCH_INDEX)"
 
@@ -111,7 +119,7 @@ else
 fi
 echo
 if [ "$DEV" = cpu ]; then
-  echo "✓ 끝 (수집 · 추론). 학습 환경은 따로: $HERE/install_lerobot.sh xpu (미니 PC) · cuda (5090)"
+  echo "✓ 끝 (로봇: 수집 · 추론). 학습 환경은 따로: $HERE/install_lerobot.sh train-xpu (미니 PC) · train-cuda (5090)"
 else
-  echo "✓ 끝 (학습). 학습 웹: $HERE/start_trainer.sh   (미니 PC 는 홈 화면 → 학습)"
+  echo "✓ 끝 (학습 환경). 학습 웹: $HERE/start_trainer.sh   (미니 PC 는 홈 화면 → 학습)"
 fi

@@ -58,9 +58,9 @@ def repo_prefix():
 
 def missing_msg(py=None, train=False):
     if train:
-        return (f"lerobot 학습 환경 없음: {py or train_python()} — 한 번 설치: apps/trainer/install_lerobot.sh xpu (미니 PC) · cuda (5090) "
+        return (f"lerobot 학습 환경 없음: {py or train_python()} — 한 번 설치: apps/trainer/install_lerobot.sh train-xpu (미니 PC) · train-cuda (5090) "
                 "(다른 위치면 config/local.yaml lerobot_train_python)")
-    return (f"lerobot 환경 없음: {py or python()} — 한 번 설치: apps/trainer/install_lerobot.sh "
+    return (f"lerobot 로봇 (수집 · 추론) 환경 없음: {py or python()} — 한 번 설치: apps/trainer/install_lerobot.sh robot "
             "(다른 위치면 config/local.yaml lerobot_python)")
 
 
