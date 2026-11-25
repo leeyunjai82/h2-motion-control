@@ -70,9 +70,13 @@ def list_models():
 class Infer:
     """lerobot_infer 프로세스 (실기와 같은 주고받기)."""
 
-    def __init__(self, model_dir, device, task, n_steps=0):
+    def __init__(self, model_dir, device, task, n_steps=0, backend="auto"):
         cfg = read_json(os.path.join(model_dir, "config.json")) or {}
-        if cfg.get("type") == "act":
+        if backend == "torch":
+            if device != "CPU":
+                raise SystemExit("❌ torch 추론은 CPU 로만 (실기와 같음) — --device CPU")
+            args = ["--backend", "torch", "--device", "cpu"]
+        elif cfg.get("type") == "act":
             args = ["--backend", "openvino", "--ov-device", device]
         elif device != "CPU":
             raise SystemExit(f"❌ ACT 외 정책 ({cfg.get('type')}) 은 CPU 로만 (실기와 같음) — --device CPU")
@@ -157,6 +161,8 @@ def main():
     ap.add_argument("--dataset", help="데이터셋 이름 (기본: 모델을 학습한 데이터셋, h2_model.json)")
     ap.add_argument("--episodes", default="5", help="개수 (고르게) · all · 번호 목록 (예 0,3,7)")
     ap.add_argument("--device", default="CPU", help="OpenVINO 장치 CPU · GPU · NPU (ACT) — ACT 외는 CPU")
+    ap.add_argument("--backend", default="auto", choices=("auto", "torch"),
+                    help="auto = 실기와 같음 (ACT 는 OpenVINO) · torch = lerobot 그대로 (OpenVINO 없이, 비교용)")
     ap.add_argument("--n-action-steps", type=int, default=0, help="chunk 에서 실행할 동작 수 (0 = 모델 설정 그대로) — 예 20: 0.67 초마다 다시 계산")
     a = ap.parse_args()
     if not a.model:
@@ -190,7 +196,7 @@ def main():
     task = str(h2d.get("task") or h2m.get("task") or "")
 
     print(f"[평가] 모델 {a.model} · 데이터셋 {ds_name} (에피소드 {total} 중 {len(eps)}) · {a.device}", flush=True)
-    inf = Infer(md, a.device, task, a.n_action_steps)
+    inf = Infer(md, a.device, task, a.n_action_steps, a.backend)
     info = inf.info
     print(f"  불러옴: {info['type']} · {info['backend']} · chunk {info.get('chunk_size')} 중 {info.get('n_action_steps')} 개씩 실행 · 첫 추론 {info['infer_ms']} ms · 카메라 "
           + ", ".join(f"{c['name']} {c['w']}×{c['h']}" for c in info["cams"]), flush=True)
