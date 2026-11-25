@@ -45,6 +45,8 @@ RES = []
 
 def result(name, ok, detail=""):
     RES.append((name, ok, detail))
+    if "→" in name:      # 일부러 만든 위험 상황 → 안전 장치가 기대대로 반응했는지
+        detail = ("기대대로 — " if ok else "기대와 다름 — ") + detail
     print(f"  {'PASS' if ok else 'FAIL'}  {name}  {detail}", flush=True)
 
 
@@ -171,7 +173,9 @@ def main():
     result("2 정상 실행 · 끝난 뒤 명령 없음", arm.after_end == 0, f"/stream/end 뒤 명령 {arm.after_end}")
     only("range", "jump", "body")
     why = run(a.sec)
-    print(f"  참고  기본 기준 그대로 {a.sec:.0f} 초: 끝 = {why}  (가짜 회색 영상이라 참고만 — 안전 필터로 멈췄으면 실기 영상에서도 확인)", flush=True)
+    print(f"  참고  (시험 아님) 안전 기준 그대로 {a.sec:.0f} 초 돌려 봄 → {why}\n"
+          "        가짜 회색 영상이라 정책 출력이 튈 수 있음 — 실제 영상에서 어떤지는 이 점검으로 모름", flush=True)
+    print("  ── 3 ~ 12: 일부러 위험한 상황을 만들어 안전 장치가 멈추는지 (거부하는지) 봄 — 멈춰야 PASS", flush=True)
 
     # 3 NaN
     only()
