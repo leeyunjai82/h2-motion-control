@@ -78,6 +78,8 @@ ACT 는 OpenVINO 로 (CPU · GPU · NPU, 변환 결과는 `<모델>/openvino/` �
 
 1. **로봇 없이 (미니 PC)**: `source activate_tv.sh && python tools/check_policy_safety.py <모델> --device GPU` (실제로 쓸 장치로 — ACT 는 GPU, 나머지는 CPU. 모델 이름 없이 돌리면 목록이 나옴)
    → 전부 PASS 여야 함. FAIL 하나라도 있으면 실기 금지. 결과는 `data/logs/policy_safety_*.json`
+   **수집 영상으로 모델 확인 (로봇 없이)**: `python tools/eval_policy_offline.py <모델>` — 녹화 영상 · 관절값을 넣고 모델 출력 ↔ 녹화 동작 오차,
+   실기였으면 안전 필터 (범위 · 점프) 로 멈췄을 프레임. 그래프 `data/logs/policy_eval_*/ep_*.png`. open-loop (관절 입력이 녹화값) 이라 실기 성공을 보장하지 않음
 2. **가상 (로봇 없이 화면)**: 홈 → 추론 → [가상으로 실행] — 모델 불러오기 · 시작 조건 · 멈춤 이유 표시 확인
 3. **실기, 로봇을 매단 상태 · 주변 비움 · E-STOP 을 손에**:
    - 테이블을 잼 (잡기 웹 [테이블 점 추가]) — 안 재면 정책이 시작하지 않음
