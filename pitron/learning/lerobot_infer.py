@@ -98,6 +98,7 @@ def main():
     ap.add_argument("--backend", default="torch", choices=("torch", "openvino"))
     ap.add_argument("--ov-device", default="CPU", help="OpenVINO 장치 CPU · GPU · NPU · AUTO")
     ap.add_argument("--task", default="", help="언어 조건 정책 (smolvla · pi0 …) 의 작업 설명")
+    ap.add_argument("--n-action-steps", type=int, default=0, help="chunk 에서 실행할 동작 수 (0 = 모델 설정 그대로). 작을수록 자주 다시 계산")
     a = ap.parse_args()
     t0 = time.time()
     try:
@@ -109,6 +110,14 @@ def main():
         md = os.path.abspath(a.model)
         cfg = PreTrainedConfig.from_pretrained(md)
         cfg.device = a.device
+        if a.n_action_steps > 0:
+            if not hasattr(cfg, "n_action_steps"):
+                raise ValueError(f"{cfg.type} 는 n_action_steps 설정이 없음")
+            if getattr(cfg, "temporal_ensemble_coeff", None) is not None:
+                raise ValueError("temporal ensemble 모델은 n_action_steps 1 고정")
+            if a.n_action_steps > getattr(cfg, "chunk_size", a.n_action_steps):
+                raise ValueError(f"n_action_steps {a.n_action_steps} > chunk_size {cfg.chunk_size}")
+            cfg.n_action_steps = a.n_action_steps
         pol = get_policy_class(cfg.type).from_pretrained(md, config=cfg)
         pol.eval()
         pol.reset()

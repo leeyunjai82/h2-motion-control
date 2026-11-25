@@ -70,7 +70,7 @@ def list_models():
 class Infer:
     """lerobot_infer 프로세스 (실기와 같은 주고받기)."""
 
-    def __init__(self, model_dir, device, task):
+    def __init__(self, model_dir, device, task, n_steps=0):
         cfg = read_json(os.path.join(model_dir, "config.json")) or {}
         if cfg.get("type") == "act":
             args = ["--backend", "openvino", "--ov-device", device]
@@ -79,7 +79,7 @@ class Infer:
         else:
             args = ["--backend", "torch", "--device", "cpu"]
         self.p = subprocess.Popen([sys.executable, "-u", "-m", "pitron.learning.lerobot_infer", "--model", model_dir,
-                                   "--task", task] + args, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   "--task", task, "--n-action-steps", str(n_steps)] + args, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env={**os.environ, "HF_HUB_OFFLINE": "1"})
         self.info = self._reply()
         if not self.info.get("ok"):
@@ -157,6 +157,7 @@ def main():
     ap.add_argument("--dataset", help="데이터셋 이름 (기본: 모델을 학습한 데이터셋, h2_model.json)")
     ap.add_argument("--episodes", default="5", help="개수 (고르게) · all · 번호 목록 (예 0,3,7)")
     ap.add_argument("--device", default="CPU", help="OpenVINO 장치 CPU · GPU · NPU (ACT) — ACT 외는 CPU")
+    ap.add_argument("--n-action-steps", type=int, default=0, help="chunk 에서 실행할 동작 수 (0 = 모델 설정 그대로) — 예 20: 0.67 초마다 다시 계산")
     a = ap.parse_args()
     if not a.model:
         list_models()
@@ -189,9 +190,9 @@ def main():
     task = str(h2d.get("task") or h2m.get("task") or "")
 
     print(f"[평가] 모델 {a.model} · 데이터셋 {ds_name} (에피소드 {total} 중 {len(eps)}) · {a.device}", flush=True)
-    inf = Infer(md, a.device, task)
+    inf = Infer(md, a.device, task, a.n_action_steps)
     info = inf.info
-    print(f"  불러옴: {info['type']} · {info['backend']} · 첫 추론 {info['infer_ms']} ms · 카메라 "
+    print(f"  불러옴: {info['type']} · {info['backend']} · chunk {info.get('chunk_size')} 중 {info.get('n_action_steps')} 개씩 실행 · 첫 추론 {info['infer_ms']} ms · 카메라 "
           + ", ".join(f"{c['name']} {c['w']}×{c['h']}" for c in info["cams"]), flush=True)
     amin = np.asarray(info["a_min"]) if info.get("a_min") else None
     amax = np.asarray(info["a_max"]) if info.get("a_max") else None
@@ -208,6 +209,7 @@ def main():
             rec, pred, ms = [], [], []
             stop_range, stop_jump = [], []
             target = None
+            jumps = []
             for i in range(len(ds)):
                 x = ds[i]
                 imgs = []
@@ -233,7 +235,8 @@ def main():
                 cmd = a_cl[ARM]
                 if target is None:
                     target = state[ARM]                                         # 실기: 시작 = 실측 (준비 자세)
-                if float(np.max(np.abs(cmd - target))) > JUMP_RAD:              # 실기: 한 틱 점프 → 멈춤
+                jumps.append(float(np.max(np.abs(cmd - target))))
+                if jumps[-1] > JUMP_RAD:                                        # 실기: 한 틱 점프 → 멈춤
                     stop_jump.append(i)
                 target = cmd
             rec, pred = np.asarray(rec), np.asarray(pred)
@@ -243,18 +246,23 @@ def main():
                    "arm_p95_deg": round(float(np.percentile(arm_deg, 95)), 2), "arm_max_deg": round(float(arm_deg.max()), 1),
                    "grip_mean_q": round(float(err[:, GRIP].mean()), 3),
                    "stop_range": len(stop_range), "stop_jump": len(stop_jump),
+                   "jump_max_deg": round(math.degrees(max(jumps)), 1) if jumps else None,
+                   "stop_frames": sorted(set(stop_range + stop_jump))[:12],
                    "first_stop_s": round(min(stop_range + stop_jump) / 30.0, 1) if (stop_range or stop_jump) else None,
                    "infer_ms_mean": round(float(np.mean(ms)), 1), "infer_ms_max": round(float(np.max(ms)), 1)}
             rows.append(row)
             stops = sorted(set(stop_range + stop_jump))
             plot(os.path.join(out, f"ep_{e:03d}.png"),
                  f"{a.model} | {ds_name} ep {e} | gray = recorded, cyan = model, red = real robot would stop", rec, pred, stops, names)
-            fs = "없음" if row["first_stop_s"] is None else f"{row['first_stop_s']} s (범위 {row['stop_range']} · 점프 {row['stop_jump']} 프레임)"
+            fs = "없음" if row["first_stop_s"] is None else (f"{row['first_stop_s']} s (범위 {row['stop_range']} · 점프 {row['stop_jump']} 프레임,"
+                                                             f" 프레임 {', '.join(map(str, row['stop_frames']))})")
             print(f"  ep {e:3d}  {row['frames']:5d} 프레임  팔 오차 평균 {row['arm_mean_deg']:5.2f}° · 95% {row['arm_p95_deg']:5.1f}° · 최대 {row['arm_max_deg']:5.1f}°"
-                  f"  그리퍼 {row['grip_mean_q']:.3f}  추론 {row['infer_ms_mean']} ms  실기라면 멈춤: {fs}", flush=True)
+                  f"  그리퍼 {row['grip_mean_q']:.3f}  추론 평균 {row['infer_ms_mean']} · 최대 {row['infer_ms_max']} ms"
+                  f"  한 틱 최대 {row['jump_max_deg']}°\n           실기라면 멈춤: {fs}", flush=True)
     finally:
         inf.close()
     s = {"model": a.model, "dataset": ds_name, "device": a.device, "backend": info["backend"],
+         "chunk_size": info.get("chunk_size"), "n_action_steps": info.get("n_action_steps"),
          "range_tol": RANGE_TOL, "jump_rad": JUMP_RAD, "episodes": rows,
          "arm_mean_deg": round(float(np.mean([r["arm_mean_deg"] for r in rows])), 2),
          "episodes_with_stop": sum(r["first_stop_s"] is not None for r in rows)}
