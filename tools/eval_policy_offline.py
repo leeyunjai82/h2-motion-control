@@ -216,6 +216,7 @@ def main():
             stop_range, stop_jump = [], []
             target = None
             jumps = []
+            why = {}                                                            # 멈춤 원인 관절: (종류, 이름) → [회수, 최대]
             for i in range(len(ds)):
                 x = ds[i]
                 imgs = []
@@ -235,15 +236,24 @@ def main():
                     continue
                 a_cl = act
                 if amin is not None:                                            # 실기: 범위 밖 → 멈춤, 안쪽은 자름
-                    if float(np.max(np.maximum(amin - act, act - amax))) > RANGE_TOL:
+                    over = np.maximum(amin - act, act - amax)
+                    if float(np.max(over)) > RANGE_TOL:
                         stop_range.append(i)
+                        k = int(np.argmax(over))
+                        v = float(over[k]) if k in GRIP else math.degrees(over[k])
+                        w = why.setdefault(("범위", names[k] + (" (q)" if k in GRIP else "")), [0, 0.0])
+                        w[0], w[1] = w[0] + 1, max(w[1], v)
                     a_cl = np.clip(act, amin, amax)
                 cmd = a_cl[ARM]
                 if target is None:
                     target = state[ARM]                                         # 실기: 시작 = 실측 (준비 자세)
-                jumps.append(float(np.max(np.abs(cmd - target))))
+                jd = np.abs(cmd - target)
+                jumps.append(float(np.max(jd)))
                 if jumps[-1] > JUMP_RAD:                                        # 실기: 한 틱 점프 → 멈춤
                     stop_jump.append(i)
+                    k = ARM[int(np.argmax(jd))]
+                    w = why.setdefault(("점프", names[k]), [0, 0.0])
+                    w[0], w[1] = w[0] + 1, max(w[1], math.degrees(float(np.max(jd))))
                 target = cmd
             rec, pred = np.asarray(rec), np.asarray(pred)
             err = np.abs(pred - rec)
@@ -254,6 +264,7 @@ def main():
                    "stop_range": len(stop_range), "stop_jump": len(stop_jump),
                    "jump_max_deg": round(math.degrees(max(jumps)), 1) if jumps else None,
                    "stop_frames": sorted(set(stop_range + stop_jump))[:12],
+                   "stop_joints": [{"kind": kd, "joint": jn, "count": c, "max": round(m, 2)} for (kd, jn), (c, m) in why.items()],
                    "first_stop_s": round(min(stop_range + stop_jump) / 30.0, 1) if (stop_range or stop_jump) else None,
                    "infer_ms_mean": round(float(np.mean(ms)), 1), "infer_ms_max": round(float(np.max(ms)), 1)}
             rows.append(row)
@@ -265,6 +276,9 @@ def main():
             print(f"  ep {e:3d}  {row['frames']:5d} 프레임  팔 오차 평균 {row['arm_mean_deg']:5.2f}° · 95% {row['arm_p95_deg']:5.1f}° · 최대 {row['arm_max_deg']:5.1f}°"
                   f"  그리퍼 {row['grip_mean_q']:.3f}  추론 평균 {row['infer_ms_mean']} · 최대 {row['infer_ms_max']} ms"
                   f"  한 틱 최대 {row['jump_max_deg']}°\n           실기라면 멈춤: {fs}", flush=True)
+            if why:
+                print("           원인 관절: " + " · ".join(f"{kd} {jn} ×{c} (최대 {m:.2f}{'' if jn.endswith('(q)') else '°'}{' 넘음' if kd == '범위' else ''})"
+                                                     for (kd, jn), (c, m) in sorted(why.items(), key=lambda x: -x[1][0])), flush=True)
     finally:
         inf.close()
     s = {"model": a.model, "dataset": ds_name, "device": a.device, "backend": info["backend"],
