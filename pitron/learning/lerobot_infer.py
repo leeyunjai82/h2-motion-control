@@ -71,7 +71,10 @@ def ov_swap(pol, model_dir, ov_device, example):
         ov.save_model(m, xml, compress_to_fp16=False)
         with open(stamp_p, "w") as f:
             f.write(stamp)
-    comp = ov.Core().compile_model(xml, ov_device, {"INFERENCE_PRECISION_HINT": "f32"} if ov_device == "CPU" else {})
+    core = ov.Core()
+    if ov_device != "CPU":                      # GPU · NPU 컴파일 결과 캐시 (두 번째부터 빨리 뜸)
+        core.set_property({"CACHE_DIR": os.path.join(model_dir, "openvino", "cache")})
+    comp = core.compile_model(xml, ov_device, {"INFERENCE_PRECISION_HINT": "f32"} if ov_device == "CPU" else {})
     req = comp.create_infer_request()
     with torch.no_grad():
         ref = w(*[example[k] for k in keys]).numpy()

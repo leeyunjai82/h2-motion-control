@@ -198,7 +198,8 @@ def main():
     print(f"[평가] 모델 {a.model} · 데이터셋 {ds_name} (에피소드 {total} 중 {len(eps)}) · {a.device}", flush=True)
     inf = Infer(md, a.device, task, a.n_action_steps, a.backend)
     info = inf.info
-    print(f"  불러옴: {info['type']} · {info['backend']} · chunk {info.get('chunk_size')} 중 {info.get('n_action_steps')} 개씩 실행 · 첫 추론 {info['infer_ms']} ms · 카메라 "
+    print(f"  불러옴: {info['type']} · {info['backend']} · chunk {info.get('chunk_size')} 중 {info.get('n_action_steps')} 개씩 실행 · 첫 추론 {info['infer_ms']} ms"
+          + (f" · OpenVINO ↔ torch 차이 {info['ov_diff']:.2e}" if info.get('ov_diff') is not None else "") + " · 카메라 "
           + ", ".join(f"{c['name']} {c['w']}×{c['h']}" for c in info["cams"]), flush=True)
     amin = np.asarray(info["a_min"]) if info.get("a_min") else None
     amax = np.asarray(info["a_max"]) if info.get("a_max") else None
