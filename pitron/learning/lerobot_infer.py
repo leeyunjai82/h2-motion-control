@@ -73,9 +73,9 @@ def ov_swap(pol, model_dir, ov_device, example):
             f.write(stamp)
     core = ov.Core()
     model = core.read_model(xml)
+    # 입력 크기 고정 (batch 1 · 모델 입력 크기) — 실제 입력은 늘 이 크기. NPU 는 고정된 모델만 받음 ('negative shape dim bound -1', 2026-11-25)
+    model.reshape({inp: ov.PartialShape(list(example[k].shape)) for inp, k in zip(model.inputs, keys)})
     if ov_device != "CPU":
-        # NPU 는 크기가 모두 정해진 모델만 받음 (변환 결과는 입력 크기가 ? — 'negative shape dim bound -1', 2026-11-25) → 입력 크기 고정 (batch 1)
-        model.reshape({inp: ov.PartialShape(list(example[k].shape)) for inp, k in zip(model.inputs, keys)})
         core.set_property({"CACHE_DIR": os.path.join(model_dir, "openvino", "cache")})   # 컴파일 결과 캐시 (두 번째부터 빨리 뜸)
     comp = core.compile_model(model, ov_device, {"INFERENCE_PRECISION_HINT": "f32"} if ov_device == "CPU" else {})
     req = comp.create_infer_request()
