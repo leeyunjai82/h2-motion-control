@@ -240,7 +240,8 @@ def main():
         if real and sess["active"] and not d.motion_data_ready:
             # Quest 입력이 아직 없음 (VR 안 들어감 · 화면 꺼짐) — 그 자리 유지 명령만 보내 세션을 살려 둠 (팔은 안 움직임)
             try:
-                post(real + "/api/xr/cmd", {"names": names, "q": q_last.tolist(), "grip": {}, "press": {}, "no_input": True}, timeout=1.0)
+                post(real + "/api/xr/cmd", {"names": names, "q": q_last.tolist(), "grip": {}, "press": {}, "no_input": True,
+                                            "epoch": sess["epoch"]}, timeout=1.0)
                 sess["msg"] = "ROBOT ON - no Quest input (enter VR)"
             except urllib.error.HTTPError as e:
                 sess.update(active=False, msg="ROBOT OFF - press VR START on pick web")
@@ -280,7 +281,8 @@ def main():
                 grip = {"left": 1.0 - d.left_ctrl_triggerValue / 10.0, "right": 1.0 - d.right_ctrl_triggerValue / 10.0}
             if real:
                 try:
-                    res = post(real + "/api/xr/cmd", {"names": names, "q": q_cmd.tolist(), "grip": grip, "press": press}, timeout=1.0)
+                    res = post(real + "/api/xr/cmd", {"names": names, "q": q_cmd.tolist(), "grip": grip, "press": press,
+                                                      "epoch": sess["epoch"]}, timeout=1.0)
                     q_last = np.array([res["q"][n] for n in names])     # 잡기 웹이 받아들인 (안전 검사 · 서버 속도 제한 후) 목표에서 이어감
                     n_ok += 1
                     h = res.get("hands") or {}
@@ -326,7 +328,7 @@ def main():
     finally:
         if real and sess["active"]:
             try:
-                post(real + "/api/xr/stop", {}, timeout=2.0)
+                post(real + "/api/xr/stop", {"go_home": False, "epoch": sess["epoch"]}, timeout=2.0)   # 그 자리에 멈춤 (복귀 안 함)
             except Exception:  # noqa: BLE001
                 pass
         try:

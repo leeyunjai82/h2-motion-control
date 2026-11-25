@@ -25,9 +25,9 @@ FIELDS = {
     "hand_offset_m": ("사람 손 → 로봇 손 위치 오프셋 [앞 · 바깥 · 위]", "m", -0.30, 0.30),
     "grip_open_mm": ("트리거를 놓았을 때 그리퍼 벌림", "mm", OBJ_MM + 5.0, round(pc.gap_mm(pc.Q_HI), 1)),
     "real_max_vel": ("관절 속도 기본값", "rad/s", 0.05, 1.0),
-    "arm_gap_m": ("양팔 사이 최소 거리", "m", 0.08, 0.30),
-    "back_limit_m": ("팔 · 그리퍼 뒤 한계 (pelvis x, 이보다 뒤면 그 손 멈춤)", "m", -0.30, 0.0),
-    "table_x_min_m": ("테이블 앞 끝 (이보다 앞에 있는 그리퍼만 테이블 높이 검사)", "m", 0.0, 0.50),
+    "arm_gap_m": ("양팔 사이 최소 거리", "m", 0.10, 0.30),
+    "back_limit_m": ("팔 · 그리퍼 뒤 한계 (pelvis x, 이보다 뒤면 그 손 멈춤)", "m", -0.20, 0.0),
+    "table_x_min_m": ("테이블 앞 끝 (이보다 앞에 있는 그리퍼만 테이블 높이 검사)", "m", 0.05, 0.25),
 }
 
 
@@ -56,12 +56,18 @@ def check(k, v):
     if k == "hand_offset_m":
         if not isinstance(v, (list, tuple)) or len(v) != 3:
             raise ValueError("손 오프셋은 숫자 3 개 [앞, 바깥, 위]")
-        out = [round(float(x), 3) for x in v]
-        if any(not (lo <= x <= hi) for x in out):
+        try:
+            out = [round(float(x), 3) for x in v]
+        except (OverflowError, ValueError, TypeError):
+            raise ValueError("손 오프셋은 숫자 3 개 [앞, 바깥, 위]")
+        if any(isinstance(x, bool) for x in v) or any(not (lo <= x <= hi) for x in out):
             raise ValueError(f"손 오프셋은 {lo} ~ {hi} {unit}")
         return out
-    x = round(float(v), 3)
-    if not (lo <= x <= hi):
+    try:
+        x = round(float(v), 3)
+    except (OverflowError, ValueError, TypeError):
+        raise ValueError(f"{FIELDS[k][0]}: 숫자가 아님")
+    if isinstance(v, bool) or not (lo <= x <= hi):
         raise ValueError(f"{FIELDS[k][0]}: {lo} ~ {hi} {unit}")
     return x
 

@@ -450,7 +450,7 @@
 
   // ---------- 문장 전체가 같을 때만 (화면 글자 그대로 — 짧은 말이 다른 문장 속에서 바뀌지 않게) ----------
   const EXACT = {
-    "VR 연결": "VR connection", "adb 없음": "no adb", "권한 허용 필요": "allow USB debugging", "연결 안 됨": "not connected", "응답 없음": "no response",
+    "VR 연결": "VR connection", "테이블 검사를 끕니다 — 그리퍼가 테이블 · 물건에 닿아도 멈추지 않습니다.\n팔 아래에 아무것도 없을 때만 쓰세요. 계속?": "Turn off the table check — the gripper will not stop if it touches the table or objects.\nUse only with nothing under the arms. Continue?", "테이블을 먼저 재세요 (잡기 웹 [테이블 점 추가]) — 정책 실행은 테이블 검사 없이 시작하지 않음": "Measure the table first (pick web [Add table point]) — policy runs never start without the table check", "adb 없음": "no adb", "권한 허용 필요": "allow USB debugging", "연결 안 됨": "not connected", "응답 없음": "no response",
     "연결 프로그램": "Bridge",
     "Quest 입력": "Quest input",
     "재연결": "Reconnect",
@@ -1210,6 +1210,11 @@
     [/^VR 설정 이상: (.*)$/, 'VR settings problem: $1'],
     [/^끝: (.*)$/s, (m, a) => { const t = tr(a); return /[가-힣]/.test(t) ? m : 'ended: ' + t; }],
     [/^정책 출력에 NaN · inf \(또는 크기 이상\) — 멈춤/, 'policy output has NaN · inf (or wrong size) — stopped'],
+    [/^정책 출력이 한 틱에 (\d+)° 점프 \(관절 (\d+)\) — 멈춤/, 'policy output jumped $1° in one tick (joint $2) — stopped'],
+    [/^(left|right) 몸통 (\d+) cm — 멈춤$/, '$1 torso $2 cm — stopped'],
+    [/^(left|right) 뒤로 (-?\d+) cm — 멈춤$/, '$1 back $2 cm — stopped'],
+    [/^양팔 사이 (\d+) cm — 멈춤$/, 'arms $1 cm apart — stopped'],
+    [/^VR 세션 번호가 다름 \((.+)\)$/, 'VR session number differs ($1)'],
     [/^지령 ↔ 실측 (\d+)° — 걸렸거나 부딪힘( \(추론 기다리는 중\))?/, (m, a, b) => `command ↔ measured ${a}° — snagged or hit something${b ? ' (while waiting for inference)' : ''}`],
     [/^추론 답을 (\d+) 초 못 받음/, 'no inference answer for $1 s'],
     [/ · 추론 프로세스를 끔 \(다시 불러오기 필요\)$/, ' · inference process stopped (reload needed)'],

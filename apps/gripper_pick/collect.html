@@ -336,6 +336,12 @@ async function toReady() {
 }
 $("rdybtn").onclick = toReady;
 $("start").onclick = start; $("stop").onclick = stop;
+// 테이블 검사 끔: 사람이 직접, 확인 뒤에만 (자동으로 켜지 않음). 켜져 있는 동안 경고
+$("notable").onchange = () => {
+  const el = $("notable");
+  if (el.checked && !confirm("테이블 검사를 끕니다 — 그리퍼가 테이블 · 물건에 닿아도 멈추지 않습니다.\n팔 아래에 아무것도 없을 때만 쓰세요. 계속?")) el.checked = false;
+  el.closest("label").style.color = el.checked ? "var(--warn)" : "";
+};
 $("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
 document.addEventListener("keydown", e => {
   if (epOpen) { epKey(e); return; }          // 에피소드 보기 중에는 VR 단축키 (Space = 시작) 안 받음
@@ -706,8 +712,6 @@ async function poll() {
     st = await (await fetch("/api/state")).json();
     if ($("ds").value === "" && st.rec.name) { $("ds").value = st.rec.name; refreshDs(); }
     $("recon").checked = !!st.rec.on;
-    if ($("notable").dataset.init !== "1" && st.table_z == null) { $("notable").checked = true; }
-    $("notable").dataset.init = "1";
     $("livedot").className = "dot live";
     render(); renderModel();
   } catch (e) { $("livedot").className = "dot err"; $("xrmsg").innerHTML = '<span class="bad">잡기 웹 응답 없음</span>'; }

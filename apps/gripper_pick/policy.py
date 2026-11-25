@@ -13,6 +13,7 @@ policy.py — lerobot 정책 실행 (잡기 웹 pick_web 이 씀): 모델 폴더
     답이 아직이면 (chunk 를 새로 계산 중) 마지막 목표를 다시 보냄 = 그 자리에 멈춰 기다림 (arm_server 세션 유지)
   멈춤 (팔은 그 자리, 그리퍼는 그 상태 유지)
     · 정책 출력이 모델의 학습 범위 (action min/max) 를 range_tol 넘게 벗어남 — 범위 안은 그대로, 약간 넘는 건 범위로 자름
+    · 한 틱에 지금 목표에서 jump_rad 넘게 바뀌는 관절 명령 · 출력에 NaN · inf
     · 집게 가운데 (지령 관절 FK) 가 작업 범위 밖 — config/local.yaml policy_tcp_box (없으면 이 검사 안 함)
     · 그리퍼 가장 낮은 점이 테이블 평면 + floor_clear 아래 (테이블을 쟀을 때)
     · 지령 ↔ 실측 관절 차이 > track_abort_deg (arm_server 응답)
@@ -32,6 +33,7 @@ import zipfile
 
 import cv2
 import numpy as np
+import pinocchio as pin
 
 import os as _os, sys as _sys  # noqa: E401
 _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
@@ -39,6 +41,7 @@ if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron import paths  # noqa: E402
 from pitron.learning import camfit, lerobot_env  # noqa: E402
+import vr_settings  # noqa: E402 — 양팔 사이 · 뒤 한계는 VR 조작과 같은 기준 (웹 VR 설정)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 MODEL_DIR = paths.data_dir("policies", legacy="gripper/models")   # 모델 저장소 (git 제외)
@@ -53,9 +56,11 @@ DEFAULTS = {
     "max_s": 90.0,           # 최대 실행 시간 [s]
     "stall_s": 15.0,         # 추론 답을 이만큼 못 받으면 멈춤 [s] (그동안 팔은 제자리)
     "range_tol": 0.15,       # 학습 범위 밖 허용 [rad] — 넘으면 멈춤 (안쪽은 범위로 자름)
+    "jump_rad": 0.15,        # 한 틱에 지금 목표에서 이보다 크게 바뀌는 관절 명령 → 멈춤 (학습 범위 안이어도 튀는 출력)
+                             #   VR 수집 0.3 rad/s = 한 틱 0.01 rad — 15 배 여유. 작아서 중간 경로도 끝 목표 검사로 덮임
     "floor_clear": 0.005,    # 그리퍼 ↔ 테이블 최소 [m]
     "track_abort_deg": 15.0,
-    "server_max_vel": 1.0,   # arm_server /stream 관절 속도 상한 [rad/s]
+    "server_max_vel": 0.5,   # arm_server /stream 관절 속도 상한 [rad/s] (VR 수집 기본 0.3 — 학습 데이터보다 크게 빠르지 않게)
     "hold_end_s": 1.0,       # 준비 자세에 이만큼 머물면 한 회 끝
     "min_run_s": 8.0,        # 시작 직후는 끝 판정 안 함 (시작도 준비 자세라서)
     "repeat_gap_s": 2.0,     # 반복 실행: 한 회가 정상으로 끝난 뒤 다음 회까지 쉬는 시간 [s]
@@ -268,6 +273,8 @@ class PolicyRunner:
 
     def __init__(self, r, pc):
         self.r, self.pc = r, pc
+        self.squeeze_q = float(pc.P["squeeze_mm"]) / pc.MM_PER_RAD     # 그리퍼를 지금 손가락보다 이만큼만 더 조임 (≈ 8 mm, VR 조작과 같음)
+        self.mdl = pc.Model()            # 안전 검사 전용 모델 — 화면 · 상태 스레드와 pinocchio Data 를 같이 쓰지 않음 (검사 값이 섞이지 않게)
         self.policy = None
         self.cfg = dict(DEFAULTS)
         self.th = None
@@ -329,12 +336,14 @@ class PolicyRunner:
             bad.append("팔 실측 없음 (rt/lowstate · arm_server)")
         if self.grip_q() is None:
             bad.append("그리퍼 상태 없음")
+        if r.table_plane is None:                     # 정책 실행은 테이블 검사를 끌 수 없음
+            bad.append("테이블을 먼저 재세요 (잡기 웹 [테이블 점 추가]) — 정책 실행은 테이블 검사 없이 시작하지 않음")
         cp = r.cam_pitch.read() if r.cam_pitch else None
         if cp is not None and abs(cp["diff"]) > 1.0:
             bad.append(f"카메라 숙임 기준과 {cp['diff']:+.2f}° — 거치대를 맞추세요")
         if q is not None:
-            qm = r.mdl.to_model(q)
-            off = [("왼팔" if s == "left" else "오른팔") for s in self.pc.SIDES if not self.pc.at_ready(r.mdl, qm, s)]
+            qm = self.mdl.to_model(q)
+            off = [("왼팔" if s == "left" else "오른팔") for s in self.pc.SIDES if not self.pc.at_ready(self.mdl, qm, s)]
             if off:
                 bad.append(f"{' · '.join(off)} 이 준비 자세가 아님 — 먼저 [준비 자세로] (수집과 같은 시작)")
         return bad
@@ -365,6 +374,26 @@ class PolicyRunner:
             out[side] = g["q"]
         return out
 
+    def body_check(self, qm, cfg):
+        """지령 자세 → 문제 (몸통 · 다른 팔 · 뒤 한계) 또는 "". 값은 VR 조작과 같음 (gripper.yaml pick.body_clear_m, VR 설정 arm_gap_m · back_limit_m)."""
+        mdl = self.mdl
+        pts = {}
+        pin.forwardKinematics(mdl.m, mdl.d, qm)
+        for side in self.pc.SIDES:
+            pts[side] = [mdl.d.oMi[mdl.jid[side][n]].translation.copy() for n in ("elbow", "wrist_roll", "wrist_yaw")]
+            pts[side].append(mdl.tcp(qm, side).translation.copy())
+        for side in self.pc.SIDES:
+            g = mdl.body_gap(qm, side)
+            if g is not None and g < float(self.pc.P["body_clear_m"]):
+                return f"{side} 몸통 {g * 100:.0f} cm"
+            back = min(float(p[0]) for p in pts[side])
+            if back < float(cfg["back_limit_m"]):
+                return f"{side} 뒤로 {back * 100:.0f} cm"
+        ag = min(float(np.linalg.norm(x - y)) for x in pts["left"] for y in pts["right"])
+        if ag < float(cfg["arm_gap_m"]):
+            return f"양팔 사이 {ag * 100:.0f} cm"
+        return ""
+
     @staticmethod
     def state16(q14, gq):
         """팔 14 (제어 순서) + {손: 그리퍼 q} → state 16 (녹화 순서와 같음)"""
@@ -385,6 +414,8 @@ class PolicyRunner:
             if run_no == 1:
                 self.user_stop = False
             self.repeat = bool(repeat)
+            vr = vr_settings.get()
+            self.cfg.update(arm_gap_m=vr["arm_gap_m"], back_limit_m=vr["back_limit_m"])
             self.stop_evt.clear()
             self.state = {"running": True, "step": 0, "infer_ms": None, "why_end": "", "phase": "정책", "wait_s": 0.0,
                           "run_no": run_no, "repeat": self.repeat}
@@ -500,9 +531,17 @@ class PolicyRunner:
                 cmd = target.copy()
                 for _, csl, asl, _ in PARTS:
                     cmd[csl] = a[asl]
-                qm = r.mdl.to_model(cmd)
+                jmp = np.abs(cmd - target)
+                if float(np.max(jmp)) > cfg["jump_rad"]:      # 30 Hz 한 틱에 크게 튀는 명령 (arm_server 속도 제한만 믿지 않음)
+                    k = int(np.argmax(jmp))
+                    raise PolicyStop(f"정책 출력이 한 틱에 {math.degrees(jmp[k]):.0f}° 점프 (관절 {k}) — 멈춤")
+                mdl = self.mdl
+                qm = mdl.to_model(cmd)
+                why_body = self.body_check(qm, cfg)            # 몸통 · 양팔 사이 · 뒤 한계 (VR 조작과 같은 기준)
+                if why_body:
+                    raise PolicyStop(f"{why_body} — 멈춤")
                 for side, *_ in PARTS:                          # 손마다: 작업 범위 · 테이블
-                    T = r.mdl.tcp(qm, side)
+                    T = mdl.tcp(qm, side)
                     if side in self.tcp_box:
                         lo, hi = self.tcp_box[side]
                         if np.any(T.translation < lo) or np.any(T.translation > hi):
@@ -510,7 +549,7 @@ class PolicyRunner:
                     if r.table_plane is not None:
                         a0, bb, cc = r.table_plane
                         tz = a0 + bb * T.translation[0] + cc * T.translation[1]
-                        low = r.mdl.lowest(qm, side)
+                        low = mdl.lowest(qm, side)
                         if low < tz + cfg["floor_clear"]:
                             raise PolicyStop(f"{side} 그리퍼가 테이블에 {max(0.0, low - tz) * 1000:.0f} mm 까지 — 멈춤")
                 rr = pc.call("/stream/cmd", {"token": tok, "deg": np.degrees(cmd).tolist()}, timeout=1.0)
@@ -519,11 +558,15 @@ class PolicyRunner:
                 lag = float(np.max(np.abs(np.asarray(rr["target_deg"]) - np.asarray(rr["meas_deg"]))))
                 if lag > cfg["track_abort_deg"]:
                     raise PolicyStop(f"지령 ↔ 실측 {lag:.0f}° — 걸렸거나 부딪힘")
-                for side, _, _, gi in PARTS:
-                    r.grip.set(side, float(np.clip(a[gi], pc.Q_LO, pc.Q_HI)))
+                for side, _, _, gi in PARTS:                   # 그리퍼: 지금 손가락보다 squeeze 만큼만 더 조임 (물건에 막혀 계속 힘이 걸리지 않게)
+                    gs = r.grip.state(side) or {}
+                    gq = float(a[gi])
+                    if gs.get("q") is not None:
+                        gq = max(gq, float(gs["q"]) - self.squeeze_q)
+                    r.grip.set(side, float(np.clip(gq, pc.Q_LO, pc.Q_HI)))
                 self.state["step"] += 1
                 if time.time() - t_start > cfg["min_run_s"]:  # 끝 판정: 지령이 양손 준비 자세에 머묾
-                    near = all(pc.at_ready(r.mdl, qm, s) for s in pc.SIDES)
+                    near = all(pc.at_ready(mdl, qm, s) for s in pc.SIDES)
                     t_near = (t_near or time.time()) if near else None
                     if t_near and time.time() - t_near > cfg["hold_end_s"]:
                         raise PolicyStop(f"{END_OK} — 한 회 끝")
@@ -541,11 +584,10 @@ class PolicyRunner:
                 except Exception:  # noqa: BLE001
                     pass
             self.stop_evt.set()
-            if th is not None and th.is_alive():          # 답을 기다리던 추론 — 3 초 더 기다려 보고 안 오면 끔 (다음 회가 막히지 않게)
-                th.join(3.0)
-                if th.is_alive():
-                    p.kill("추론 답이 없어 추론 프로세스를 끔 — 모델을 다시 불러오세요")
-                    why += " · 추론 프로세스를 끔 (다시 불러오기 필요)"
+            if th is not None and th.is_alive() and why.startswith("추론 답을"):
+                # 추론 무응답 (멈춘 프로세스) — 끔. [정지] · 다른 이유면 그 답은 기다리던 스레드가 받고 버림 (팔 명령 안 됨)
+                p.kill("추론 답이 없어 추론 프로세스를 끔 — 모델을 다시 불러오세요")
+                why += " · 추론 프로세스를 끔 (다시 불러오기 필요)"
             run_no = int(self.state.get("run_no", 1))
             self.state.update(running=False, why_end=why, phase="", wait_s=0.0)
             r.say(f"정책 끝 — {why} (팔은 그 자리, 그리퍼는 그 상태)")

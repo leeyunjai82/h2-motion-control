@@ -1201,13 +1201,18 @@ def make_app(r: Runner):
         return r.xr.start(float(body.get("max_vel", vr_settings.get()["real_max_vel"])), CAM_PITCH_MAX, bool(body.get("no_table", False)))
 
     @app.post("/api/xr/stop")
-    def api_xr_stop():
-        return {"ok": True, "stopped": r.xr.stop("VR 끝 버튼", go_home=True)}
+    def api_xr_stop(body: Optional[dict] = None):
+        # 화면 [■ 끝] = 준비 자세로 복귀. Quest 연결 프로그램이 꺼지며 보내는 정지 (go_home false) = 그 자리에 멈춤
+        b = body or {}
+        if b.get("epoch") is not None and b.get("epoch") != r.xr.epoch:
+            return {"ok": True, "stopped": False}
+        go_home = bool(b.get("go_home", True))
+        return {"ok": True, "stopped": r.xr.stop("VR 끝 버튼" if go_home else "Quest 연결 끊김", go_home=go_home)}
 
     @app.post("/api/xr/cmd")
     def api_xr_cmd(body: dict):
         return r.xr.cmd(body.get("names") or [], body.get("q") or [], body.get("grip") or {}, body.get("press") or {},
-                        bool(body.get("no_input", False)))
+                        bool(body.get("no_input", False)), epoch=body.get("epoch"))
 
     @app.get("/api/xr/state")
     def api_xr_state():
@@ -1229,7 +1234,7 @@ def make_app(r: Runner):
         act = str(body.get("action", ""))
         if act not in ("start", "stop", "restart"):
             raise HTTPException(400, "action: start · stop · restart")
-        if act != "start" and r.xr.active:
+        if r.xr.active or r.busy():                  # 조작 · 복귀 중에는 연결 프로그램을 건드리지 않음 (꺼지며 보내는 정지와 겹치지 않게)
             raise HTTPException(409, "VR 조작 중 — 먼저 [■ 끝]")
         try:
             st = getattr(r.bridge, act)(**({} if act == "stop" else {"display": body.get("display") or None}))

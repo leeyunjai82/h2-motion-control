@@ -187,6 +187,8 @@ class XRTeleop:
         with self.lk:
             if not self.active:
                 return False
+            if go_home:
+                r.stop_evt.clear()           # 복귀 전에 지움 — 이 뒤에 누른 [정지] 는 복귀를 멈춤 (복귀 직전에 지워서 정지가 사라지지 않게)
             self.active = False
             tok, self.tok = self.tok, None
             self.msg = f"꺼짐 — {why}"
@@ -197,8 +199,7 @@ class XRTeleop:
         used, n_cmd = set(getattr(self, "used", set())), self.n
         with r.lk:
             r.phase, r.stage = "idle", f"VR 끝 ({why})"
-        if go_home and used:
-            r.stop_evt.clear()
+        if go_home and used and not r.stop_evt.is_set():
             r.th = threading.Thread(target=self._go_home, args=(sorted(used), why, n_cmd), daemon=True)
             r.th.start()                     # r.th 가 도는 동안 busy() — VR 시작 · 다른 동작 안 됨, [정지] 로 멈춤
             return True
@@ -261,11 +262,13 @@ class XRTeleop:
                 self.stop(f"VR 입력이 {IDLE_END_S} 초 넘게 없음")
 
     # ---------- 한 명령 ----------
-    def cmd(self, names, q, grip, press, no_input=False):
+    def cmd(self, names, q, grip, press, no_input=False, epoch=None):
         r, mdl = self.r, self.mdl
         with self.lk:
             if not self.active:
                 raise HTTPException(409, f"VR 세션 없음 ({self.msg})")
+            if epoch is not None and epoch != self.epoch:   # 지난 세션의 명령 (연결 프로그램이 세션 끝을 놓침) — 버림
+                raise HTTPException(409, f"VR 세션 번호가 다름 ({epoch} ≠ {self.epoch})")
             if no_input:                       # Quest 입력 없음 — 팔 · 그리퍼는 그대로, 세션만 유지
                 for side in pc.SIDES:
                     self.hands[side] = {"state": "Quest 입력 없음", "reason": "Quest 에서 'Virtual Reality' 를 누르세요", "level": "idle"}
