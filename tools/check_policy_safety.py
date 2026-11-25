@@ -30,12 +30,14 @@ import sys
 import time
 import types
 
-import numpy as np
-
 ROOT = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 sys.path.insert(0, os.path.join(ROOT, "apps", "gripper_pick"))
 sys.path.append(ROOT)
-import pick_core as pc  # noqa: E402
+try:
+    import numpy as np
+    import pick_core as pc  # noqa: E402
+except ImportError as e:
+    sys.exit(f"❌ {e} — 로봇 tv 환경에서 실행: source activate_tv.sh && python tools/check_policy_safety.py")
 import policy as pol  # noqa: E402
 
 RES = []
