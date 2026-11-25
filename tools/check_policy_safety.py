@@ -3,7 +3,8 @@
 check_policy_safety.py — 실기 전 정책 실행기 안전 점검 (로봇 · arm_server 없이, 이 PC 의 실제 모델 · 추론 장치로)
 
   source activate_tv.sh
-  python tools/check_policy_safety.py <모델 이름> [--device CPU|GPU|NPU] [--sec 6]
+  python tools/check_policy_safety.py                       → 쓸 수 있는 모델 목록 · lerobot 환경 확인
+  python tools/check_policy_safety.py act_xxx --device GPU  → 그 모델 점검 (이름은 목록에서)
 
   apps/gripper_pick/policy.py 의 PolicyRunner 를 그대로 쓰고, 팔 서버 · 카메라 · 그리퍼만 가짜 (팔 명령은 기록만).
   추론은 진짜 (lerobot 가상환경 프로세스 · OpenVINO/torch) — 이 PC 의 타이밍으로 확인.
@@ -77,10 +78,12 @@ class FakeArm:
 
 def main():
     ap = argparse.ArgumentParser(description="정책 실행기 안전 점검 (로봇 없이)")
-    ap.add_argument("model", help="data/policies/<이름>")
+    ap.add_argument("model", nargs="?", help="data/policies 안 모델 이름 (없으면 목록만)")
     ap.add_argument("--device", default="CPU", choices=("CPU", "GPU", "NPU"))
     ap.add_argument("--sec", type=float, default=6.0, help="정상 실행 시간 [s]")
     a = ap.parse_args()
+    if not a.model or not os.path.isfile(os.path.join(pol.MODEL_DIR, a.model, "config.json")):
+        return list_models(a.model)
 
     mdl = pc.Model()
     qm = mdl.to_model(pc.default_q_ctrl())
@@ -287,6 +290,27 @@ def main():
            f"{why} · 다시 시작 조건: {R.check()[:1]}")
     R.policy.close()
     return report()
+
+
+def list_models(asked):
+    """모델 이름이 없거나 틀렸을 때: lerobot 환경 · 모델 목록."""
+    py = pol.lerobot_env.python()
+    print(f"lerobot 환경: {py} — {'있음' if os.path.isfile(py) else '없음 → 먼저 ./apps/trainer/install_lerobot.sh xpu'}")
+    if asked:
+        print(f"❌ 모델 없음: {asked} (data/policies/{asked}/config.json)")
+    ms = pol.models()
+    old = [n for n in (os.listdir(pol.MODEL_DIR) if os.path.isdir(pol.MODEL_DIR) else [])
+           if os.path.isfile(os.path.join(pol.MODEL_DIR, n, "meta.json")) and not os.path.isfile(os.path.join(pol.MODEL_DIR, n, "config.json"))]
+    print(f"\n점검할 수 있는 lerobot 모델 ({pol.MODEL_DIR}): {len(ms)} 개")
+    for m in ms:
+        print(f"  {m['name']:<40} {m['policy']:<10} {m.get('dataset') or '-'}  step {m.get('step') or '-'}")
+    if old:
+        print(f"\n예전 형식 모델 (OpenVINO zip, 이제 안 씀 — 점검 대상 아님): {', '.join(sorted(old))}")
+    if ms:
+        print(f"\n실행 예:  python tools/check_policy_safety.py {ms[0]['name']} --device GPU")
+    else:
+        print("\nlerobot 모델이 없음 — 학습 (홈 → 학습) 으로 먼저 만들거나 학습 웹에서 받은 model zip 을 수집 화면 [zip 올리기] 로")
+    return 1
 
 
 def report():
