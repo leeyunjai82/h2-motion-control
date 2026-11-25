@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 로봇 PC (Intel GPU) 학습 웹 → http://localhost:50100/
-#   lerobot 가상환경 (./apps/trainer/install_lerobot.sh xpu 로 설치) — 로봇 tv 환경과 별개
+#   lerobot 학습 환경 lerobot_train (./apps/trainer/install_lerobot.sh xpu 로 설치) — 로봇 tv 환경과 별개
 #   학습하는 동안 로봇 서버 · 수집은 끄고 쓸 것. 종료: Ctrl+C (GPU 클럭 제한도 원래대로)
 #
 # 2026-11-10 실기 (NUCS BOX-358H · Arc B390 · 커널 7.0.0-42 · torch 2.11.0+xpu):

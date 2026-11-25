@@ -52,7 +52,7 @@ COLLECT_DIR = os.environ.get("TRAINER_COLLECT") or paths.data_dir("datasets", le
 if not os.path.isdir(COLLECT_DIR):
     COLLECT_DIR = None
 MODEL_STORE = paths.data_dir("policies", legacy="gripper/models")
-LEROBOT_PY = os.environ.get("LEROBOT_PY") or lerobot_env.python()
+LEROBOT_PY = os.environ.get("LEROBOT_PY") or lerobot_env.train_python()     # 학습 환경 (XPU · CUDA, 없으면 CPU 환경)
 NAME_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9_.\-]{1,64}$")          # "." · ".." 같은 점만 있는 이름은 안 됨
 V3_FILE_RE = re.compile(r"^(meta/[A-Za-z0-9_./\-]+\.(json|jsonl|parquet)|data/chunk-\d+/file-\d+\.parquet|"
                         r"videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4)$")
@@ -87,7 +87,7 @@ print("@@" + json.dumps({"torch": torch.__version__, "lerobot": lerobot.__versio
 
 def probe():
     if not os.path.isfile(LEROBOT_PY):
-        PROBE.update(done=True, ok=False, err=lerobot_env.missing_msg(LEROBOT_PY))
+        PROBE.update(done=True, ok=False, err=lerobot_env.missing_msg(LEROBOT_PY, train=True))
         return
     try:
         out = subprocess.run([LEROBOT_PY, "-c", PROBE_CODE], capture_output=True, text=True, timeout=180)
@@ -199,7 +199,7 @@ def extract_dataset(zpath, filename):
             os.replace(tmp, os.path.join(DS_DIR, name))
         else:                                                    # 예전 형식 → v3 (lerobot 환경에서 변환)
             if not os.path.isfile(LEROBOT_PY):
-                raise HTTPException(409, lerobot_env.missing_msg(LEROBOT_PY))
+                raise HTTPException(409, lerobot_env.missing_msg(LEROBOT_PY, train=True))
             log(f"예전 형식 데이터셋 → LeRobot v3 변환: {name}")
             r = subprocess.run([LEROBOT_PY, "-u", "-m", "pitron.learning.lerobot_sync", tmp, "--out", os.path.join(DS_DIR, name),
                                 "--repo-id", f"local/{name}"], cwd=_ROOT, capture_output=True, text=True,

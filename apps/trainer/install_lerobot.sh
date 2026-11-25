@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# lerobot 가상환경 (수집 v3 변환 · 학습 · 추론 공용) — conda env 'lerobot' (로봇 tv 환경과 별개)
-#   ./apps/trainer/install_lerobot.sh            장치 자동 (nvidia-smi → cuda, Intel GPU → xpu, 없으면 cpu)
-#   ./apps/trainer/install_lerobot.sh xpu        미니 PC (Intel Arc)
-#   ./apps/trainer/install_lerobot.sh cuda       학습 PC (RTX 5090, CUDA 12.8 이상 드라이버)
-#   env 이름 · 위치 바꾸기: LEROBOT_ENV=이름 · 다른 곳이면 config/local.yaml lerobot_python
+# lerobot 가상환경 둘 (로봇 tv 환경과 별개)
+#   ./apps/trainer/install_lerobot.sh            수집 · 추론 환경 'lerobot'       — CPU torch + OpenVINO (ACT 추론은 OpenVINO 로 Intel GPU)
+#   ./apps/trainer/install_lerobot.sh xpu        학습 환경 'lerobot_train'       — 미니 PC (Intel Arc)
+#   ./apps/trainer/install_lerobot.sh cuda       학습 환경 'lerobot_train'       — 학습 PC (RTX 5090, CUDA 12.8 이상 드라이버)
+#   학습 환경이 없으면 학습은 수집 · 추론 환경으로 (CPU, 느림)
+#   env 이름 바꾸기: LEROBOT_ENV=이름 · 다른 곳이면 config/local.yaml lerobot_python / lerobot_train_python
 #
 # 버전: lerobot 0.4.4 (데이터셋 v3.0) — torch <2.11 을 요구함 → torch 2.10.0 · torchvision 0.25.0
 #   ⚠ 미니 PC 의 예전 학습 환경 act_xpu 는 torch 2.11.0+xpu — lerobot 과 같이 못 씀 (그래서 env 를 따로 만듦)
@@ -12,26 +13,20 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-ENV_NAME="${LEROBOT_ENV:-lerobot}"
 PYVER="3.10"
 LEROBOT_VER="0.4.4"
 TORCH_PKGS="${TORCH_PKGS:-torch==2.10.0 torchvision==0.25.0}"
 step() { echo; echo "==== $* ===="; }
 die() { echo "❌ $*" >&2; exit 1; }
 
-DEV="${1:-auto}"
-if [ "$DEV" = "auto" ]; then
-  if command -v nvidia-smi >/dev/null 2>&1 && nvidia-smi >/dev/null 2>&1; then DEV=cuda
-  elif ls /dev/dri/renderD* >/dev/null 2>&1 && lspci 2>/dev/null | grep -i -E "vga|display" | grep -qi intel; then DEV=xpu
-  else DEV=cpu; fi
-fi
+DEV="${1:-cpu}"
 case "$DEV" in
-  cuda) TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}" ;;
-  xpu)  TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/xpu}" ;;
-  cpu)  TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}" ;;
-  *) die "장치: auto · cuda · xpu · cpu" ;;
+  cpu)  TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cpu}";   ENV_NAME="${LEROBOT_ENV:-lerobot}";       CFG_KEY=lerobot_python ;;
+  xpu)  TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/xpu}";   ENV_NAME="${LEROBOT_ENV:-lerobot_train}"; CFG_KEY=lerobot_train_python ;;
+  cuda) TORCH_INDEX="${TORCH_INDEX:-https://download.pytorch.org/whl/cu128}"; ENV_NAME="${LEROBOT_ENV:-lerobot_train}"; CFG_KEY=lerobot_train_python ;;
+  *) die "인자: (없음) 수집 · 추론 환경 · xpu / cuda 학습 환경" ;;
 esac
-echo "장치: $DEV  ($TORCH_PKGS from $TORCH_INDEX)"
+echo "env: $ENV_NAME  장치: $DEV  ($TORCH_PKGS from $TORCH_INDEX)"
 
 # ---------------------------------------------------------------- ① conda
 step "① conda"
@@ -57,16 +52,23 @@ fi
 
 # ---------------------------------------------------------------- ③ torch
 step "③ $TORCH_PKGS ($DEV)"
+# 다른 장치용 torch 가 이미 있으면 지우고 다시 (pip 은 2.10.0+xpu 도 ==2.10.0 으로 보고 안 바꿈)
+case "$DEV" in cpu) WANT="+cpu" ;; xpu) WANT="+xpu" ;; cuda) WANT="+cu" ;; esac
+CUR="$("$PY" -c "import torch; print(torch.__version__)" 2>/dev/null || true)"
+if [ -n "$CUR" ] && [[ "$CUR" != *"$WANT"* ]]; then
+  echo "있는 torch $CUR ≠ $DEV → 지우고 다시"
+  "$PY" -m pip uninstall -y torch torchvision
+fi
 # shellcheck disable=SC2086
 "$PY" -m pip install $TORCH_PKGS --index-url "$TORCH_INDEX"
 
 # ---------------------------------------------------------------- ④ lerobot + 웹 + OpenVINO
 step "④ lerobot==$LEROBOT_VER · fastapi · uvicorn · openvino"
 "$PY" -m pip install "lerobot==$LEROBOT_VER" fastapi "uvicorn>=0.29" pyyaml openvino
-"$PY" - <<'PY'
-import torch, lerobot
+WANT="$WANT" "$PY" - <<'PY'
+import os, torch, lerobot
 print(f"torch {torch.__version__} · lerobot {lerobot.__version__}")
-if not torch.__version__.startswith("2.10"):
+if not torch.__version__.startswith("2.10") or os.environ["WANT"] not in torch.__version__:
     raise SystemExit("❌ lerobot 설치가 torch 를 바꿨음 (" + torch.__version__ + ") — TORCH_PKGS 확인")
 PY
 
@@ -93,17 +95,25 @@ if dev != "cpu":
         c = a @ b
     sync(); dt = (time.time() - t) / 20
     print(f"✓ {dev} 연산 OK — 2048² 행렬곱 {dt * 1000:.1f} ms")
+else:
+    import openvino as ov
+    print("OpenVINO 장치 (ACT 추론):", ov.Core().available_devices, "— GPU 가 없으면 ACT 도 CPU 로")
 from lerobot.datasets.video_utils import get_safe_default_codec
 print("영상 디코더:", get_safe_default_codec())
 PY
 
 # ---------------------------------------------------------------- ⑥ config
-step "⑥ config/local.yaml lerobot_python"
-if [ "$PY" != "$HOME/miniconda3/envs/lerobot/bin/python" ]; then
+step "⑥ config/local.yaml $CFG_KEY"
+DEF_NAME=lerobot; [ "$DEV" = cpu ] || DEF_NAME=lerobot_train
+if [ "$PY" != "$HOME/miniconda3/envs/$DEF_NAME/bin/python" ]; then
   echo "기본 위치가 아님 → config/local.yaml 에 넣으세요:"
-  echo "  lerobot_python: $PY"
+  echo "  $CFG_KEY: $PY"
 else
   echo "기본 위치 ($PY) — 설정 필요 없음"
 fi
 echo
-echo "✓ 끝. 학습 웹: $HERE/start_trainer.sh   (미니 PC 는 홈 화면 → 학습)"
+if [ "$DEV" = cpu ]; then
+  echo "✓ 끝 (수집 · 추론). 학습 환경은 따로: $HERE/install_lerobot.sh xpu (미니 PC) · cuda (5090)"
+else
+  echo "✓ 끝 (학습). 학습 웹: $HERE/start_trainer.sh   (미니 PC 는 홈 화면 → 학습)"
+fi

@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 # LeRobot 학습 웹 → http://<PC>:50100/
 # 사용: ./apps/trainer/start_trainer.sh        (처음이면 먼저 ./apps/trainer/install_lerobot.sh)
-#   python: LEROBOT_PY=<경로> → config/local.yaml lerobot_python → ~/miniconda3/envs/lerobot/bin/python
+#   python: LEROBOT_PY=<경로> → config/local.yaml lerobot_train_python → ~/miniconda3/envs/lerobot_train → 없으면 수집 · 추론 환경 lerobot (CPU 학습)
 #   데이터 위치 바꾸기: TRAINER_DATA=/mnt/ssd/trainer ./apps/trainer/start_trainer.sh
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
 REPO="$(cd "$HERE/../.." && pwd)"
-PY="${LEROBOT_PY:-$(cd "$REPO" && python3 -c "from pitron.learning import lerobot_env; print(lerobot_env.python())" 2>/dev/null)}"
-[ -n "$PY" ] || PY="$HOME/miniconda3/envs/lerobot/bin/python"
+PY="${LEROBOT_PY:-$(cd "$REPO" && python3 -c "from pitron.learning import lerobot_env; print(lerobot_env.train_python())" 2>/dev/null)}"
+[ -n "$PY" ] || PY="$HOME/miniconda3/envs/lerobot_train/bin/python"
 echo "[trainer] python: $PY"
 if [ ! -x "$PY" ] || ! "$PY" -c "import lerobot, fastapi, uvicorn" 2>/dev/null; then
-  echo "❌ lerobot 환경 없음 — 먼저 설치: ./apps/trainer/install_lerobot.sh (다른 위치면 config/local.yaml lerobot_python)" >&2
+  echo "❌ lerobot 학습 환경 없음 — 먼저 설치: ./apps/trainer/install_lerobot.sh xpu (미니 PC) · cuda (5090) (다른 위치면 config/local.yaml lerobot_train_python)" >&2
   exit 1
 fi
 export LEROBOT_PY="$PY"

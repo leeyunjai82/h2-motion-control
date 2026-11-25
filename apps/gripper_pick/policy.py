@@ -153,10 +153,11 @@ class Infer:
         ptype = cfg.get("type")
         if ptype == "act":
             args = ["--backend", "openvino", "--ov-device", device]
-        elif device == "NPU":
-            raise RuntimeError(f"NPU 는 OpenVINO (ACT) 만 — 이 모델은 {ptype}: CPU 또는 GPU")
+        elif device != "CPU":
+            # ACT 외 정책은 torch 로 — Intel GPU torch 추론은 확인 전 (학습 때 GPU 최대 클럭에서 PC 멈춤 기록 2026-11-10, 로봇이 움직이는 중이면 위험)
+            raise RuntimeError(f"ACT 외 정책 ({ptype}) 은 CPU 로만 — Intel GPU (torch) 추론은 확인 전. 장치를 CPU 로")
         else:
-            args = ["--backend", "torch", "--device", "xpu" if device == "GPU" else "cpu"]
+            args = ["--backend", "torch", "--device", "cpu"]
         self.task = task or self.h2.get("task") or ""
         self.fit = fit or self.h2.get("fit") or "stretch"
         self.name, self.device, self.ptype = name, device, ptype

@@ -17,9 +17,11 @@ brand:
   name:
   sub:
 
-# lerobot 가상환경 python (수집 → LeRobot v3 변환 · 학습 · 추론 프로세스, apps/trainer/install_lerobot.sh 로 설치)
-#   비우면 ~/miniconda3/envs/lerobot/bin/python · repo-id 앞부분 (비우면 local)
+# lerobot 가상환경 python (apps/trainer/install_lerobot.sh 로 설치) · repo-id 앞부분 (비우면 local)
+#   lerobot_python:       수집 v3 변환 · 추론 (CPU torch + OpenVINO) — 비우면 ~/miniconda3/envs/lerobot/bin/python
+#   lerobot_train_python: 학습 (XPU · CUDA torch) — 비우면 ~/miniconda3/envs/lerobot_train/bin/python, 그것도 없으면 lerobot_python (CPU 학습)
 lerobot_python:
+lerobot_train_python:
 lerobot_repo_prefix:
 
 # 정책 추론 작업 범위 — 집게 가운데 (pelvis 기준 x y z [m]) 가 이 상자 밖으로 가면 멈춤. 비우면 이 검사 안 함

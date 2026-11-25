@@ -1,9 +1,13 @@
 """
-lerobot_env.py — lerobot 가상환경 찾기 (표준 라이브러리만). 수집 v3 변환 · 학습 · 추론 프로세스가 이 python 으로 돎.
+lerobot_env.py — lerobot 가상환경 찾기 (표준 라이브러리만). 환경 둘:
 
-  config/local.yaml
-    lerobot_python: /home/<사용자>/miniconda3/envs/lerobot/bin/python   (없으면 이 기본 경로)
-    lerobot_repo_prefix: local                                            (데이터셋 repo_id 앞부분)
+  lerobot        수집 v3 변환 · 추론 — CPU torch + OpenVINO (ACT 는 OpenVINO 로 Intel GPU). XPU 필요 없음
+  lerobot_train  학습 — XPU (미니 PC) · CUDA (5090) torch. 없으면 lerobot 환경으로 (CPU 학습)
+
+  config/local.yaml (없으면 ~/miniconda3/envs/<이름>/bin/python)
+    lerobot_python:        수집 · 추론 환경
+    lerobot_train_python:  학습 환경
+    lerobot_repo_prefix:   데이터셋 repo_id 앞부분 (기본 local)
 """
 import os
 import pwd
@@ -34,16 +38,32 @@ def _home():
     return pwd.getpwnam(u).pw_dir if u else os.path.expanduser("~")
 
 
+def _env_py(name):
+    return os.path.join(_home(), "miniconda3", "envs", name, "bin", "python")
+
+
 def python():
-    return str(local_cfg().get("lerobot_python") or os.path.join(_home(), "miniconda3", "envs", "lerobot", "bin", "python"))
+    """수집 v3 변환 · 추론 환경 (CPU torch + OpenVINO)."""
+    return str(local_cfg().get("lerobot_python") or _env_py("lerobot"))
+
+
+def train_python():
+    """학습 환경 (XPU · CUDA torch). 없으면 수집 · 추론 환경 (CPU 학습)."""
+    p = local_cfg().get("lerobot_train_python")
+    if p:
+        return str(p)
+    return _env_py("lerobot_train") if os.path.isfile(_env_py("lerobot_train")) else python()
 
 
 def repo_prefix():
     return str(local_cfg().get("lerobot_repo_prefix") or "local")
 
 
-def missing_msg(py=None):
-    return (f"lerobot 가상환경 없음: {py or python()} — 한 번 설치: apps/trainer/install_lerobot.sh "
+def missing_msg(py=None, train=False):
+    if train:
+        return (f"lerobot 학습 환경 없음: {py or train_python()} — 한 번 설치: apps/trainer/install_lerobot.sh xpu (미니 PC) · cuda (5090) "
+                "(다른 위치면 config/local.yaml lerobot_train_python)")
+    return (f"lerobot 환경 없음: {py or python()} — 한 번 설치: apps/trainer/install_lerobot.sh "
             "(다른 위치면 config/local.yaml lerobot_python)")
 
 
