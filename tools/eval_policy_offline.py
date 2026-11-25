@@ -70,7 +70,7 @@ def list_models():
 class Infer:
     """lerobot_infer 프로세스 (실기와 같은 주고받기)."""
 
-    def __init__(self, model_dir, device, task, n_steps=0, backend="auto"):
+    def __init__(self, model_dir, device, task, n_steps=0, backend="auto", te=0.0):
         cfg = read_json(os.path.join(model_dir, "config.json")) or {}
         if backend == "torch":
             if device != "CPU":
@@ -83,7 +83,7 @@ class Infer:
         else:
             args = ["--backend", "torch", "--device", "cpu"]
         self.p = subprocess.Popen([sys.executable, "-u", "-m", "pitron.learning.lerobot_infer", "--model", model_dir,
-                                   "--task", task, "--n-action-steps", str(n_steps)] + args, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                   "--task", task, "--n-action-steps", str(n_steps), "--temporal-ensemble", str(te)] + args, cwd=ROOT, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                   stderr=subprocess.DEVNULL, env={**os.environ, "HF_HUB_OFFLINE": "1"})
         self.info = self._reply()
         if not self.info.get("ok"):
@@ -163,6 +163,8 @@ def main():
     ap.add_argument("--device", default="CPU", help="OpenVINO 장치 CPU · GPU · NPU (ACT) — ACT 외는 CPU")
     ap.add_argument("--backend", default="auto", choices=("auto", "torch"),
                     help="auto = 실기와 같음 (ACT 는 OpenVINO) · torch = lerobot 그대로 (OpenVINO 없이, 비교용)")
+    ap.add_argument("--temporal-ensemble", type=float, default=0.0,
+                    help="ACT temporal ensemble 계수 (예 0.01) — 매 틱 다시 계산. 한 틱 (33 ms) 안에 계산되는 장치에서만 (NPU)")
     ap.add_argument("--n-action-steps", type=int, default=0, help="chunk 에서 실행할 동작 수 (0 = 모델 설정 그대로) — 예 20: 0.67 초마다 다시 계산")
     a = ap.parse_args()
     if not a.model:
@@ -196,9 +198,10 @@ def main():
     task = str(h2d.get("task") or h2m.get("task") or "")
 
     print(f"[평가] 모델 {a.model} · 데이터셋 {ds_name} (에피소드 {total} 중 {len(eps)}) · {a.device}", flush=True)
-    inf = Infer(md, a.device, task, a.n_action_steps, a.backend)
+    inf = Infer(md, a.device, task, a.n_action_steps, a.backend, a.temporal_ensemble)
     info = inf.info
-    print(f"  불러옴: {info['type']} · {info['backend']} · chunk {info.get('chunk_size')} 중 {info.get('n_action_steps')} 개씩 실행 · 첫 추론 {info['infer_ms']} ms"
+    print(f"  불러옴: {info['type']} · {info['backend']} · chunk {info.get('chunk_size')} 중 {info.get('n_action_steps')} 개씩 실행"
+          + (f" · temporal ensemble {info['temporal_ensemble']}" if info.get('temporal_ensemble') else "") + f" · 첫 추론 {info['infer_ms']} ms"
           + (f" · OpenVINO ↔ torch 차이 {info['ov_diff']:.2e}" if info.get('ov_diff') is not None else "") + " · 카메라 "
           + ", ".join(f"{c['name']} {c['w']}×{c['h']}" for c in info["cams"]), flush=True)
     amin = np.asarray(info["a_min"]) if info.get("a_min") else None

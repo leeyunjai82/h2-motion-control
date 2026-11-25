@@ -105,6 +105,8 @@ def main():
     ap.add_argument("--ov-device", default="CPU", help="OpenVINO 장치 CPU · GPU · NPU · AUTO")
     ap.add_argument("--task", default="", help="언어 조건 정책 (smolvla · pi0 …) 의 작업 설명")
     ap.add_argument("--n-action-steps", type=int, default=0, help="chunk 에서 실행할 동작 수 (0 = 모델 설정 그대로). 작을수록 자주 다시 계산")
+    ap.add_argument("--temporal-ensemble", type=float, default=0.0,
+                    help="ACT temporal ensemble 계수 (0 = 끔, ACT 논문 0.01) — 매 틱 다시 계산해 chunk 들을 겹쳐 평균 (한 틱 안에 계산이 끝나야 함)")
     a = ap.parse_args()
     t0 = time.time()
     try:
@@ -116,6 +118,12 @@ def main():
         md = os.path.abspath(a.model)
         cfg = PreTrainedConfig.from_pretrained(md)
         cfg.device = a.device
+        if a.temporal_ensemble > 0:                  # lerobot ACT 공식 옵션 (ACTTemporalEnsembler) — n_action_steps 1 고정
+            if cfg.type != "act" or not hasattr(cfg, "temporal_ensemble_coeff"):
+                raise ValueError(f"temporal ensemble 은 ACT 만 — 이 모델은 {cfg.type}")
+            if a.n_action_steps > 0:
+                raise ValueError("temporal ensemble 과 n_action_steps 는 같이 못 씀 (1 고정)")
+            cfg.temporal_ensemble_coeff, cfg.n_action_steps = a.temporal_ensemble, 1
         if a.n_action_steps > 0:
             if not hasattr(cfg, "n_action_steps"):
                 raise ValueError(f"{cfg.type} 는 n_action_steps 설정이 없음")
