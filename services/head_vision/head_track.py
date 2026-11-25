@@ -392,7 +392,7 @@ def build_strip(left, right):
     return np.hstack(parts[:-1])
 
 
-PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+PAGE = """<!doctype html><html lang="en"><head><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'><rect width='64' height='64' rx='14' fill='%230e1116'/><circle cx='32' cy='10' r='4.5' fill='%2300b7eb'/><rect x='30' y='12' width='4' height='8' fill='%2300b7eb'/><rect x='10' y='20' width='44' height='34' rx='10' fill='%2300b7eb'/><circle cx='23' cy='36' r='5.5' fill='%230e1116'/><circle cx='41' cy='36' r='5.5' fill='%230e1116'/></svg>"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>H2 Head Vision</title><style>body{font-family:sans-serif;margin:12px;background:#111;color:#eee}
 img{max-width:100%;border:1px solid #444}.row{display:flex;gap:8px;flex-wrap:wrap}.row img{width:calc(50% - 6px);min-width:280px}
 pre{background:#222;padding:8px;white-space:pre-wrap}</style></head><body>
