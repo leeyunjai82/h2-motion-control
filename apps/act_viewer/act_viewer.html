@@ -51,6 +51,7 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
   padding:6px 10px;border-radius:7px;cursor:pointer;transition:.12s;white-space:nowrap}
 .btn:hover{border-color:var(--accent);color:var(--accent)}.btn:active{transform:translateY(1px)}
 .btn.primary{background:var(--accent);color:#04121f;border:none;font-weight:700}.btn.primary:hover{background:#33c5ef;color:#04121f}
+.btn.del{font-size:11px;padding:2px 8px;border-color:#5a2b2b;color:var(--warn)}.btn.del:hover{border-color:var(--warn);color:var(--warn);background:#2e1515}
 .in{background:#0c1117;border:1px solid var(--line);color:var(--ink);padding:4px 6px;border-radius:6px;font-family:inherit;font-size:11px;max-width:220px}
 .in:focus{outline:none;border-color:var(--accent2)}
 .sw{display:flex;align-items:center;gap:8px;cursor:pointer;user-select:none;font-size:11px;color:var(--dim)}
@@ -176,11 +177,11 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 
   <div class="col">
     <div class="card">
-      <div class="card-h">데이터셋 <select class="in" id="sel-ds" style="display:none"></select><span class="tag" id="ds-tag">-</span></div>
+      <div class="card-h">데이터셋 <select class="in" id="sel-ds" style="display:none"></select><span class="tag" id="ds-tag">-</span><button class="btn del" id="ds-del" onclick="delItem('ds')" style="display:none" title="이 데이터셋 지우기 (되돌릴 수 없음)">삭제</button></div>
       <div class="card-b" id="ds-b"><div class="hint">수집 화면 · 홈의 <b>[LeRobot v3 zip]</b> 으로 받은 파일</div></div>
     </div>
     <div class="card">
-      <div class="card-h">모델 <select class="in" id="sel-md" style="display:none"></select><span class="tag" id="md-tag">-</span></div>
+      <div class="card-h">모델 <select class="in" id="sel-md" style="display:none"></select><span class="tag" id="md-tag">-</span><button class="btn del" id="md-del" onclick="delItem('md')" style="display:none" title="이 모델 지우기 (되돌릴 수 없음)">삭제</button></div>
       <div class="card-b" id="md-b"><div class="hint">학습 웹 (:50100) 에서 받은 <b>model zip</b> (lerobot 모델) — 실행하지 않고 정보만 봅니다</div></div>
     </div>
     <div class="card">
@@ -239,8 +240,20 @@ $('sel-ds').onchange=e=>selDs(DS[+e.target.value]);
 $('sel-md').onchange=e=>selMd(MD[+e.target.value]);
 
 const epsOf=ds=>ds.eps;
+async function delItem(k){
+  const it=k==='ds'?curDs:curMd;if(!it)return;const f=String(it.file);
+  const what=!it.local?'zip 파일':f.startsWith('datasets/')?'수집 데이터셋 (원본 녹화 + LeRobot v3 통째로)':f.startsWith('uploaded/')?'올린 데이터셋':'모델';
+  const nm=it.local?f.split('/').pop():it.name;            // 폴더 이름 (모델은 h2_model.json 이름과 다를 수 있음)
+  const typed=prompt(`${what} 을 지웁니다 — 되돌릴 수 없습니다.\n지우려면 이름을 그대로 입력하세요: ${nm}`);
+  if(typed===null)return;if(typed.trim()!==nm){toast('이름이 달라 지우지 않음',true);return;}
+  const r=await fetch('/api/item?f='+encodeURIComponent(f),{method:'DELETE'}),d=await r.json().catch(()=>({}));
+  if(!r.ok){toast(d.detail||`HTTP ${r.status}`,true);return;}
+  const arr=k==='ds'?DS:MD,i=arr.indexOf(it);if(i>=0)arr.splice(i,1);
+  if(!arr.length){location.reload();return;}
+  if(k==='ds'){curDs=null;selDs(DS[0]);}else{curMd=null;selMd(MD[0]);}
+  refreshSel();toast('지움: '+nm);}
 function selDs(ds){
-  curDs=ds;P.ep=null;
+  curDs=ds;P.ep=null;$('ds-del').style.display='';
   const eps=ds.episodes,fps=ds.fps||30,frames=eps.reduce((s,e)=>s+e.n,0);
   ds.eps=eps.map(e=>({...e,id:e.index,dur:e.n/fps}));
   const cnt=k=>{const c={};for(const e of ds.eps){const v=e[k]??'-';c[v]=(c[v]||0)+1;}return Object.entries(c).map(([a,b])=>`${SIDE_KO[a]||a} ${b}`).join(' · ');};
@@ -260,7 +273,7 @@ function selDs(ds){
   const first=ds.eps[0];if(first)openEp(first.id,false).then(()=>{if(REP()!=='off')play(true);});
 }
 function selMd(md){
-  curMd=md;const h=md.h2||{},c=md.config||{},tr=md.train||{};
+  curMd=md;$('md-del').style.display='';const h=md.h2||{},c=md.config||{},tr=md.train||{};
   $('chip-md').className='chip info';$('chip-md').innerHTML=`모델 <b>${esc(md.name)}</b>`;
   $('md-tag').textContent=md.policy||'-';
   const cams=Object.entries(md.cameras).map(([n,v])=>`${n} ${v.w}×${v.h}`).join(' · ');

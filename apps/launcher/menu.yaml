@@ -10,9 +10,10 @@ sections:
     items:
       - id: settings
         title: 설정
-        sub: 로봇 자세 · VR · 환경
-        desc: 로봇 자세 (FSM) · VR 설정 · 실행 상태 · 환경
+        sub: 로봇 자세 · 모터 확인 · VR
+        desc: 로봇 자세 (FSM) · 모터 번호 확인 · VR 설정 · 실행 상태 · 환경
         native: true
+        modes: [editor_real]          # 모터 번호 확인 (모션 에디터 실기 — /check)
       - id: sim
         title: 시뮬레이터
         sub: 로봇 없이 3D 로 움직여 보기

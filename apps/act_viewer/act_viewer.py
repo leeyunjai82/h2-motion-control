@@ -67,12 +67,12 @@ def local_dir(fid):
 def local_items():
     out = []
     if os.path.isdir(DS_DIR):
-        out += [f"datasets/{n}" for n in sorted(os.listdir(DS_DIR)) if os.path.isfile(os.path.join(DS_DIR, n, "lerobot", "meta", "info.json"))]
+        out += [f"datasets/{n}" for n in sorted(os.listdir(DS_DIR)) if not n.startswith(".") and os.path.isfile(os.path.join(DS_DIR, n, "lerobot", "meta", "info.json"))]
     if os.path.isdir(UP_DIR):
-        out += [f"uploaded/{n}" for n in sorted(os.listdir(UP_DIR)) if os.path.isfile(os.path.join(UP_DIR, n, "meta", "info.json"))]
+        out += [f"uploaded/{n}" for n in sorted(os.listdir(UP_DIR)) if not n.startswith(".") and os.path.isfile(os.path.join(UP_DIR, n, "meta", "info.json"))]
     if os.path.isdir(MODEL_DIR):
         out += [f"policies/{n}" for n in sorted(os.listdir(MODEL_DIR))
-                if os.path.isfile(os.path.join(MODEL_DIR, n, "config.json")) and os.path.isfile(os.path.join(MODEL_DIR, n, "model.safetensors"))]
+                if not n.startswith(".") and os.path.isfile(os.path.join(MODEL_DIR, n, "config.json")) and os.path.isfile(os.path.join(MODEL_DIR, n, "model.safetensors"))]
     return [x for x in out if LOCAL_RE.match(x)]
 
 
@@ -110,6 +110,80 @@ class DirZip:
         class I:
             file_size = os.path.getsize(self._path(name))
         return I
+
+
+# ---------------- 지우기 ----------------
+def _get_json(port_name, path):
+    """다른 화면 상태 (안 떠 있으면 None)."""
+    import urllib.request
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{ports.PORTS[port_name]}{path}", timeout=1.0) as r:
+            return json.loads(r.read())
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _busy(kind, name):
+    """지우면 안 되는 이유 (쓰는 중이면 문구, 아니면 None)."""
+    st = _get_json("pick_web", "/api/state") or {}
+    if kind == "datasets":
+        rec = st.get("rec") or {}
+        if rec.get("name") == name and (rec.get("on") or rec.get("active")):
+            return "수집 화면이 이 데이터셋에 녹화 중 (또는 수집 켬) — 수집 화면에서 끄고 지우세요"
+    if kind == "policies":
+        pol = st.get("policy") or {}
+        if (pol.get("loaded") or {}).get("name") == name:
+            return "추론 화면에 이 모델이 불러져 있음 — 추론 화면을 끄고 지우세요"
+    if kind in ("datasets", "uploaded"):
+        jobs = _get_json("trainer", "/api/jobs") or []
+        if any(j.get("dataset") == name and j.get("status") in ("queued", "running", "canceling", "finishing") for j in jobs):
+            return "이 데이터셋으로 학습 대기 · 중인 작업이 있음 — 학습 화면에서 먼저 취소"
+    return None
+
+
+def delete_item(fid, data_dir):
+    """데이터셋 · 모델 · zip 지우기 (되돌릴 수 없음). → 지운 경로"""
+    m = LOCAL_RE.match(fid or "")
+    if m:
+        kind, name = m.groups()
+        base = {"datasets": DS_DIR, "uploaded": UP_DIR, "policies": MODEL_DIR}[kind]
+        target = os.path.join(base, name)                  # 수집 데이터셋은 원본 녹화 + lerobot/ 통째로
+    else:
+        name = os.path.basename(fid or "")
+        if not NAME_RE.match(name):
+            raise FileNotFoundError(fid)
+        kind, base, target = "zip", data_dir, os.path.join(data_dir, name)
+    if not os.path.exists(target) or os.path.dirname(os.path.realpath(target)) != os.path.realpath(base):
+        raise FileNotFoundError(fid)
+    why = _busy(kind, name)
+    if why:
+        raise PermissionError(why)
+    if kind == "zip":
+        os.remove(target)
+        for c in os.listdir(os.path.join(data_dir, ".cache")) if os.path.isdir(os.path.join(data_dir, ".cache")) else []:
+            if c.startswith(os.path.splitext(name)[0] + "_"):
+                shutil.rmtree(os.path.join(data_dir, ".cache", c), ignore_errors=True)
+        return target
+    lk = None
+    if kind == "datasets":                                 # v3 변환 (배타) · 학습 (공유) 이 잡는 잠금 — 쓰는 중이면 못 지움
+        import fcntl
+        lk = open(os.path.join(target, ".lerobot.lock"), "a")
+        try:
+            fcntl.flock(lk, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            lk.close()
+            raise PermissionError("LeRobot v3 변환 또는 학습이 이 데이터셋을 쓰는 중 — 끝난 뒤 지우세요")
+    try:
+        trash = os.path.join(base, f".deleting_{name}_{os.getpid()}")
+        os.replace(target, trash)                          # 먼저 이름을 바꿔 목록에서 바로 빠지게
+        shutil.rmtree(trash, ignore_errors=True)
+    finally:
+        if lk:
+            lk.close()
+    with _lk:
+        for k in [k for k in _cache if k[0] == fid]:
+            del _cache[k]
+    return target
 
 
 def _open(src):
@@ -431,6 +505,19 @@ class Handler(BaseHTTPRequestHandler):
             pass
         except (FileNotFoundError, KeyError, ValueError) as e:
             self._json({"detail": f"{type(e).__name__}: {e}"}, 404)
+
+    def do_DELETE(self):
+        """데이터셋 · 모델 · zip 지우기 (?f=datasets/<이름> · uploaded/<이름> · policies/<이름> · <zip 이름>)."""
+        u = urlparse(self.path)
+        if unquote(u.path) != "/api/item":
+            return self.send_error(HTTPStatus.NOT_FOUND)
+        fid = (parse_qs(u.query).get("f") or [""])[0]
+        try:
+            self._json({"deleted": os.path.basename(delete_item(fid, self.data_dir))})
+        except FileNotFoundError:
+            self._json({"detail": f"없음: {fid}"}, 404)
+        except PermissionError as e:
+            self._json({"detail": str(e)}, 409)
 
     def do_PUT(self):
         """화면에 끌어다 놓은 zip → data 폴더에 저장."""

@@ -1018,7 +1018,8 @@ def menu():
                 n, path = t["page"].split(":", 1)
                 t.update(port=ports.PORTS[n], path=path)
     url = str(local_cfg().get("trainer_url") or "").strip()
-    return {"brand": _brand(), "sections": m.get("sections") or [], "trainer_url": url}
+    return {"brand": _brand(), "sections": m.get("sections") or [], "trainer_url": url,
+            "check": {"port": ports.PORTS["editor"], "path": "/check"}}      # 모터 번호 확인 (모션 에디터 /check)
 
 
 def _read_json(p):
@@ -1039,7 +1040,7 @@ def summary():
     if os.path.isdir(ds_dir):
         for n in sorted(os.listdir(ds_dir)):
             ep = os.path.join(ds_dir, n, "episodes")
-            if not os.path.isdir(ep):
+            if n.startswith(".") or not os.path.isdir(ep):
                 continue
             ok = tot = 0
             last = ""
@@ -1054,7 +1055,7 @@ def summary():
             out["datasets"].append({"name": n, "ok": ok, "total": tot, "last": last, "v3": len(h2.get("episodes", [])) if h2 else 0})
     if os.path.isdir(pol_dir):
         for n in sorted(os.listdir(pol_dir)):
-            c = _read_json(os.path.join(pol_dir, n, "config.json"))
+            c = None if n.startswith(".") else _read_json(os.path.join(pol_dir, n, "config.json"))
             if c and os.path.isfile(os.path.join(pol_dir, n, "model.safetensors")):
                 h = _read_json(os.path.join(pol_dir, n, "h2_model.json")) or {}
                 out["models"].append({"name": n, "policy": c.get("type"), "dataset": h.get("dataset"), "step": h.get("step"),
@@ -1495,6 +1496,8 @@ button.big{padding:16px 10px;font-size:15px}
 .startp{display:none;flex-direction:column;gap:12px;max-width:900px;margin-top:12px}.startp.on{display:flex}
 .pre{display:none;max-width:900px}.pre.on{display:flex;flex-direction:column}.pre .fc{min-height:0}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}@media(max-width:1300px){.grid2{grid-template-columns:1fr}}
+.grid2 .span2{grid-column:1/-1}.chkframe{display:none;height:68vh;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#05080c}
+.chkframe.on{display:block}.chkframe iframe{width:100%;height:100%;border:0}
 .kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:12px}.kv>span:nth-child(odd){color:var(--dim)}.kv small{color:var(--dim);word-break:break-all}
 .kv .ok{color:var(--ok)}.kv .bad{color:var(--warn)}
 .vrf{display:flex;flex-direction:column;gap:10px}.vrf .fl.changed>span:first-child{color:var(--amber)}.vrf .sub{font-size:10.5px;color:var(--dim)}
@@ -1526,7 +1529,7 @@ button.big{padding:16px 10px;font-size:15px}
   <section class="content" id="content">
     <!-- 설정: 로봇 기본 (FSM) · VR 설정 · 실행 로그 · 환경 -->
     <div class="view" id="v-settings">
-      <div class="vh"><h2>설정</h2><span class="d">로봇 자세 (FSM) · VR 설정 · 실행 상태 · 환경 — 실기 수집 · 추론은 FSM @@RUN@@ 에서 (일어서기 @@STAND_SEQ@@)</span></div>
+      <div class="vh"><h2>설정</h2><span class="d">로봇 자세 (FSM) · 모터 번호 확인 · VR 설정 · 실행 상태 · 환경 — 실기 수집 · 추론은 FSM @@RUN@@ 에서 (일어서기 @@STAND_SEQ@@)</span></div>
       <div class="grid2">
         <div class="card"><div class="h"><span>로봇 자세 (FSM)</span><span>로봇을 보면서 한 단계씩</span></div><div class="b">
           <div class="fsmnow unk" id="fsmnow"><span class="k">현재 FSM</span><span class="v" id="fsm-v">확인 중</span><span class="n" id="fsm-n"></span></div>
@@ -1541,6 +1544,10 @@ button.big{padding:16px 10px;font-size:15px}
           <div id="vr-body" class="vrf"><div class="note">불러오는 중 …</div></div>
           <div class="row"><button class="sm" onclick="vrReset()">기본값으로</button><button class="go sm" onclick="vrSave()">저장</button></div>
           <div class="note">Quest 연결 · 다시 연결은 데이터 수집 화면의 [VR 연결] 카드에서 (연결 프로그램은 수집 화면이 띄움)</div>
+        </div></div>
+        <div class="card span2"><div class="h"><span>모터 번호 확인</span><span>robot.yaml 관절 맵 ↔ 실제 로봇 — 슬롯별 확인 · 기록</span></div><div class="b">
+          <div id="chk-b"></div><div class="chkframe" id="chk-fr"></div>
+          <div class="note">읽기 전용 (손으로 관절을 움직여 어느 슬롯이 변하는지) · 명령 이동 (팔 · 허리 ±5°, 최대 ±15°) · 결과는 robots/h2/joint_check_*.json · 시뮬레이터가 떠 있으면 화면만 (가짜 로봇)</div>
         </div></div>
         <div class="card"><div class="h"><span>실행 중</span><span id="job-mode"></span></div>
           <div class="b"><div class="state" id="rb-s">정지됨</div><pre id="rb-log" style="max-height:30vh"></pre></div></div>
@@ -1678,6 +1685,19 @@ async function fsm(t){const standing=FSM.standing.includes(ST&&ST.fsm.cur);
   try{await post('/fsm/'+t);}catch(e){alert(e.message);}poll();}
 async function fsmCancel(){try{await post('/fsm_cancel');}catch(e){}poll();}
 
+// ---------- 설정: 모터 번호 확인 ----------
+function renderCheck(){if(!MENU||!ST)return;
+  const run=running(),on=(run==='editor_real'||run==='editor_virtual')&&!ST.job.prep,fr=$('chk-fr'),t=MENU.check;
+  if(on){const url=embedUrl(t);
+    setHTML('chk-b',`<div class="row"><div class="state on" style="flex:3">${run==='editor_real'?'실기 — 모터 번호 확인 화면':'가상 (시뮬레이터) — 화면만, 가짜 로봇'}</div>`+
+      `<button class="sm" style="flex:1" onclick="window.open('${pageUrl(t)}','_blank')">새 창 ↗</button><button class="st sm" style="flex:1" onclick="appStop()">끝내기</button></div>`);
+    if(fr.dataset.url!==url&&fr.dataset.probe!==url){fr.dataset.probe=url;
+      fetch(url,{mode:'no-cors',cache:'no-store'}).then(()=>{fr.innerHTML=`<iframe src="${url}"></iframe>`;fr.dataset.url=url;fr.classList.add('on');}).catch(()=>{}).finally(()=>{fr.dataset.probe='';});}
+    return;}
+  fr.classList.remove('on');fr.innerHTML='';fr.dataset.url='';
+  const ok=!ST||ST.fsm.cur===null||ST.fsm.cur===FSM.run,other=run?`<div class="note">지금 실행 중: ${esc(ST.job.label)} — 시작하면 정지하고 전환</div>`:'';
+  setHTML('chk-b',btn('go','모터 번호 확인 시작','실제 로봇 · FSM '+FSM.run+(ok?'':' 필요 (위 로봇 자세)')+' · 모션 에디터 실기',"appStart('editor_real')",!ok||ST.seq.busy)+other);}
+
 // ---------- 설정: VR · 환경 ----------
 let VRS=null;
 async function loadVR(){try{VRS=await(await fetch('/vr/settings')).json();renderVR();}catch(e){$('vr-body').innerHTML=`<div class="note">VR 설정을 못 읽음: ${esc(e.message)}</div>`;}}
@@ -1730,7 +1750,7 @@ async function poll(){try{const d=await(await fetch('/status')).json();ST=d;cons
   if(pend)setState('fsm-s','run',`FSM ${f.busy} — ${Math.ceil(f.remain)}초 후 전송`);else if(f.busy!==null)setState('fsm-s','run',`FSM ${f.busy} 전송 중…`);
   else if(f.result)setState('fsm-s',f.result[0]?'on':'err',f.result[1]);else setState('fsm-s','','대기');
   fill($('fsm-log'),f.log);
-  renderCards();render();
+  renderCheck();renderCards();render();
 }catch(e){$('chip-fsm').className='chip err';$('chip-fsm').innerHTML='FSM <b>런처 연결 끊김</b>';}}
 // ---------- 수집 · 학습 · 추론 카드 ----------
 let SUM=null,TR=null;
