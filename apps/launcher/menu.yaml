@@ -18,6 +18,7 @@ sections:
         title: 시뮬레이터
         sub: 로봇 없이 3D 로 움직여 보기
         desc: URDF 3D 로봇 — 관절 · IK 로 팔을 움직여 봄 (가짜 로봇, 실기와 섞이지 않음)
+        panel: sim
         modes: [editor_virtual]
         tabs: [{title: 시뮬레이터, page: "editor:/"}, {title: 3D, page: "dashboard:/robot-only"}]
       - id: collect

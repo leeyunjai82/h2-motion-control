@@ -60,6 +60,10 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
 
 /* ---- Joint 모드 ---- */
 #arm-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.8rem 2rem}
+/* 3D 로봇 (대시보드 robot-only) — 슬라이더 아래 남는 자리를 채움 */
+#view3d{flex:1;min-height:300px;margin-top:1rem;border:1px solid var(--border-primary);border-radius:.5rem;overflow:hidden;position:relative;background:#05080c}
+#view3d iframe{width:100%;height:100%;border:0;display:block;position:absolute;inset:0}
+#view3d .v3t{position:absolute;left:10px;top:8px;z-index:1;font-size:11px;color:var(--text-secondary,#8a95a3);pointer-events:none}
 .joint-group-title{font-size:.95rem;font-weight:500;margin:0 0 .6rem;color:var(--accent-primary)}
 .control-item{margin-bottom:.45rem}
 .label-wrapper{display:flex;justify-content:space-between;font-size:.75rem;margin-bottom:.15rem}
@@ -180,6 +184,8 @@ body{font-family:var(--font-sans);background:var(--bg-primary);color:var(--text-
         </div>
       </div>
     </div>
+    <div id="view3d"><span class="v3t">3D 로봇 (URDF)</span>
+      <iframe data-src="/robot-only?embed=1" title="3D 로봇"></iframe></div>
   </div>
 
   <!-- 우측: 타임라인 (공용, 관절/IK 프레임 혼재) -->
@@ -522,5 +528,6 @@ document.addEventListener('DOMContentLoaded', () => {
   setMode('joint');
 });
 </script>
+<script>(function(){const f=document.querySelector('#view3d iframe');if(f)f.src=location.protocol+'//'+location.hostname+':__PORT_DASHBOARD__'+f.dataset.src+'&lang='+((window.G1I18N&&G1I18N.lang)||'ko');})();</script>
 </body>
 </html>

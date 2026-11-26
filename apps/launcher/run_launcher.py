@@ -920,10 +920,21 @@ VIEWER = {"proc": None, "msg": ""}
 def viewer_start():
     import socket
     port = ports.PORTS["act_viewer"]
+    old = [p for p in _listeners().get(port, set()) if "act_viewer.py" in _cmd(p)]
+    for p in old:                                      # 예전 런처가 남긴 뷰어 — 새 코드로 다시 띄움
+        try:
+            os.kill(p, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+    for _ in range(30):
+        if not old or not any(os.path.exists(f"/proc/{p}") for p in old):
+            break
+        time.sleep(0.1)
     with socket.socket() as s:
         s.settimeout(0.3)
         if s.connect_ex(("127.0.0.1", port)) == 0:
-            VIEWER["msg"] = f"이미 떠 있음 (:{port})"
+            VIEWER["msg"] = f"포트 :{port} 를 다른 프로그램이 씀 — 데이터 보기 안 띄움"
+            print(f"[launcher] {VIEWER['msg']}")
             return
     from pitron.learning import lerobot_env
     py = lerobot_env.python()
@@ -1493,8 +1504,20 @@ button.big{padding:16px 10px;font-size:15px}
 /* 기능 화면 */
 .frame{flex:1;min-height:0;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:#05080c;display:none}
 .frame.on{display:block}.frame iframe{width:100%;height:100%;border:0;display:block}
-.startp{display:none;flex-direction:column;gap:12px;max-width:900px;margin-top:12px}.startp.on{display:flex}
-.pre{display:none;max-width:900px}.pre.on{display:flex;flex-direction:column}.pre .fc{min-height:0}
+.startp{display:none;flex-direction:column;gap:12px;margin-top:12px}.startp.on{display:flex}
+.view>.startp:nth-child(3):last-of-type{flex:1}
+.pre{display:none;flex:1;min-height:0}.pre.on{display:flex;flex-direction:column}
+.pre .fc{flex:1;min-height:420px;display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:20px;padding:20px}
+.fcl,.fcr{display:flex;flex-direction:column;gap:12px;min-height:0}.fcr{border-left:1px solid var(--line);padding-left:20px}
+.fcl .lst{flex:1;max-height:none;min-height:120px}.fcr .fh{margin-top:auto}
+.fsec{font-size:11px;letter-spacing:1.5px;color:var(--accent);font-weight:700}
+.fcr button.big{padding:26px 10px;font-size:18px}.fcr button.big small{font-size:11.5px}
+.fcr .grow{flex:1;display:flex;flex-direction:column;min-height:0}.fcr .grow .row{flex:1;flex-direction:column;gap:12px}
+.fcr .grow .row>button{flex:1;max-height:260px;margin:0!important}
+.fcl .lst{background:#0a0d12;border:1px solid var(--line);border-radius:8px;padding:6px}
+.feat{display:flex;flex-direction:column;gap:8px}.feat div{display:flex;gap:14px;align-items:baseline;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:#0a0d12}
+.feat b{color:var(--accent);min-width:84px;font-size:13px}.feat span{color:var(--ink);font-size:12.5px}
+@media(max-width:1100px){.pre .fc{grid-template-columns:1fr}.fcr{border-left:0;padding-left:0;border-top:1px solid var(--line);padding-top:14px}}
 .grid2{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;align-items:start}@media(max-width:1300px){.grid2{grid-template-columns:1fr}}
 .grid2 .span2{grid-column:1/-1}.chkframe{display:none;height:68vh;border:1px solid var(--line);border-radius:8px;overflow:hidden;background:#05080c}
 .chkframe.on{display:block}.chkframe iframe{width:100%;height:100%;border:0}
@@ -1557,33 +1580,69 @@ button.big{padding:16px 10px;font-size:15px}
     </div>
     <!-- 데이터 수집 · 학습 · 추론 카드 — 각 메뉴 화면으로 옮겨 씀 (buildMenu) -->
     <div id="cards" style="display:none">
+      <div class="fc" id="fc-sim">
+        <div class="fcl">
+          <div class="fsec">① 할 수 있는 것</div>
+          <div class="feat">
+            <div><b>관절</b><span>슬라이더로 팔 · 허리 관절을 하나씩 움직임</span></div>
+            <div><b>IK</b><span>손 위치 · 자세를 목표로 팔을 움직임</span></div>
+            <div><b>모션</b><span>자세를 이어 모션을 만들고 저장 · 재생</span></div>
+            <div><b>3D</b><span>URDF 로봇 3D 화면 (위 3D 탭)</span></div>
+            <div><b>가짜 로봇</b><span>DDS 도메인 1 — 실제 로봇과 섞이지 않음, 로봇 없이 연습</span></div>
+          </div>
+        </div>
+        <div class="fcr">
+          <div class="fsec">② 시작</div>
+          <div class="grow" id="sim-b"></div>
+          <div class="fh">실기 모터 번호 확인은 설정 화면에서</div>
+        </div></div>
       <div class="fc" id="fc-collect">
-        <label class="fl">데이터셋 이름 — 저장된 것을 고르면 이어서 쌓이고, 새 이름이면 새로 만듦<input id="col-name" maxlength="40" placeholder="pick_날짜"></label>
-        <div class="lst" id="col-list"></div>
-        <div class="exp"><span class="fx" id="exp-st" style="flex:1"></span>
-          <button class="ok2 sm" id="exp-v" onclick="viewIn('datasets/'+SELDS)">데이터 보기 ▸</button>
-          <button class="ok2 sm" id="exp-b" onclick="dlDataset()">⬇ LeRobot v3 zip</button></div>
-        <div id="col-b"></div>
-        <div class="fh">저장: data/datasets/&lt;이름&gt; · LeRobot v3 는 자동 (&lt;이름&gt;/lerobot) · 수집 화면에서 [수집 켬] → Quest 로 시연 → 에피소드마다 저장</div></div>
+        <div class="fcl">
+          <div class="fsec">① 데이터셋 고르기</div>
+          <label class="fl">데이터셋 이름 — 저장된 것을 고르면 이어서 쌓이고, 새 이름이면 새로 만듦<input id="col-name" maxlength="40" placeholder="pick_날짜"></label>
+          <div class="lst" id="col-list"></div>
+          <div class="exp"><span class="fx" id="exp-st" style="flex:1"></span>
+            <button class="ok2 sm" id="exp-v" onclick="viewIn('datasets/'+SELDS)">데이터 보기 ▸</button>
+            <button class="ok2 sm" id="exp-b" onclick="dlDataset()">⬇ LeRobot v3 zip</button></div>
+        </div>
+        <div class="fcr">
+          <div class="fsec">② 시작</div>
+          <div class="grow" id="col-b"></div>
+          <div class="fh">저장: data/datasets/&lt;이름&gt; · LeRobot v3 는 자동 (&lt;이름&gt;/lerobot) · 수집 화면에서 [수집 켬] → Quest 로 시연 → 에피소드마다 저장</div>
+        </div></div>
       <div class="fc" id="fc-train">
-        <label class="fl">데이터셋 — 이 PC 에서 수집한 것 · 올린 것<select id="tr-ds"></select></label>
-        <div class="exp"><input type="file" id="tr-file" accept=".zip" style="display:none" onchange="datasetUpload(this)">
-          <span class="fx" id="tr-up" style="flex:1">다른 PC 의 LeRobot v3 zip 을 올리면 바로 학습 · 데이터 보기</span>
-          <button class="ok2 sm" onclick="$('tr-file').click()">⬆ 데이터셋 zip 올리기</button></div>
-        <div class="row"><label class="fl">정책 종류<select id="tr-pol"><option>act</option><option>diffusion</option><option>smolvla</option><option>pi0</option><option>pi05</option><option>vqbet</option><option>tdmpc</option></select></label>
-          <label class="fl">학습 step<input id="tr-steps" type="number" value="40000" min="1000" step="1000"></label></div>
-        <div id="tr-prog"></div><div id="tr-b"></div>
-        <div class="lst" id="tr-list"></div>
-        <div class="fh" id="tr-note"></div></div>
+        <div class="fcl">
+          <div class="fsec">① 데이터셋 · 정책</div>
+          <label class="fl">데이터셋 — 이 PC 에서 수집한 것 · 올린 것<select id="tr-ds"></select></label>
+          <div class="exp"><input type="file" id="tr-file" accept=".zip" style="display:none" onchange="datasetUpload(this)">
+            <span class="fx" id="tr-up" style="flex:1">다른 PC 의 LeRobot v3 zip 을 올리면 바로 학습 · 데이터 보기</span>
+            <button class="ok2 sm" onclick="$('tr-file').click()">⬆ 데이터셋 zip 올리기</button></div>
+          <div class="row"><label class="fl">정책 종류<select id="tr-pol"><option>act</option><option>diffusion</option><option>smolvla</option><option>pi0</option><option>pi05</option><option>vqbet</option><option>tdmpc</option></select></label>
+            <label class="fl">학습 step<input id="tr-steps" type="number" value="40000" min="1000" step="1000"></label></div>
+          <div class="fsec">학습 작업</div>
+          <div class="lst" id="tr-list"></div>
+        </div>
+        <div class="fcr">
+          <div class="fsec">② 시작</div>
+          <div id="tr-prog"></div><div class="grow" id="tr-b"></div>
+          <div class="fh" id="tr-note"></div>
+        </div></div>
       <div class="fc" id="fc-infer">
-        <label class="fl">모델 — 이 PC 에서 학습한 것 · 올린 것<select id="inf-md"></select></label>
-        <div class="exp"><input type="file" id="inf-file" accept=".zip" style="display:none" onchange="modelUpload(this)">
-          <span class="fx" id="inf-up" style="flex:1">다른 PC 에서 학습한 model zip</span>
-          <button class="ok2 sm" onclick="viewIn('policies/'+$('inf-md').value)">데이터 보기 ▸</button>
-          <button class="ok2 sm" onclick="$('inf-file').click()">⬆ 모델 zip 올리기</button></div>
-        <label class="fl">추론 장치<select id="inf-dev"><option>CPU</option><option>NPU</option><option>GPU</option></select></label>
-        <div class="fx" id="inf-x"></div><div id="inf-b"></div>
-        <div class="fh">고른 모델을 불러온 채로 추론 화면이 뜸 → [정책 시작] (반복 가능) · 실기 전: tools/check_policy_safety.py · tools/eval_policy_offline.py</div></div>
+        <div class="fcl">
+          <div class="fsec">① 모델 · 장치</div>
+          <label class="fl">모델 — 이 PC 에서 학습한 것 · 올린 것<select id="inf-md"></select></label>
+          <div class="exp"><input type="file" id="inf-file" accept=".zip" style="display:none" onchange="modelUpload(this)">
+            <span class="fx" id="inf-up" style="flex:1">다른 PC 에서 학습한 model zip</span>
+            <button class="ok2 sm" onclick="viewIn('policies/'+$('inf-md').value)">데이터 보기 ▸</button>
+            <button class="ok2 sm" onclick="$('inf-file').click()">⬆ 모델 zip 올리기</button></div>
+          <label class="fl">추론 장치<select id="inf-dev"><option>CPU</option><option>NPU</option><option>GPU</option></select></label>
+          <div class="fx" id="inf-x"></div>
+        </div>
+        <div class="fcr">
+          <div class="fsec">② 시작</div>
+          <div class="grow" id="inf-b"></div>
+          <div class="fh">고른 모델을 불러온 채로 추론 화면이 뜸 → [정책 시작] (반복 가능) · 실기 전: tools/check_policy_safety.py · tools/eval_policy_offline.py</div>
+        </div></div>
     </div>
     <!-- 기능 화면 (메뉴 항목마다 하나, JS 가 만듦) -->
   </section>
@@ -1762,6 +1821,8 @@ function setHTML(id,h){const e=$(id);if(e.dataset.h!==h){e.innerHTML=h;e.dataset
 function renderCards(){if(!ST)return;
   const nr=needRobot(),dsets=SUM?SUM.datasets:[],ups=SUM?(SUM.uploaded||[]):[],ms=SUM?SUM.models:[];
   const robotTip=nr?' — 로봇 준비 필요 (설정 → FSM '+FSM.run+')':'';
+  // 시뮬레이터
+  setHTML('sim-b',`<div class="row">`+btn('ok2','시뮬레이터 시작','로봇 없이 · 가짜 로봇 (DDS 도메인 1)',"appStart('editor_virtual')",ST.seq.busy)+`</div>`);
   // 수집
   const cn=$('col-name');if(!cn.value&&!SELDS&&dsets[0]){SELDS=dsets[0].name;cn.value=SELDS;}
   setHTML('col-list',dsets.length?dsets.map(d=>`<div class="ds ${d.name===SELDS?'sel':''}" onclick="SELDS='${esc(d.name)}';$('col-name').value=SELDS;renderCards()"><span>${esc(d.name)}</span><span>${d.ok}/${d.total} · ${esc((d.last||'').slice(5,16).replace('T',' '))}</span></div>`).join(''):'<div class="em">아직 없음 — 새 이름을 넣고 시작</div>');
@@ -1776,8 +1837,9 @@ function renderCards(){if(!ST)return;
   const jr=TR&&TR.jobs.find(x=>x.status==='running'||x.status==='queued');
   setHTML('tr-prog',jr?`<div class="fx">${esc(jr.dataset)} · ${esc((jr.params||{}).policy||'')} · ${jr.step||0}/${jr.total} · loss ${jr.loss==null?'-':(+jr.loss).toFixed(3)} · 남은 ${jr.eta_s?Math.round(jr.eta_s/60)+'분':'-'}</div><div class="bar"><b style="width:${Math.round(100*(jr.step||0)/(jr.total||1))}%"></b></div>`:
     (TR&&TR.msg?`<div class="fx">${esc(TR.msg)}</div>`:''));
-  setHTML('tr-b',TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로 · 이 PC 의 GPU (최대 클럭 제한)',"trainStart()",!sel.value));
-  setHTML('tr-list',TR&&TR.up?(TR.jobs.length?TR.jobs.map(x=>`<div><span>${esc(x.dataset)} → ${esc(x.saved_model||x.status)}</span><span>${x.status==='running'?Math.round(100*(x.step||0)/(x.total||1))+'%':esc((x.params||{}).policy||'')}</span></div>`).join(''):'<div class="em">학습 작업 없음</div>'):'');
+  setHTML('tr-b','<div class="row">'+(TR&&TR.starting?btn('ok2','학습 서버 켜는 중 …','',"",true):btn('go','학습 시작','고른 데이터셋으로 · 이 PC 의 GPU (최대 클럭 제한)',"trainStart()",!sel.value))+'</div>');
+  const jobs=TR&&TR.up?TR.jobs:(SUM?SUM.jobs:[]);           // 학습 서버가 꺼져 있으면 저장된 작업 기록 (data/trainer/jobs)
+  setHTML('tr-list',jobs.length?jobs.map(x=>`<div><span>${esc(x.id||'')} · ${esc(x.dataset)} → ${esc(x.saved_model||x.status)}</span><span>${x.status==='running'?Math.round(100*(x.step||0)/(x.total||1))+'%':(x.step!=null&&x.total?`${x.step}/${x.total}`:'')}${x.loss!=null?' · loss '+(+x.loss).toFixed(3):''}</span></div>`).join(''):'<div class="em">학습 작업 없음</div>');
   setHTML('tr-note',`끝나면 모델 저장소 (data/policies) 에 자동 저장 · batch · 저장 주기 등 자세한 설정은 학습 화면 (학습을 시작하면 뜸)`+
     (MENU&&MENU.trainer_url?` · <a href="${esc(MENU.trainer_url)}" target="_blank">5090 학습 웹 ↗</a>`:''));
   // 추론

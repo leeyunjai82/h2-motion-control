@@ -448,7 +448,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(n))
         self.send_header("Accept-Ranges", "bytes")
-        self.send_header("Cache-Control", "max-age=3600")
+        # 화면 (html · js) 은 늘 새로 — git pull 뒤 예전 화면이 남지 않게. 영상 · 메시만 캐시
+        self.send_header("Cache-Control", "no-cache" if ctype.split(";")[0] in ("text/html", "application/javascript") else "max-age=3600")
         self.end_headers()
         with open(path, "rb") as f:
             f.seek(start)
