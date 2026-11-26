@@ -1,5 +1,5 @@
 # 홈 앱 메뉴 — 각 항목: 필요한 실행 모드 (apps/*/app.yaml 의 modes id, 이 중 하나가 떠 있으면 화면을 보여 줌) · 보여 줄 화면 (포트이름:경로)
-#   modes 가 비면 런처 화면 (native). tabs = 한 항목 안에서 여러 화면. 이름 · 로고는 config/local.yaml brand
+#   modes 가 비면 런처 화면 (native). service: true = 런처가 늘 띄워 두는 화면 (시작 버튼 없음). tabs = 한 항목 안에서 여러 화면. 이름 · 로고는 config/local.yaml brand
 sections:
   - title: 모방학습
     items:
@@ -19,6 +19,11 @@ sections:
         desc: 모델 저장소의 모델로 로봇 실행 · 반복 (가상 = 로봇 없이)
         modes: [infer, pick_sim]
         tabs: [{title: 추론, page: "pick_web:/collect"}]
+      - id: viewer
+        title: 데이터 보기
+        desc: 데이터셋 · 모델 보기 — 이 PC 의 것은 바로, 다른 PC 의 LeRobot v3 zip 은 [zip 열기] (다른 기능과 같이 늘 떠 있음)
+        service: true
+        tabs: [{title: 보기, page: "act_viewer:/"}]
   - title: 도구
     items:
       - id: editor

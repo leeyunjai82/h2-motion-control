@@ -226,7 +226,7 @@ async function upload(f){
 }
 function refreshSel(last){
   for(const [id,arr,cur] of [['sel-ds',DS,curDs],['sel-md',MD,curMd]]){
-    const s=$(id);s.innerHTML=arr.map((x,i)=>`<option value="${i}">${esc(x.name)}</option>`).join('');
+    const s=$(id);s.innerHTML=arr.map((x,i)=>`<option value="${i}">${esc(x.name)}${x.local?'':' (zip)'}</option>`).join('');
     s.style.display=arr.length>1?'':'none';if(cur)s.value=arr.indexOf(cur);
   }
   if(last&&last.kind==='model')selMd(last);else if(!curMd&&MD.length)selMd(MD[0]);
@@ -581,7 +581,7 @@ document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!==
     const r=await getJSON('/api/files');
     for(const f of r.files)addItem(f);
     refreshSel();
-    if(!r.files.length)toast(`zip 없음 — ${r.dir} 에 넣거나 화면에 끌어다 놓으세요`);
+    if(!r.files.length)toast(`데이터셋 · 모델 없음 — 이 PC 에서 수집 · 학습하거나 zip 을 끌어다 놓으세요 (${r.dir})`);
   }catch(e){toast('서버 응답 없음: '+e.message,true);}
 })();
 </script>

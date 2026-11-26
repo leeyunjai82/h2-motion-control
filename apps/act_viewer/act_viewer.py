@@ -3,10 +3,12 @@
 act_viewer.py — LeRobot v3 데이터셋 · lerobot 모델 보기 (전시용, 로봇 · GPU · lerobot 필요 없음)
 
   Windows: apps/act_viewer/start_viewer.bat 더블클릭 — 처음 한 번 apps/act_viewer/.venv 가상환경을 만들고 requirements.txt 설치 (Python 3.9+)
+  홈 화면 (런처): [데이터 보기] — 런처가 lerobot 환경 python 으로 늘 띄워 둠 (따로 실행할 필요 없음)
   Linux  : python3 -m venv apps/act_viewer/.venv && apps/act_viewer/.venv/bin/pip install -r apps/act_viewer/requirements.txt
            apps/act_viewer/.venv/bin/python apps/act_viewer/act_viewer.py [--data <폴더>] [--port 8800] [--no-browser]
 
-  data/viewer/ 에 zip 을 넣어 두면 켤 때 자동으로 읽음 (화면에 끌어다 놓으면 이 폴더에 저장)
+  이 PC 의 데이터셋 · 모델은 zip 없이 바로 보임: data/datasets/<이름>/lerobot · data/policies/<이름> (홈 화면 → 데이터 보기)
+  data/viewer/ 에 zip 을 넣어 두면 켤 때 자동으로 읽음 (화면에 끌어다 놓거나 [zip 열기] 하면 이 폴더에 저장)
     데이터셋 zip : 수집 화면 · 홈의 [LeRobot v3 zip]           — <이름>/meta/info.json (codebase_version v3.0)
     모델 zip     : 학습 웹 (:50100) model zip (lerobot 모델)     — <이름>/config.json · model.safetensors (정책 종류 상관없음)
   parquet 는 pyarrow 로 읽고, 영상 (mp4) 은 캐시 폴더 (data/viewer/.cache) 에 꺼내 브라우저 <video> 로 보여 줌. 모델은 실행 안 함
@@ -45,6 +47,90 @@ MESH_DIRS = {"h2": os.path.join(REPO, "robots", "h2", "meshes"),
 CHUNK = 1 << 20
 NAME_RE = re.compile(r"^[^/\\:*?\"<>|]{1,120}\.zip$", re.I)
 VIDEO_RE = re.compile(r"^videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4$")
+LOCAL_RE = re.compile(r"^(datasets|policies)/([A-Za-z0-9_.\-]{1,64})$")     # 이 PC 의 데이터셋 · 모델 (zip 아님)
+DS_DIR = paths.data_dir("datasets", legacy="gripper/data")
+MODEL_DIR = paths.data_dir("policies", legacy="gripper/models")
+
+
+def local_dir(fid):
+    """'datasets/<이름>' → data/datasets/<이름>/lerobot · 'policies/<이름>' → data/policies/<이름> (없으면 None)."""
+    m = LOCAL_RE.match(fid or "")
+    if not m or m.group(2).strip(".") == "":
+        return None
+    d = os.path.join(DS_DIR, m.group(2), "lerobot") if m.group(1) == "datasets" else os.path.join(MODEL_DIR, m.group(2))
+    return d if os.path.isdir(d) else None
+
+
+def local_items():
+    out = []
+    if os.path.isdir(DS_DIR):
+        out += [f"datasets/{n}" for n in sorted(os.listdir(DS_DIR)) if os.path.isfile(os.path.join(DS_DIR, n, "lerobot", "meta", "info.json"))]
+    if os.path.isdir(MODEL_DIR):
+        out += [f"policies/{n}" for n in sorted(os.listdir(MODEL_DIR))
+                if os.path.isfile(os.path.join(MODEL_DIR, n, "config.json")) and os.path.isfile(os.path.join(MODEL_DIR, n, "model.safetensors"))]
+    return [x for x in out if LOCAL_RE.match(x)]
+
+
+class DirZip:
+    """폴더를 zip 처럼 (namelist · open · getinfo) — 이름은 <root>/<폴더 안 상대 경로>."""
+
+    def __init__(self, folder, root):
+        self.folder, self.root = folder, root
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def namelist(self):
+        out = []
+        for r, ds, fs in os.walk(self.folder):
+            ds[:] = [d for d in ds if not d.startswith(".") and d not in ("openvino",)]
+            for f in fs:
+                if not f.startswith("."):
+                    out.append(f"{self.root}/" + os.path.relpath(os.path.join(r, f), self.folder).replace(os.sep, "/"))
+        return out
+
+    def _path(self, name):
+        rel = name.split("/", 1)[1] if name.startswith(self.root + "/") else None
+        if not rel or ".." in rel.split("/"):
+            raise KeyError(name)
+        return os.path.join(self.folder, *rel.split("/"))
+
+    def open(self, name):
+        return open(self._path(name), "rb")
+
+    def getinfo(self, name):
+        class I:
+            file_size = os.path.getsize(self._path(name))
+        return I
+
+
+def _open(src):
+    """src = zip 경로 또는 'datasets/<이름>' · 'policies/<이름>'."""
+    d = local_dir(src)
+    if d is not None:
+        return DirZip(d, LOCAL_RE.match(src).group(2))
+    return zipfile.ZipFile(src)
+
+
+def _stamp(src):
+    d = local_dir(src)
+    if d is None:
+        return os.path.getmtime(src)
+    ps = [os.path.join(d, p) for p in ("meta/info.json", "meta/h2.json", "config.json", "model.safetensors", "h2_model.json")]
+    return max([os.path.getmtime(p) for p in ps if os.path.isfile(p)] + [os.path.getmtime(d)])
+
+
+def _size(src):
+    d = local_dir(src)
+    if d is None:
+        return os.path.getsize(src)
+    def keep(r):                                       # 맨 위 . (숨김) · openvino (추론 캐시) 폴더는 뺌
+        top = os.path.relpath(r, d).split(os.sep)[0]
+        return top == "." or not top.startswith((".", "openvino"))
+    return sum(os.path.getsize(os.path.join(r, f)) for r, _, fs in os.walk(d) if keep(r) for f in fs if not f.startswith("."))
 
 
 def robot_info():
@@ -118,13 +204,13 @@ def _safetensors_params(z, name):
 
 def summarize(path):
     """zip → {kind: dataset|model|unknown, ...} (zip 이 바뀌지 않으면 캐시)."""
-    key = (path, os.path.getmtime(path))
+    key = (path, _stamp(path))
     with _lk:
         if key in _cache:
             return _cache[key]
-    out = {"file": os.path.basename(path), "size": os.path.getsize(path)}
+    out = {"file": path if local_dir(path) else os.path.basename(path), "size": _size(path), "local": bool(local_dir(path))}
     try:
-        with zipfile.ZipFile(path) as z:
+        with _open(path) as z:
             root, names = _root(z), set(z.namelist())
             if root and f"{root}/meta/info.json" in names:
                 out.update(dataset(z, root, names))
@@ -204,7 +290,7 @@ def episode(path, ei):
     if e is None:
         raise KeyError(f"에피소드 {ei} 없음")
     fn = s["data_path"].format(chunk_index=e["data"][0], file_index=e["data"][1])
-    with zipfile.ZipFile(path) as z:
+    with _open(path) as z:
         cols = ["episode_index", "timestamp", "observation.state", "action"] + (["tcp"] if s["has_tcp"] else []) + (["stage"] if s["has_stage"] else [])
         t = _parquet(z, f"{s['name']}/{fn}", columns=cols)
     t = t.filter(pc.equal(t["episode_index"], ei))
@@ -224,6 +310,9 @@ def video_file(data_dir, path, key, chunk, file):
     rel = s["video_path"].format(video_key=key, chunk_index=int(chunk), file_index=int(file))
     if not VIDEO_RE.match(rel):
         raise KeyError(rel)
+    d = local_dir(path)
+    if d is not None:                                  # 이 PC 의 데이터셋: 파일 그대로
+        return os.path.join(d, *rel.split("/"))
     cdir = os.path.join(data_dir, ".cache", f"{os.path.splitext(s['file'])[0]}_{int(os.path.getmtime(path))}")
     dst = os.path.join(cdir, rel)
     if not os.path.isfile(dst):
@@ -292,7 +381,10 @@ class Handler(BaseHTTPRequestHandler):
                 n -= len(b)
 
     def _zip(self, q):
-        name = os.path.basename((q.get("f") or [""])[0])
+        fid = (q.get("f") or [""])[0]
+        if local_dir(fid):
+            return fid
+        name = os.path.basename(fid)
         p = os.path.join(self.data_dir, name)
         if not NAME_RE.match(name) or not os.path.isfile(p):
             raise FileNotFoundError(name)
@@ -313,7 +405,7 @@ class Handler(BaseHTTPRequestHandler):
             if p == "/api/files":
                 d = self.data_dir
                 fs = sorted(f for f in os.listdir(d) if f.lower().endswith(".zip")) if os.path.isdir(d) else []
-                return self._json({"dir": d, "files": [summarize(os.path.join(d, f)) for f in fs]})
+                return self._json({"dir": d, "files": [summarize(x) for x in local_items()] + [summarize(os.path.join(d, f)) for f in fs]})
             if p == "/api/episode":
                 return self._json(episode(self._zip(q), int((q.get("i") or ["0"])[0])))
             if p == "/api/video":

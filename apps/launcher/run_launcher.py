@@ -623,7 +623,7 @@ def _watch_end(p, m):
 # ==========================================
 # 이미 떠 있는 것 (터미널에서 띄운 것 · 남은 프로그램) — 찾아서 보여 주고, 동의하면 Ctrl+C 와 같은 방식으로 끈 뒤 시작
 # ==========================================
-WATCH_PORTS = {p: n for n, p in ports.PORTS.items() if n != "launcher"}
+WATCH_PORTS = {p: n for n, p in ports.PORTS.items() if n not in ("launcher", "act_viewer")}   # 뷰어는 늘 떠 있는 것 — 충돌 아님
 
 
 def _ppid(pid):
@@ -910,10 +910,52 @@ def _shutdown():
         SEQ["busy"] = False
 
 
+# ---- 데이터 보기 (apps/act_viewer) — 다른 기능과 같이 늘 떠 있음 (읽기만 함). lerobot 환경 python (pyarrow · pyyaml) ----
+VIEWER = {"proc": None, "msg": ""}
+
+
+def viewer_start():
+    import socket
+    port = ports.PORTS["act_viewer"]
+    with socket.socket() as s:
+        s.settimeout(0.3)
+        if s.connect_ex(("127.0.0.1", port)) == 0:
+            VIEWER["msg"] = f"이미 떠 있음 (:{port})"
+            return
+    from pitron.learning import lerobot_env
+    py = lerobot_env.python()
+    if not os.path.isfile(py):
+        VIEWER["msg"] = lerobot_env.missing_msg(py)
+        print(f"[launcher] 데이터 보기 안 띄움 — {VIEWER['msg']}")
+        return
+    drop = USER_PW is not None
+    VIEWER["proc"] = subprocess.Popen(
+        [py, "-u", os.path.join(ROOT, "apps", "act_viewer", "act_viewer.py"), "--host", "0.0.0.0", "--no-browser"],
+        cwd=ROOT, stdout=_logfile("viewer"), stderr=subprocess.STDOUT, start_new_session=True,
+        preexec_fn=_as_user if drop else None, env=_user_env() if drop else os.environ)
+    VIEWER["msg"] = f"데이터 보기 :{port}"
+
+
+def viewer_stop():
+    p = VIEWER["proc"]
+    if p is not None and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     threading.Thread(target=fsm.poll_loop, daemon=True).start()
+    try:
+        viewer_start()
+    except Exception as e:  # noqa: BLE001 — 뷰어가 안 떠도 런처는 계속
+        VIEWER["msg"] = f"데이터 보기 시작 실패: {e}"
+        print(f"[launcher] {VIEWER['msg']}")
     yield
+    viewer_stop()
     # launcher 종료(Ctrl+C) 시 로봇 서버도 정상 종료 시퀀스로 정지.
     # 남겨두면 다음 start_robot.sh 의 sweep 이 SIGKILL 로 죽여 arm 제어권 반납이 생략된다.
     if busy():
@@ -1417,7 +1459,7 @@ function go(v){VIEW=v;location.hash=v==='home'?'':v;
   document.querySelectorAll('.view').forEach(e=>e.classList.toggle('on',e.id==='v-'+v));render();}
 function running(){return ST&&ST.job.running?ST.job.mode:null;}
 function renderItem(it){
-  const run=running(),prep=ST&&ST.job.prep,mine=it.modes.some(m=>m.id===run),tabs=it.tabs||[];
+  const run=running(),prep=!it.service&&ST&&ST.job.prep,mine=it.service||it.modes.some(m=>m.id===run),tabs=it.tabs||[];
   const ti=Math.min(TAB[it.id]||0,Math.max(0,tabs.length-1));
   $('tabs-'+it.id).innerHTML=(tabs.length>1?tabs.map((t,i)=>`<button class="tab ${i===ti?'on':''}" onclick="TAB['${it.id}']=${i};render(true)">${esc(t.title)}</button>`).join(''):'')+
     (mine&&!prep&&tabs.length?`<button class="tab" onclick="window.open('${pageUrl(tabs[ti])}','_blank')">새 창 ↗</button>`:'');
@@ -1435,7 +1477,8 @@ function startPanel(it,sp,loading){
   sp.classList.add('on');const run=running(),j=ST?ST.job:null,other=run&&!it.modes.some(m=>m.id===run);
   const fsmOk=m=>!m.real||!ST||ST.fsm.cur===null||ST.fsm.cur===FSM.run;
   let h=`<div class="card"><div class="h"><span>${loading?'시작 중':'시작'}</span><span>${other?'지금 실행 중: '+esc(j.label)+' — 시작하면 정지하고 전환':''}</span></div><div class="b">`;
-  if(!it.modes.length)h+=`<div class="note">이 화면은 실행이 필요 없음</div>`;
+  if(it.service)h+=`<div class="note">${loading?'여는 중 … ':''}화면이 안 뜨면: 로그 logs/launcher_viewer_*.log · lerobot 환경 필요 (./apps/trainer/install_lerobot.sh robot) · 런처 다시 시작</div>`;
+  else if(!it.modes.length)h+=`<div class="note">이 화면은 실행이 필요 없음</div>`;
   else h+=`<div class="row">`+it.modes.map(m=>`<button class="${m.real?'go':'ok2'}" ${loading||(ST&&ST.seq.busy)||!fsmOk(m)?'disabled':''} onclick="appStart('${m.id}')">${esc(m.label)}`+
     `<small>${m.real?'실제 로봇 · FSM '+FSM.run+(fsmOk(m)?'':' 필요 (로봇 메뉴)'):'로봇 없이'} · ${esc(m.app)}</small></button>`).join('')+`</div>`;
   if(it.remote)h+=`<div class="note" style="line-height:1.8">5090 에서 학습: 수집 화면의 <b>[Dataset zip]</b> 받기 → 5090 학습 웹에 올려 학습 → 받은 <b>model zip</b> 을 추론 화면 모델 목록에 올리기`+
