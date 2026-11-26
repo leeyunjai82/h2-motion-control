@@ -121,8 +121,9 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 <body>
 <div class="topbar">
   <span class="dot" id="livedot"></span>
-  <span class="logo">pitron<b>·viewer</b></span>
-  <span style="color:var(--dim);font-size:11px">LeRobot v3 데이터셋 · 모델</span>
+  <span class="logo own">pitron<b>·viewer</b></span>
+  <span class="own" style="color:var(--dim);font-size:11px">LeRobot v3 데이터셋 · 모델</span>
+  <script>if(new URLSearchParams(location.search).get('embed')==='1')document.write('<style>.topbar .own{display:none}</style>');</script>
   <div class="chips">
     <span class="chip" id="chip-ds">데이터셋 <b>-</b></span>
     <span class="chip" id="chip-md">모델 <b>-</b></span>
@@ -226,7 +227,7 @@ async function upload(f){
 }
 function refreshSel(last){
   for(const [id,arr,cur] of [['sel-ds',DS,curDs],['sel-md',MD,curMd]]){
-    const s=$(id);s.innerHTML=arr.map((x,i)=>`<option value="${i}">${esc(x.name)}${x.local?'':' (zip)'}</option>`).join('');
+    const s=$(id);s.innerHTML=arr.map((x,i)=>`<option value="${i}">${esc(x.name)}${!x.local?' (zip)':String(x.file).startsWith('uploaded/')?' (올림)':''}</option>`).join('');
     s.style.display=arr.length>1?'':'none';if(cur)s.value=arr.indexOf(cur);
   }
   if(last&&last.kind==='model')selMd(last);else if(!curMd&&MD.length)selMd(MD[0]);
@@ -580,6 +581,10 @@ document.addEventListener('keydown',e=>{if(e.code==='Space'&&e.target.tagName!==
   try{
     const r=await getJSON('/api/files');
     for(const f of r.files)addItem(f);
+    refreshSel();
+    // 런처에서 고른 것 (?sel=datasets/<이름> · uploaded/<이름> · policies/<이름>, 쉼표로 여러 개)
+    for(const id of (new URLSearchParams(location.search).get('sel')||'').split(',').filter(Boolean)){
+      const d=DS.find(x=>x.file===id),m=MD.find(x=>x.file===id);if(m)selMd(m);if(d)selDs(d);}
     refreshSel();
     if(!r.files.length)toast(`데이터셋 · 모델 없음 — 이 PC 에서 수집 · 학습하거나 zip 을 끌어다 놓으세요 (${r.dir})`);
   }catch(e){toast('서버 응답 없음: '+e.message,true);}

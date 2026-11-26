@@ -366,6 +366,8 @@ class Runner:
         self.rec = rec.Recorder()
         self.rec_on = False             # 실행할 때 녹화
         self.rec_name = "pick_" + datetime.date.today().strftime("%Y%m%d")
+        if rec.NAME_RE.match(os.environ.get("PICK_REC_NAME") or ""):          # 홈 화면 (데이터 수집) 에서 고른 데이터셋
+            self.rec_name = os.environ["PICK_REC_NAME"]
         self.rec_new = {"size": "320x240", "fit": "crop", "task": "pick up the object and put it in the bin"}   # 새 데이터셋 설정
         self.v3 = lerobot_env.SyncWorker(self.rec.data_dir, log=print)   # 수집 원본 → lerobot/ (LeRobot v3)
         for d in self.rec.datasets():                                     # 켤 때 한 번: 예전 데이터셋도 v3 로 맞춤

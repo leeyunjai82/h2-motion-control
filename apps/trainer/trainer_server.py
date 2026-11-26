@@ -20,7 +20,6 @@ import shlex
 import shutil
 import signal
 import subprocess
-import tempfile
 import sys
 import threading
 import time
@@ -32,7 +31,7 @@ if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
 from pitron import paths  # noqa: E402
 from pitron import ports  # noqa: E402
-from pitron.learning import lerobot_env  # noqa: E402
+from pitron.learning import dataset_store, lerobot_env  # noqa: E402
 
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
@@ -54,9 +53,6 @@ if not os.path.isdir(COLLECT_DIR):
 MODEL_STORE = paths.data_dir("policies", legacy="gripper/models")
 LEROBOT_PY = os.environ.get("LEROBOT_PY") or lerobot_env.train_python()     # 학습 환경 lerobot_train (XPU · CUDA)
 NAME_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9_.\-]{1,64}$")          # "." · ".." 같은 점만 있는 이름은 안 됨
-V3_FILE_RE = re.compile(r"^(meta/[A-Za-z0-9_./\-]+\.(json|jsonl|parquet)|data/chunk-\d+/file-\d+\.parquet|"
-                        r"videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4)$")
-OLD_FILE_RE = re.compile(r"^(info\.json|episodes/ep_\d{6}/(episode\.npz|meta\.json))$")
 HUB_POLICIES = {"smolvla", "pi0", "pi05", "pi0_fast", "groot", "xvla", "wall_x"}   # 사전학습 바탕 모델을 Hub 에서 받는 정책
 DEFAULT_TRAIN = {
     "name": "", "policy": "act", "pretrained": "", "steps": 40000, "batch_size": 8,
@@ -149,54 +145,20 @@ def ds_names():
     return sorted(names)
 
 
-def _free_name(stem):
-    stem = re.sub(r"[^A-Za-z0-9_.\-]", "_", stem)[:56].strip(".") or "dataset"
-    name, k = stem, 2
-    while os.path.exists(os.path.join(DS_DIR, name)):
-        name, k = f"{stem}_{k}", k + 1
-    return name
-
-
 def extract_dataset(zpath, filename):
     """zip (<이름>/meta/info.json … = LeRobot v3, 또는 <이름>/info.json … = 예전 수집 형식) → DS_DIR/<이름> (v3)."""
     try:
-        z = zipfile.ZipFile(zpath)
-    except zipfile.BadZipFile:
-        raise HTTPException(400, "zip 아님")
-    with z:
-        files = [i for i in z.infolist() if not i.is_dir()]
-        roots = {i.filename.split("/", 1)[0] for i in files}
-        if len(roots) != 1:
-            raise HTTPException(400, "zip 안에 폴더 하나 (<데이터셋 이름>/...) 여야 함 — 수집 화면에서 받은 zip 그대로 올리세요")
-        root = roots.pop()
-        rels = []
-        for i in files:
-            n = i.filename
-            if n.startswith("/") or ".." in n.split("/"):
-                raise HTTPException(400, f"zip 안 경로 이상: {n}")
-            rels.append((i, n[len(root) + 1:]))
-        v3 = any(r == "meta/info.json" for _, r in rels)
-        old = any(r == "info.json" for _, r in rels)
-        if not v3 and not old:
-            raise HTTPException(400, "LeRobot v3 데이터셋 (meta/info.json) 이 아님")
-        keep = [(i, r) for i, r in rels if (V3_FILE_RE if v3 else OLD_FILE_RE).match(r)]
-        need = sum(i.file_size for i, _ in keep)
-        free = shutil.disk_usage(DS_DIR).free
-        if need * (2 if old else 1) > free - 2e9:
-            raise HTTPException(507, f"디스크 부족 (필요 {need / 1e9:.1f} GB, 남음 {free / 1e9:.1f} GB)")
-        name = _free_name(root[:-len("_lerobot")] if root.endswith("_lerobot") else root)
-        tmp = tempfile.mkdtemp(prefix=f".{name}.", dir=UP_DIR)          # 올리기마다 따로 (동시에 올려도 안 겹침)
-        for i, rel in keep:
-            dst = os.path.join(tmp, rel)
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            with z.open(i) as src, open(dst, "wb") as out:
-                shutil.copyfileobj(src, out, 1 << 20)
+        name, tmp, v3 = dataset_store.unpack(zpath, UP_DIR, [DS_DIR, COLLECT_DIR])
+    except dataset_store.DiskFull as e:
+        raise HTTPException(507, str(e))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
     try:
         if v3:
-            inf = _read(os.path.join(tmp, "meta", "info.json")) or {}
-            if inf.get("codebase_version") != "v3.0":
-                raise HTTPException(400, f"LeRobot 데이터셋 {inf.get('codebase_version')} — v3.0 만 (lerobot 0.4.x)")
-            os.replace(tmp, os.path.join(DS_DIR, name))
+            try:
+                dataset_store.finish_v3(tmp, DS_DIR, name)
+            except ValueError as e:
+                raise HTTPException(400, str(e))
         else:                                                    # 예전 형식 → v3 (lerobot 환경에서 변환)
             if not os.path.isfile(LEROBOT_PY):
                 raise HTTPException(409, lerobot_env.missing_msg(LEROBOT_PY, train=True))

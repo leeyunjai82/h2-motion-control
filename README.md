@@ -34,7 +34,7 @@ head_track     :50013   머리 카메라 인식 — 왼눈 얼굴+나이·성별
 robot_server   :50000   잡기 시퀀스 + 제어 웹 UI (CPU·GPU·NPU 사용률, System 카드 = 로봇 FSM·서버 상태)
 dashboard      :50003   3D URDF 뷰어 / 관절 상태 (rt/lowstate 읽기 전용)
 simulator      :8000    모션 에디터 (Joint + IK), arm_server 경유
-launcher       :80      홈 — FSM 버튼 · 기능 시작/정지 (박스 · 에디터 · 모방학습) · 종료(정지 → FixStand → Damp)
+launcher       :80      홈 (모방학습) — 설정 (FSM · VR) · 시뮬레이터 · 수집 · 학습 · 추론 · 데이터 보기 · 종료(정지 → FixStand → Damp)
 pick_web       :50030   그리퍼 잡기 · 데이터 수집 · ACT 정책 실행 (start_gripper.sh, apps/gripper_pick/)
 trainer        :50100   학습 PC(RTX 5090) — 데이터셋 업로드 → ACT 학습 → OpenVINO model zip (apps/trainer/)
 act_viewer     :8800    전시 PC(Windows) — 데이터셋 · 모델 보기 (apps/act_viewer/start_viewer.bat)
@@ -72,16 +72,20 @@ cd ~/project/h2-motion-control
 ./launcher.sh          # 미니 PC (sudo) → 브라우저 http://<미니 PC>/
 ```
 
-- **위쪽 막대**: 로봇 FSM 상태 · 실행 중인 것 · [정지] · [종료] (실행 중인 것 정지 → FixStand → Damp, 각 단계 카운트다운 · 취소 가능)
-- **왼쪽 메뉴** (`apps/launcher/menu.yaml`)
-  - 홈 — 대시보드 (데이터셋 · 모델 · 학습 작업 요약)
-  - 모방학습 — ① 데이터 수집 ② 데이터셋 ③ 학습 ④ 모델 ⑤ 추론
-  - 도구 — 시뮬레이터 (모션 에디터) · 박스 핸드오버
-  - 시스템 — 로봇 (자세: Damp → FixStand(4) → PhaseWalk(703))
-- 메뉴를 누르면: 그 기능이 떠 있으면 화면을 그대로 보여 주고 (새 창으로도 열 수 있음), 아니면 [시작] (실기 · 가상).
-  다른 것이 떠 있으면 확인 후 정상 종료하고 전환. 실기는 FSM 703 에서만
-- 5090 학습: ② 데이터셋 에서 zip 받기 → 5090 학습 웹에 올려 학습 → model zip 을 ④ 모델 에서 올리기 (5090 주소는 `config/local.yaml` `trainer_url`)
-- 이름 · 부제목: `config/local.yaml` `brand: {name, sub}`. 새 기능 = `apps/<이름>/app.yaml` + `menu.yaml` 항목
+홈은 **모방학습 전용**입니다. 박스 핸드오버는 홈에 없고 기존 방식 (`./start_robot.sh` · `./start_grab_sim.sh`) 으로 실행합니다.
+
+- **위쪽 막대**: 로봇 FSM 상태 · 실행 중인 것 · 데이터셋 · 모델 수 · [정지] · [종료] (실행 중인 것 정지 → FixStand → Damp, 각 단계 카운트다운 · 취소 가능)
+- **왼쪽 메뉴** (`apps/launcher/menu.yaml`, 작업 순서)
+  1. **설정** — 로봇 자세 (Damp → FixStand(4) → PhaseWalk(703)) · VR 설정 (`data/settings/vr.json`) · 실행 로그 · 환경 (lerobot 가상환경 · 학습 PC)
+  2. **시뮬레이터** — URDF 3D 로봇을 관절 · IK 로 움직여 보기 (가짜 로봇)
+  3. **데이터 수집** — 데이터셋 이름 고르기 (저장된 것 = 이어서 · 새 이름 = 새로) → VR 수집 (실기) · 가상 연습 · LeRobot v3 zip 받기
+  4. **학습** — 데이터셋 고르기 (수집한 것 · 올린 것) · **데이터셋 zip 올리기** → 학습 시작 (이 PC 의 GPU). 자세한 설정은 학습 화면
+  5. **추론** — 모델 고르기 · **모델 zip 올리기** · 장치 (CPU · NPU · GPU) → 추론 시작 (실기) · 가상으로 실행
+  6. **데이터 보기** — 데이터셋 (영상 · 관절 · 3D) · 모델 정보. 이 PC 의 것 · 올린 것 · zip. 런처가 늘 띄워 둠 (다른 기능과 같이)
+- 수집 · 학습 · 추론 · 데이터 보기는 서로 독립 — 데이터셋 · 모델 저장소로만 이어짐. 올린 데이터셋 · 모델은 학습 · 추론 · 데이터 보기에서 바로 보임
+- 기능이 떠 있으면 그 화면을 보여 주고 (새 창으로도 열 수 있음), 다른 것이 떠 있으면 확인 후 정상 종료하고 전환. 실기는 FSM 703 에서만
+- 5090 학습: 데이터 수집 · 데이터 보기에서 LeRobot v3 zip 받기 → 5090 학습 웹에 올려 학습 → model zip 을 추론에서 올리기 (5090 주소는 `config/local.yaml` `trainer_url`)
+- 이름 · 부제목: `config/local.yaml` `brand: {name, sub}`
 
 ## 잡기 시퀀스 (robot_server)
 

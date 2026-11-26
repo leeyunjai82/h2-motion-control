@@ -1,44 +1,48 @@
-# 홈 앱 메뉴 — 각 항목: 필요한 실행 모드 (apps/*/app.yaml 의 modes id, 이 중 하나가 떠 있으면 화면을 보여 줌) · 보여 줄 화면 (포트이름:경로)
-#   modes 가 비면 런처 화면 (native). service: true = 런처가 늘 띄워 두는 화면 (시작 버튼 없음). tabs = 한 항목 안에서 여러 화면. 이름 · 로고는 config/local.yaml brand
+# 홈 메뉴 (모방학습) — 위에서부터 작업 순서. 박스 핸드오버 · 모션 에디터 실기는 런처에 없음 (각 start 스크립트로 따로)
+#   항목: id · title · sub (메뉴 한 줄 설명) · desc (화면 위 설명)
+#     native: true  = 런처 화면 (설정)
+#     panel: <이름> = 런처의 카드 (수집 · 학습 · 추론 — 저장된 것 고르기 · 올리기 · 시작) 를 먼저 보여 주고, 실행되면 그 화면 (tabs)
+#     modes = 필요한 실행 모드 (apps/*/app.yaml modes id, 이 중 하나가 떠 있으면 tabs 화면을 보여 줌)
+#     service: true = 런처가 늘 띄워 두는 화면 (시작 버튼 없음)
+#     tabs = 보여 줄 화면 (포트이름:경로). 이름 · 로고는 config/local.yaml brand
 sections:
-  - title: 모방학습
+  - title: ""
     items:
+      - id: settings
+        title: 설정
+        sub: 로봇 자세 · VR · 환경
+        desc: 로봇 자세 (FSM) · VR 설정 · 실행 상태 · 환경
+        native: true
+      - id: sim
+        title: 시뮬레이터
+        sub: 로봇 없이 3D 로 움직여 보기
+        desc: URDF 3D 로봇 — 관절 · IK 로 팔을 움직여 봄 (가짜 로봇, 실기와 섞이지 않음)
+        modes: [editor_virtual]
+        tabs: [{title: 시뮬레이터, page: "editor:/"}, {title: 3D, page: "dashboard:/robot-only"}]
       - id: collect
         title: 데이터 수집
-        desc: VR 원격 조작으로 시연 에피소드를 모아 데이터셋 저장소에 저장 (가상 = 로봇 없이 연습)
+        sub: VR 원격 조작 시연 → 데이터셋
+        desc: VR 원격 조작으로 시연 에피소드를 모아 데이터셋에 저장 (가상 연습 = 로봇 없이)
+        panel: collect
         modes: [collect, pick_sim]
         tabs: [{title: 수집, page: "pick_web:/collect"}]
       - id: train
         title: 학습
-        desc: 데이터셋 저장소의 데이터로 ACT 학습 → 모델 저장소에 저장 (로봇 기능은 끈 상태에서)
+        sub: 데이터셋 → lerobot 모델
+        desc: LeRobot v3 데이터셋으로 lerobot-train → 모델 (이 PC 의 GPU · 로봇 기능은 끈 상태에서)
+        panel: train
         modes: [train_local]
         tabs: [{title: 학습, page: "trainer:/"}]
-        remote: true
       - id: infer
         title: 추론
-        desc: 모델 저장소의 모델로 로봇 실행 · 반복 (가상 = 로봇 없이)
+        sub: 모델로 로봇 실행
+        desc: 모델로 로봇 실행 · 반복 (가상 = 로봇 없이) — 실기 전 안전 점검 · 오프라인 평가 먼저
+        panel: infer
         modes: [infer, pick_sim]
         tabs: [{title: 추론, page: "pick_web:/collect"}]
       - id: viewer
         title: 데이터 보기
-        desc: 데이터셋 · 모델 보기 — 이 PC 의 것은 바로, 다른 PC 의 LeRobot v3 zip 은 [zip 열기] (다른 기능과 같이 늘 떠 있음)
+        sub: 데이터셋 · 모델 확인
+        desc: 데이터셋 (영상 · 관절 · 3D) · 모델 정보 — 이 PC 의 것 · 올린 것 · zip
         service: true
         tabs: [{title: 보기, page: "act_viewer:/"}]
-  - title: 도구
-    items:
-      - id: editor
-        title: 시뮬레이터 (모션 에디터)
-        desc: 관절 · IK 로 팔 모션 만들기 · 모터 번호 확인
-        modes: [editor_virtual, editor_real]
-        tabs: [{title: 에디터, page: "editor:/"}, {title: 모터 번호 확인, page: "editor:/check"}, {title: 3D, page: "dashboard:/robot-only"}]
-      - id: box
-        title: 박스 핸드오버
-        desc: 박스를 양손으로 잡아 건네기 · 내려놓기
-        modes: [box_sim, box_real]
-        tabs: [{title: 제어, page: "robot_server:/"}, {title: 박스 인식, page: "detect_box:/"}, {title: 3D, page: "dashboard:/robot-only"}]
-  - title: 시스템
-    items:
-      - id: robot
-        title: 로봇 (자세)
-        desc: Damp → FixStand → 703 · 종료
-        modes: []

@@ -47,17 +47,20 @@ MESH_DIRS = {"h2": os.path.join(REPO, "robots", "h2", "meshes"),
 CHUNK = 1 << 20
 NAME_RE = re.compile(r"^[^/\\:*?\"<>|]{1,120}\.zip$", re.I)
 VIDEO_RE = re.compile(r"^videos/[A-Za-z0-9_.\-]+/chunk-\d+/file-\d+\.mp4$")
-LOCAL_RE = re.compile(r"^(datasets|policies)/([A-Za-z0-9_.\-]{1,64})$")     # 이 PC 의 데이터셋 · 모델 (zip 아님)
+LOCAL_RE = re.compile(r"^(datasets|uploaded|policies)/([A-Za-z0-9_.\-]{1,64})$")     # 이 PC 의 데이터셋 · 올린 데이터셋 · 모델 (zip 아님)
 DS_DIR = paths.data_dir("datasets", legacy="gripper/data")
+UP_DIR = os.path.join(os.environ.get("TRAINER_DATA") or paths.data_dir("trainer", legacy="trainer/data"), "datasets")   # 학습용으로 올린 것
 MODEL_DIR = paths.data_dir("policies", legacy="gripper/models")
 
 
 def local_dir(fid):
-    """'datasets/<이름>' → data/datasets/<이름>/lerobot · 'policies/<이름>' → data/policies/<이름> (없으면 None)."""
+    """'datasets/<이름>' → data/datasets/<이름>/lerobot · 'uploaded/<이름>' → data/trainer/datasets/<이름> ·
+    'policies/<이름>' → data/policies/<이름> (없으면 None)."""
     m = LOCAL_RE.match(fid or "")
     if not m or m.group(2).strip(".") == "":
         return None
-    d = os.path.join(DS_DIR, m.group(2), "lerobot") if m.group(1) == "datasets" else os.path.join(MODEL_DIR, m.group(2))
+    kind, n = m.groups()
+    d = {"datasets": os.path.join(DS_DIR, n, "lerobot"), "uploaded": os.path.join(UP_DIR, n), "policies": os.path.join(MODEL_DIR, n)}[kind]
     return d if os.path.isdir(d) else None
 
 
@@ -65,6 +68,8 @@ def local_items():
     out = []
     if os.path.isdir(DS_DIR):
         out += [f"datasets/{n}" for n in sorted(os.listdir(DS_DIR)) if os.path.isfile(os.path.join(DS_DIR, n, "lerobot", "meta", "info.json"))]
+    if os.path.isdir(UP_DIR):
+        out += [f"uploaded/{n}" for n in sorted(os.listdir(UP_DIR)) if os.path.isfile(os.path.join(UP_DIR, n, "meta", "info.json"))]
     if os.path.isdir(MODEL_DIR):
         out += [f"policies/{n}" for n in sorted(os.listdir(MODEL_DIR))
                 if os.path.isfile(os.path.join(MODEL_DIR, n, "config.json")) and os.path.isfile(os.path.join(MODEL_DIR, n, "model.safetensors"))]

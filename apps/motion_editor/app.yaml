@@ -9,6 +9,6 @@ modes:
     real: true
     open: editor:/
   - id: editor_virtual
-    label: 가상 시작
+    label: 시뮬레이터 시작
     cmd: [start_editor.sh, virtual]
     open: editor:/
