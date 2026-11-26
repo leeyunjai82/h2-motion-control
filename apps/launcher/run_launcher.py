@@ -62,7 +62,7 @@ from pitron import paths
 
 import uvicorn
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, FileResponse
 
 PORT = ports.PORTS["launcher"]                   # 1024 미만 → root 필요 (launcher.sh 가 sudo 로 실행)
@@ -1179,6 +1179,39 @@ def infer_status():
 # ==========================================
 # 데이터셋 LeRobot v3 zip (수집 PC 의 data/datasets/<이름>/lerobot — 수집하면 자동으로 만들어짐)
 # ==========================================
+# 모델 zip 올리기 (다른 PC 에서 학습한 model zip → data/policies/<이름>) — 홈 추론 칸
+@app.post("/model/upload")
+async def model_upload(request: Request, filename: str = "model.zip"):
+    import zipfile
+    from pitron.learning import model_store
+    if job.running() and (CUR_MODE["m"] or {}).get("id") in ("infer", "pick_sim"):
+        raise HTTPException(409, "추론 화면이 떠 있음 — 추론 화면의 [zip 올리기] 로 올리세요")
+    os.makedirs(model_store.MODEL_DIR, exist_ok=True)
+    _own(model_store.MODEL_DIR)
+    tmp = os.path.join(model_store.MODEL_DIR, f".upload_{os.getpid()}_{int(time.time() * 1000)}.zip")
+    try:
+        n = 0
+        with open(tmp, "wb") as f:
+            async for chunk in request.stream():
+                f.write(chunk)
+                n += len(chunk)
+        if n == 0:
+            raise HTTPException(400, "빈 파일")
+        try:
+            name = model_store.install_zip(tmp, filename)
+        except (ValueError, KeyError, zipfile.BadZipFile) as e:
+            raise HTTPException(400, f"모델 zip 이상: {e}")
+    finally:
+        if os.path.exists(tmp):
+            os.remove(tmp)
+    dst = os.path.join(model_store.MODEL_DIR, name)
+    for r, ds, fs in os.walk(dst):                       # 런처는 root — 사용자 소유로 (추론이 openvino 캐시를 써야 함)
+        _own(r)
+        for x in fs:
+            _own(os.path.join(r, x))
+    return {"name": name}
+
+
 @app.get("/dataset/zip")
 def dataset_zip(name: str):
     import zipfile
@@ -1397,6 +1430,9 @@ button.big{padding:16px 10px;font-size:15px}
         <div class="fc" id="fc-infer"><div class="ft">추론</div>
           <label class="fl">모델 (저장소에서)<select id="inf-md"></select></label>
           <label class="fl">추론 장치<select id="inf-dev"><option>GPU</option><option>CPU</option><option>NPU</option></select></label>
+          <div class="exp"><input type="file" id="inf-file" accept=".zip" style="display:none" onchange="modelUpload(this)">
+            <span class="fx" id="inf-up" style="flex:1">다른 PC 에서 학습한 model zip</span>
+            <button class="ok2 sm" onclick="$('inf-file').click()">⬆ 모델 zip 올리기</button></div>
           <div class="fx" id="inf-x"></div><div id="inf-b"></div>
           <div class="fh">고른 모델을 불러온 채로 추론 화면이 뜸 → [정책 시작] (반복 가능)</div></div>
       </div>
@@ -1596,6 +1632,12 @@ async function trainStart(){const ds=$('tr-ds').value,steps=+$('tr-steps').value
     r=await fetch('/train/start?replace=true',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({dataset:ds,steps,policy})});d=await r.json().catch(()=>({}));}
   if(!r.ok)alert(typeof d.detail==='string'?d.detail:JSON.stringify(d.detail));else toast('학습 시작 — 학습 서버가 뜨면 작업이 들어갑니다');pollTrain();}
 async function pollTrain(){try{TR=await(await fetch('/train/status')).json();renderHome();}catch(e){}}
+async function modelUpload(el){const f=el.files[0];el.value='';if(!f)return;
+  $('inf-up').textContent='올리는 중 … '+f.name;
+  try{const r=await fetch('/model/upload?filename='+encodeURIComponent(f.name),{method:'POST',body:f}),d=await r.json().catch(()=>({}));
+    if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:r.status);
+    $('inf-up').textContent='올림: '+d.name;await pollSummary();$('inf-md').value=d.name;toast('모델 올림: '+d.name);}
+  catch(e){$('inf-up').textContent='실패: '+e.message;alert(e.message);}}
 async function pollSummary(){try{SUM=await(await fetch('/summary')).json();renderHome();}catch(e){}}
 fetch('/menu').then(r=>r.json()).then(m=>{MENU=m;buildMenu();go(location.hash.slice(1)||'home');poll();pollSummary();});
 setInterval(poll,700);setInterval(pollSummary,5000);setInterval(pollTrain,3000);pollTrain();setInterval(pollInfer,2000);

@@ -24,12 +24,9 @@ import json
 import math
 import os
 import queue
-import re
-import shutil
 import subprocess
 import threading
 import time
-import zipfile
 
 import cv2
 import numpy as np
@@ -39,14 +36,11 @@ import os as _os, sys as _sys  # noqa: E401
 _ROOT = _os.path.abspath(_os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "..", ".."))  # 저장소 루트 (pitron)
 if _ROOT not in _sys.path:
     _sys.path.append(_ROOT)
-from pitron import paths  # noqa: E402
 from pitron.learning import camfit, lerobot_env  # noqa: E402
+from pitron.learning.model_store import MODEL_DIR, NAME_RE, FILE_RE, install_zip  # noqa: E402,F401 — 모델 저장소 (런처와 공용)
 import vr_settings  # noqa: E402 — 양팔 사이 · 뒤 한계는 VR 조작과 같은 기준 (웹 VR 설정)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL_DIR = paths.data_dir("policies", legacy="gripper/models")   # 모델 저장소 (git 제외)
-NAME_RE = re.compile(r"^(?!\.+$)[A-Za-z0-9_.\-]{1,80}$")          # "." · ".." 같은 점만 있는 이름은 안 됨
-FILE_RE = re.compile(r"^[A-Za-z0-9_.\-]+\.(json|safetensors)$")
 FPS = 30.0
 STATE_DIM = 16
 # 모델 state · action 16 → 팔 14 (제어 순서) · 그리퍼: (손, 팔 14 자리, action 팔 7 자리, action 그리퍼 자리)
@@ -99,44 +93,6 @@ def models():
     if not os.path.isdir(MODEL_DIR):
         return []
     return [m for m in (model_info(n) for n in sorted(os.listdir(MODEL_DIR)) if NAME_RE.match(n)) if m]
-
-
-def install_zip(zpath, filename="model.zip"):
-    """model zip (<이름>/config.json · model.safetensors · … — 학습 웹 zip 또는 lerobot pretrained_model 폴더 zip) → MODEL_DIR/<이름>"""
-    with zipfile.ZipFile(zpath) as z:
-        files = [i for i in z.infolist() if not i.is_dir()]
-        roots = {i.filename.split("/", 1)[0] for i in files if "/" in i.filename}
-        if len(roots) != 1 or any("/" not in i.filename for i in files):
-            raise ValueError("zip 안에 폴더 하나 (<모델 이름>/config.json …) 여야 함")
-        root = roots.pop()
-        name = root
-        if root in ("pretrained_model", "last") or not NAME_RE.match(root):   # lerobot 체크포인트 폴더를 그대로 묶은 zip
-            name = re.sub(r"[^A-Za-z0-9_.\-]", "_", os.path.splitext(os.path.basename(filename))[0])[:60] or "model"
-        keep = []
-        for i in files:
-            rel = i.filename[len(root) + 1:]
-            if "/" in rel or ".." in rel:
-                continue                                    # 하위 폴더 (openvino 캐시 등) 는 안 받음
-            if FILE_RE.match(rel):
-                keep.append((i, rel))
-        have = {r for _, r in keep}
-        if not {"config.json", "model.safetensors"} <= have:
-            raise ValueError("lerobot 모델이 아님 (config.json · model.safetensors 없음)")
-        cfg = json.loads(z.read(f"{root}/config.json"))
-        if not cfg.get("type"):
-            raise ValueError("config.json 에 정책 type 없음")
-        dst = os.path.join(MODEL_DIR, name)
-        if not NAME_RE.match(name) or os.path.dirname(os.path.realpath(dst)) != os.path.realpath(MODEL_DIR):
-            raise ValueError(f"모델 이름 이상: {name}")
-        tmp = dst + ".tmp"
-        shutil.rmtree(tmp, ignore_errors=True)
-        os.makedirs(tmp)
-        for i, rel in keep:
-            with z.open(i) as src, open(os.path.join(tmp, rel), "wb") as out:
-                shutil.copyfileobj(src, out)
-        shutil.rmtree(dst, ignore_errors=True)
-        os.replace(tmp, dst)
-    return name
 
 
 # ---------------- 추론 프로세스 ----------------
