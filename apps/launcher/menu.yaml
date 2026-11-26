@@ -41,7 +41,7 @@ sections:
         desc: 모델로 로봇 실행 · 반복 (가상 = 로봇 없이) — 실기 전 안전 점검 · 오프라인 평가 먼저
         panel: infer
         modes: [infer, pick_sim]
-        tabs: [{title: 추론, page: "pick_web:/collect"}]
+        tabs: [{title: 추론, page: "pick_web:/collect?view=infer"}]     # 추론 전용 보기 (수집 칸 숨김 · 추론 준비 칸)
       - id: viewer
         title: 데이터 보기
         sub: 데이터셋 · 모델 확인

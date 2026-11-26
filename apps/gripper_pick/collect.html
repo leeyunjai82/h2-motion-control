@@ -44,6 +44,10 @@ body{font-family:'SF Mono',ui-monospace,'Cascadia Code',Menlo,monospace;backgrou
 pre.log{flex:1;min-height:80px;overflow:auto;background:#05080c;border:1px solid var(--line);border-radius:8px;padding:8px;
   font-size:11px;line-height:1.45;color:#a9b6c4;white-space:pre-wrap;word-break:break-all;font-family:inherit}
 .card.alert{border-color:var(--amber)}
+/* 추론 전용 보기 (?view=infer — 홈 추론 메뉴): 수집 칸 숨기고 추론 준비 칸 */
+.io{display:none!important}.v-infer .io{display:block!important}
+.v-infer .co,.v-infer .dsbar,.v-infer #chip-xr,.v-infer #chip-rec{display:none!important}
+#vhead.tblpick{cursor:crosshair;outline:3px solid var(--amber);outline-offset:-3px}
 .card-h{font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--dim);box-shadow:inset 3px 0 0 var(--accent);
   padding:9px 13px;border-bottom:1px solid var(--line);display:flex;justify-content:space-between;align-items:center;background:var(--panel2);gap:8px}
 .card.alert .card-h{box-shadow:inset 3px 0 0 var(--amber)}
@@ -154,7 +158,7 @@ input[type=file].in{width:100%}
   </div>
 
   <div class="col">
-    <div class="card">
+    <div class="card co">
       <div class="card-h">에피소드 <span class="tag" id="ds-tag">-</span></div>
       <div class="card-b">
         <div class="big-num" id="next">—</div>
@@ -164,7 +168,7 @@ input[type=file].in{width:100%}
       </div>
     </div>
 
-    <div class="card" id="vrc">
+    <div class="card co" id="vrc">
       <div class="card-h">VR 연결 <span class="tag" id="vrc-tag">-</span></div>
       <div class="card-b">
         <div class="vrst">
@@ -187,7 +191,7 @@ input[type=file].in{width:100%}
       </div>
     </div>
 
-    <div class="card" id="ctl">
+    <div class="card co" id="ctl">
       <div class="card-h">VR 조작 <span class="tag" id="vr-tag">꺼짐</span></div>
       <div class="card-b">
         <div class="row">
@@ -210,7 +214,7 @@ input[type=file].in{width:100%}
       </div>
     </div>
 
-    <div class="card alert" id="pend" style="display:none">
+    <div class="card alert co" id="pend" style="display:none">
       <div class="card-h">방금 에피소드 <span class="tag" style="color:var(--amber)">저장 / 버리기</span></div>
       <div class="card-b">
         <div id="pinfo" class="msg" style="margin-top:0"></div>
@@ -228,12 +232,23 @@ input[type=file].in{width:100%}
   </div>
 
   <div class="col">
-    <div class="card">
+    <div class="card co">
       <div class="card-h">데이터셋 → 학습 PC</div>
       <div class="card-b">
         <a id="dl" class="btn primary" href="#" style="display:block">⬇ LeRobot v3 데이터셋 zip</a>
         <div class="msg" id="v3st">—</div>
         <div class="hint">저장한 성공 에피소드가 자동으로 LeRobot v3 (data/datasets/&lt;이름&gt;/lerobot) 에 들어감. 이 PC 에서 학습하면 zip 필요 없음, 다른 PC 에서 학습할 때만 이 zip 을 올림</div>
+      </div>
+    </div>
+
+    <div class="card io" id="iprep">
+      <div class="card-h">추론 준비 <span class="tag" id="iprep-tag">-</span></div>
+      <div class="card-b">
+        <div class="row"><span class="mini" style="margin:0;min-width:64px">시작 자세</span><span id="prdy" class="grow">—</span>
+          <button class="btn sm" id="prdybtn">준비 자세로</button></div>
+        <div class="row" style="margin-top:8px"><span class="mini" style="margin:0;min-width:64px">테이블</span><span id="ptbl" class="grow">—</span>
+          <button class="btn sm" id="ptblbtn">테이블 재기</button><button class="btn sm" id="ptblclr">지우기</button></div>
+        <div class="hint" id="ptblhint">[테이블 재기] → 머리 카메라 화면에서 테이블 빈 곳을 2–3 군데 클릭 (가상: 회색 격자 = 높이 0.14 m 평면)</div>
       </div>
     </div>
 
@@ -244,7 +259,7 @@ input[type=file].in{width:100%}
         <select class="in" id="msel" style="width:100%"></select>
         <div class="row" style="margin-top:8px">
           <span class="mini" style="margin:0">장치</span>
-          <select class="in" id="mdev"><option>GPU</option><option>CPU</option><option>NPU</option></select>
+          <select class="in" id="mdev"><option>CPU</option><option>NPU</option><option>GPU</option></select>
           <span class="mini" style="margin:0" title="모델에 정보가 없을 때만 씀">맞춤</span>
           <select class="in" id="mfit"><option value="">모델 정보대로</option><option value="crop">자르기</option><option value="pad">검은 띠</option><option value="stretch">눌러 줄이기</option></select>
           <button class="btn grow" id="mload">불러오기</button>
@@ -267,7 +282,7 @@ input[type=file].in{width:100%}
     <div class="card fill">
       <div class="card-h">로봇 <span class="tag" id="robot-tag">-</span></div>
       <div class="card-b"><div id="robot" style="font-size:12px;line-height:1.8">—</div>
-        <div class="hint" style="margin-top:auto">Space 시작 / 끝 · S 저장 · D 버리기 · 에피소드 보기 중에는 Space = 재생</div></div>
+        <div class="hint co" style="margin-top:auto">Space 시작 / 끝 · S 저장 · D 버리기 · 에피소드 보기 중에는 Space = 재생</div></div>
     </div>
   </div>
 </div>
@@ -287,6 +302,7 @@ input[type=file].in{width:100%}
 <script>
 "use strict";
 const $ = id => document.getElementById(id);
+if (new URLSearchParams(location.search).get("view") === "infer") document.documentElement.classList.add("v-infer");   // 홈 추론 메뉴
 const post = async (u, b) => { const r = await fetch(u, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(b || {}) });
   const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.detail || r.status); return j; };
 let st = null, ds = null, busy = false;
@@ -335,6 +351,22 @@ async function toReady() {
   } catch (e) { alert(e.message); } finally { busy = false; }
 }
 $("rdybtn").onclick = toReady;
+$("prdybtn").onclick = toReady;
+// 테이블 재기 (추론 보기): 머리 카메라 화면 클릭 → 그 자리 깊이로 테이블 평면 (잡기 웹 [테이블 점 추가] 와 같은 /api/table)
+let tblPick = false;
+function setTblPick(on) { tblPick = on; $("vhead").classList.toggle("tblpick", on); $("ptblbtn").textContent = on ? "재기 끝" : "테이블 재기"; }
+$("ptblbtn").onclick = () => setTblPick(!tblPick);
+$("ptblclr").onclick = async () => { if (!confirm("테이블 점을 모두 지웁니다. 계속?")) return; try { await post("/api/table/clear"); } catch (e) { alert(e.message); } };
+$("vhead").addEventListener("click", async e => {
+  if (!tblPick) return;
+  const im = e.currentTarget, r = im.getBoundingClientRect(), nw = im.naturalWidth, nh = im.naturalHeight;
+  if (!nw || !nh) return;
+  const k = Math.min(r.width / nw, r.height / nh), ox = (r.width - nw * k) / 2, oy = (r.height - nh * k) / 2;   // object-fit: contain
+  const u = (e.clientX - r.left - ox) / k, v = (e.clientY - r.top - oy) / k;
+  if (u < 0 || v < 0 || u >= nw || v >= nh) return;
+  try { const t = await post("/api/table", { u, v }); $("ptblhint").innerHTML = `<span class="ok">테이블 z ${(+t.table_z).toFixed(3)} m</span> · 점 ${t.n ?? "-"} — 2–3 군데 찍고 [재기 끝]`; }
+  catch (err) { $("ptblhint").innerHTML = `<span class="bad">${err.message}</span>`; }
+});
 $("start").onclick = start; $("stop").onclick = stop;
 // 테이블 검사 끔: 사람이 직접, 확인 뒤에만 (자동으로 켜지 않음). 켜져 있는 동안 경고
 $("notable").onchange = () => {
@@ -344,6 +376,7 @@ $("notable").onchange = () => {
 };
 $("keep").onclick = () => decide(true); $("drop").onclick = () => decide(false);
 document.addEventListener("keydown", e => {
+  if (document.documentElement.classList.contains("v-infer")) return;   // 추론 보기: 수집 단축키 (Space = VR 시작 · S · D) 안 받음
   if (epOpen) { epKey(e); return; }          // 에피소드 보기 중에는 VR 단축키 (Space = 시작) 안 받음
   if ($("vrm").style.display === "flex") return;   // VR 설정 창이 열려 있으면 단축키 안 받음 (Space 로 팔이 움직이지 않게)
   if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT" || e.repeat) return;
@@ -428,8 +461,14 @@ function render() {
     $("rdy").innerHTML = allAt ? '<span class="ok">✓ 양팔 준비 자세</span>'
       : ["right", "left"].map(s => rd[s].at ? `${ko[s]} <span class="ok">✓</span>` : `${ko[s]} <span class="warn">${rd[s].dist_cm} cm</span>`).join(" · ");
     $("rdybtn").disabled = allAt || x.active || st.busy || r.active;
+    $("prdy").innerHTML = $("rdy").innerHTML;
+    $("prdybtn").disabled = allAt || x.active || st.busy || !!(st.policy && st.policy.running);
     if (!x.active && !r.pending && !allAt) $("start").disabled = true;
-  } else { $("rdy").innerHTML = '<span class="sub">팔 상태 없음</span>'; $("rdybtn").disabled = true; }
+  } else { $("rdy").innerHTML = $("prdy").innerHTML = '<span class="sub">팔 상태 없음</span>'; $("rdybtn").disabled = $("prdybtn").disabled = true; }
+  $("ptbl").innerHTML = st.table_z == null ? '<span class="warn">안 잼</span>' : `<span class="ok">z ${st.table_z.toFixed(3)} m</span>`;
+  $("ptblbtn").disabled = !!(st.policy && st.policy.running) || x.active;
+  const prepOk = rd && rd.right.at && rd.left.at && st.table_z != null;
+  $("iprep-tag").textContent = prepOk ? "준비됨" : "준비 필요";
   $("xrmsg").innerHTML = x.active ? `<span class="ok">● ${x.msg}</span> · 명령 ${x.n}`
     : ret ? `<span class="warn">● ${st.stage}</span> <span class="sub">(녹화 중 · 멈추려면 Space)</span>`
     : `<span class="sub">${x.msg}</span>` + (st.stage && /복귀/.test(st.stage) ? ` <span class="sub">· ${st.stage}</span>` : "");
@@ -509,6 +548,11 @@ $("pstop").onclick = () => post("/api/policy/stop").catch(e => alert(e.message))
 
 function renderModel() {
   const p = st.policy || {}, m = p.loaded;
+  if (m && renderModel.last !== m.name + m.device) {             // 불러온 장치를 고르기 칸에 맞춤 (다시 불러올 때 헷갈리지 않게)
+    renderModel.last = m.name + m.device;
+    const d = String(m.device || "").toUpperCase();
+    if ([...$("mdev").options].some(o => o.value === d)) $("mdev").value = d;
+  }
   const FIT_KO = { crop: "자르기", pad: "검은 띠", stretch: "눌러 줄이기" };
   $("minfo").innerHTML = m ? `<b>${m.name}</b> <span class="sub">${m.policy} · ${m.backend === "openvino" ? "OpenVINO" : "torch"} ${m.device} · 첫 추론 ${m.infer_ms} ms</span><br>` +
       `<span class="sub">카메라 ${Object.entries(m.sizes || {}).map(([k, v]) => `${k} ${v}`).join(" · ")} · ${FIT_KO[m.fit] || m.fit}` +
